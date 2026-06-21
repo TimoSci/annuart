@@ -1,0 +1,17 @@
+{
+  "name": "endowment-nft-client",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "mint": "tsx src/mint.ts",
+    "accrue": "tsx src/accrue.ts",
+    "claim": "tsx src/claim.ts",
+    "decrypt": "tsx src/decryptDistribution.ts",
+    "try-endow": "tsx src/tryDecryptEndowment.ts"
+  },
+  "dependencies": {
+    "@zama-fhe/relayer-sdk": "0.4.4",
+    "ethers": "^6.13.0"
+  },
+  "devDependencies": { "tsx": "^4.16.0", "typescript": "^5.5.0" }
+}
