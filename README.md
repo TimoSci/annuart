@@ -1,0 +1,179 @@
+# EndowmentNFT
+
+An ERC-721 on [Zama FHEVM](https://docs.zama.org/protocol) where each token is a transferable income stream backed by a **secret encrypted endowment**.
+
+Full design: [`docs/superpowers/specs/2026-06-21-zk-endowment-nft-design.md`](docs/superpowers/specs/2026-06-21-zk-endowment-nft-design.md)
+
+---
+
+## Overview
+
+Each `EndowmentNFT` token holds an encrypted endowment of a confidential ERC-20 token (OpenZeppelin `ERC7984`). A per-token **distribution account** accrues over time according to a creator-defined **piecewise-linear schedule**; each accrual drains the secret endowment, capped via `FHE.min` so exhaustion never leaks. The current owner can read (decrypt) their distribution balance but not the endowment — enforced by the FHEVM ACL (the endowment handle is never `FHE.allow`-ed to any owner). Everything — endowment, distribution, schedule, unclaimed balance — travels with the NFT on transfer, with the ACL handed off to the new owner.
+
+### Two creator modes (fixed at mint)
+
+| Mode | Description |
+|---|---|
+| **Immutable** | The initial funding is sealed at mint. No further top-ups are possible. The original creator is the only party who ever knows the initial endowment amount. |
+| **Top-ups allowed** | Anyone can call `topUp(tokenId, encryptedAmount, ...)` to add secret funds. After the first third-party top-up, even the original creator cannot know the total endowment. |
+
+### Privacy model
+
+- The endowment balance is **hidden from the owner and from the public**. The on-chain ACL never grants the endowment handle to any owner address.
+- Endowment **exhaustion is only observable retroactively**: once the distribution stops growing (no accrual increase), an owner can infer the endowment is spent — but the exact remaining balance is never revealed.
+- The current owner can decrypt their **distribution** balance off-chain via the relayer SDK (`FHE.allow`-ed to `ownerOf`).
+- In **immutable mode**, the original creator knows the initial endowment amount they funded. In **top-ups-allowed mode**, third-party top-ups can obscure even that.
+
+### FHE cost model
+
+FHE operations are metered in **HCU (Homomorphic Complexity Units)** — far heavier than native EVM ops — plus small `$ZAMA` protocol fees. The lazy-accrual design mitigates this: distribution accrues passively, so owners can call `accrue` + `claim` infrequently.
+
+### Deployment topology
+
+This is a **single-chain system**. FHEVM is a confidentiality layer on existing host chains (Ethereum mainnet, BSC, HyperEVM; Sepolia for testing) — not a separate chain. `EndowmentNFT` deploys directly on the host chain as a standard ERC-721. "Only the NFT owner controls the endowment" is native same-chain `ownerOf()`. No bridge, oracle, or cross-chain messaging is required.
+
+---
+
+## Prerequisites
+
+- **Foundry** (`forge`, `anvil`): install via [https://getfoundry.sh](https://getfoundry.sh)
+- **Node.js**: the `client/` TypeScript client requires **Node >= 20** at runtime (`@zama-fhe/relayer-sdk` emits a warning on Node 18)
+- **An FHEVM-compatible Sepolia RPC**: a standard Ethereum Sepolia RPC that supports the Zama coprocessor (e.g. Alchemy/Infura Sepolia)
+
+---
+
+## Build
+
+```shell
+forge build
+```
+
+---
+
+## Test
+
+```shell
+forge test
+```
+
+Run with full verbosity:
+
+```shell
+forge test -vvv
+```
+
+Expected: **26 tests pass** (17 `EndowmentNFT` + 9 `Schedule`), 0 failed.
+
+---
+
+## Deploy
+
+### Local dry-run (Anvil)
+
+Start a local Anvil node (with `forge-fhevm` host contracts) and run:
+
+```shell
+PRIVATE_KEY=<anvil-private-key> forge script script/Deploy.s.sol --sig "run()"
+```
+
+### Live Sepolia deploy
+
+```shell
+export SEPOLIA_RPC_URL=https://sepolia.infura.io/v3/<your-key>
+export PRIVATE_KEY=<your-private-key>
+
+forge script script/Deploy.s.sol \
+  --rpc-url $SEPOLIA_RPC_URL \
+  --broadcast \
+  --private-key $PRIVATE_KEY
+```
+
+Note: `SEPOLIA_RPC_URL` must be set in your environment or `.env` before running.
+
+---
+
+## Client (TypeScript relayer SDK)
+
+The `client/` directory contains a TypeScript client using `@zama-fhe/relayer-sdk` for Sepolia interaction.
+
+### Setup
+
+```shell
+cd client
+cp .env.example .env
+# Fill in: SEPOLIA_RPC_URL, PRIVATE_KEY, NFT_ADDRESS, TOKEN_ADDRESS
+npm install
+```
+
+`.env.example`:
+```
+SEPOLIA_RPC_URL=
+PRIVATE_KEY=
+NFT_ADDRESS=
+TOKEN_ADDRESS=
+TOKEN_ID=
+```
+
+### Operator precondition
+
+Before minting or topping up, the funder must authorise the `EndowmentNFT` contract to pull funds from the confidential token:
+
+```shell
+# The funder calls setOperator on the confidential token contract:
+# token.setOperator(endowmentNFT, untilTimestamp)
+```
+
+This grants `EndowmentNFT` operator rights to call `confidentialTransferFrom` on the funder's behalf.
+
+### Client flow
+
+```shell
+# 1. Mint a new EndowmentNFT (funds the endowment in the same tx)
+npm run mint
+
+# 2. Wait for accrual to build up over time, then poke the accrual:
+npm run accrue
+
+# 3. Decrypt your distribution balance (off-chain, via relayer SDK):
+npm run decrypt
+
+# 4. Claim the accrued distribution to your wallet:
+npm run claim
+
+# 5. Confirm the endowment is NOT decryptable (negative proof):
+npm run try-endow
+```
+
+`npm run try-endow` demonstrates the privacy guarantee: attempting to decrypt the endowment handle will fail (the ACL does not grant owner access), confirming the endowment is sealed.
+
+---
+
+## Security Note
+
+**`src/mocks/MockConfidentialToken.sol` is a TEST/DEV token only.**
+
+It has a permissionless `mint` function that allows anyone to mint arbitrary amounts — it exists solely for local Foundry tests and Anvil dry-runs. **Never rely on the mock on mainnet or any production deployment.** Set `TOKEN_ADDRESS` in your `.env` to a real, audited confidential token contract for any real deployment.
+
+---
+
+## Project structure
+
+```
+src/
+  EndowmentNFT.sol          # Main ERC-721 contract
+  libraries/
+    ScheduleLib.sol          # Piecewise-linear accrual schedule
+  mocks/
+    MockConfidentialToken.sol # TEST ONLY — permissionless mint
+script/
+  Deploy.s.sol              # Foundry deploy script
+test/                       # Foundry test suite (26 tests)
+client/                     # TypeScript relayer-sdk client (Sepolia)
+docs/superpowers/specs/     # Design spec
+```
+
+---
+
+## License
+
+MIT
