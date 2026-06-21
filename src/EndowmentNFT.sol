@@ -104,6 +104,19 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
         token.confidentialTransfer(msg.sender, amt);
     }
 
+    function topUp(uint256 tokenId, externalEuint64 encAmount, bytes calldata inputProof) external {
+        Endowment storage e = _endowments[tokenId];
+        if (_ownerOf(tokenId) == address(0)) revert NonexistentToken();
+        if (!e.topUpsAllowed) revert TopUpsDisabled();
+
+        euint64 amount = FHE.fromExternal(encAmount, inputProof);
+        FHE.allowTransient(amount, address(token));
+        euint64 received = token.confidentialTransferFrom(msg.sender, address(this), amount);
+
+        e.endowmentRemaining = FHE.add(e.endowmentRemaining, received);
+        FHE.allowThis(e.endowmentRemaining); // never granted to any owner
+    }
+
     function _update(address to, uint256 tokenId, address auth)
         internal
         override

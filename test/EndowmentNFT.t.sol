@@ -130,6 +130,34 @@ contract EndowmentNFTTest is FhevmTest {
         assertEq(nft.ownerOf(id), bob);
     }
 
+    function _topUp(uint256 id, address funder, uint64 amount) internal {
+        token.mint(funder, amount);
+        vm.prank(funder);
+        token.setOperator(address(nft), uint48(block.timestamp + 365 days));
+        (externalEuint64 h, bytes memory p) = encryptUint64(amount, funder, address(nft));
+        vm.prank(funder);
+        nft.topUp(id, h, p);
+    }
+
+    function test_topUp_extendsPayoutLifetime() public {
+        uint256 id = _mintEndowment(alice, 500, true); // top-ups allowed
+        _topUp(id, bob, 300); // anyone (bob) can top up -> endowment now 800
+        vm.warp(block.timestamp + 1_000); // schedule yields 1000, capped by 800
+        nft.accrue(id);
+        assertEq(decrypt(nft.distributionHandle(id)), 800);
+    }
+
+    function test_topUp_revertsWhenDisabled() public {
+        uint256 id = _mintEndowment(alice, 500, false); // immutable mode
+        token.mint(bob, 100);
+        vm.prank(bob);
+        token.setOperator(address(nft), uint48(block.timestamp + 365 days));
+        (externalEuint64 h, bytes memory p) = encryptUint64(100, bob, address(nft));
+        vm.expectRevert(EndowmentNFT.TopUpsDisabled.selector);
+        vm.prank(bob);
+        nft.topUp(id, h, p);
+    }
+
     function test_transfer_unclaimedTravelsAndAccrualContinues() public {
         uint256 id = _mintEndowment(alice, 500, false);
         vm.warp(block.timestamp + 100); // 100 accrued
