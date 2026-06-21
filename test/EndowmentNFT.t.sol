@@ -171,4 +171,46 @@ contract EndowmentNFTTest is FhevmTest {
         // bob receives the 100 that traveled + 50 new = 150
         assertEq(decrypt(token.confidentialBalanceOf(bob)), 150);
     }
+
+    function testFuzz_conservation(uint64 endowAmt, uint64 topAmt, uint32 warp1, uint32 warp2) public {
+        endowAmt = uint64(bound(endowAmt, 1, 1_000_000));
+        topAmt = uint64(bound(topAmt, 0, 1_000_000));
+        uint256 id = _mintEndowment(alice, endowAmt, true);
+        if (topAmt > 0) _topUp(id, bob, topAmt);
+
+        vm.warp(block.timestamp + bound(warp1, 0, 2_000));
+        nft.accrue(id);
+        vm.prank(alice);
+        nft.claim(id);
+        uint64 claimed1 = decrypt(token.confidentialBalanceOf(alice));
+
+        vm.warp(block.timestamp + bound(warp2, 0, 2_000));
+        nft.accrue(id);
+
+        uint64 dist = decrypt(nft.distributionHandle(id));
+        uint64 remaining = decrypt(nft.endowmentHandle(id)); // test-only: decrypt() bypasses ACL
+        assertEq(uint256(claimed1) + dist + remaining, uint256(endowAmt) + topAmt);
+    }
+
+    function test_accrue_endowmentStaysSecretAfterAccrue() public {
+        uint256 id = _mintEndowment(alice, 500, false);
+        vm.warp(block.timestamp + 100);
+        nft.accrue(id);
+        // The endowment handle is freshly produced by FHE.sub during accrual;
+        // the owner must NOT have ACL access to the new handle.
+        assertFalse(_acl.isAllowed(euint64.unwrap(nft.endowmentHandle(id)), alice));
+        // The contract itself must still have access (for future homomorphic ops).
+        assertTrue(_acl.isAllowed(euint64.unwrap(nft.endowmentHandle(id)), address(nft)));
+    }
+
+    function test_claim_emptyDoesNotDrainContract() public {
+        uint256 id = _mintEndowment(alice, 500, false);
+        // Claim with nothing accrued — distribution is zero.
+        vm.prank(alice);
+        nft.claim(id);
+        // Alice receives nothing.
+        assertEq(decrypt(token.confidentialBalanceOf(alice)), 0);
+        // Contract still holds the full endowment.
+        assertEq(decrypt(token.confidentialBalanceOf(address(nft))), 500);
+    }
 }
