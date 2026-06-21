@@ -66,4 +66,28 @@ contract EndowmentNFTTest is FhevmTest {
         assertEq(decrypt(token.confidentialBalanceOf(address(nft))), 500);
         assertEq(decrypt(token.confidentialBalanceOf(creator)), 0);
     }
+
+    function test_accrue_movesScheduledAmount() public {
+        uint256 id = _mintEndowment(alice, 500, false);
+        vm.warp(block.timestamp + 100); // 100s @ 1/sec = 100
+        nft.accrue(id);
+        assertEq(decrypt(nft.distributionHandle(id)), 100);
+    }
+
+    function test_accrue_capsAtEndowmentAndExhausts() public {
+        uint256 id = _mintEndowment(alice, 500, false); // endowment 500, rate 1/s, 1000s schedule
+        vm.warp(block.timestamp + 1_000); // schedule would yield 1000, but endowment is 500
+        nft.accrue(id);
+        assertEq(decrypt(nft.distributionHandle(id)), 500); // capped
+        // further accrual is a no-op (endowment exhausted)
+        vm.warp(block.timestamp + 1_000);
+        nft.accrue(id);
+        assertEq(decrypt(nft.distributionHandle(id)), 500);
+    }
+
+    function test_accrue_zeroElapsedIsNoop() public {
+        uint256 id = _mintEndowment(alice, 500, false);
+        nft.accrue(id); // same block
+        assertEq(decrypt(nft.distributionHandle(id)), 0);
+    }
 }

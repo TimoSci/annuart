@@ -82,4 +82,27 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
     function topUpsAllowedOf(uint256 tokenId) external view returns (bool) {
         return _endowments[tokenId].topUpsAllowed;
     }
+
+    function accrue(uint256 tokenId) external {
+        if (_ownerOf(tokenId) == address(0)) revert NonexistentToken();
+        _accrue(tokenId);
+    }
+
+    function _accrue(uint256 tokenId) internal {
+        Endowment storage e = _endowments[tokenId];
+        uint64 nowTs = uint64(block.timestamp);
+        uint64 owed = Schedule.integrate(e.schedule, e.scheduleStart, e.lastAccrualAt, nowTs);
+        if (owed == 0) return;
+
+        euint64 actual = FHE.min(FHE.asEuint64(owed), e.endowmentRemaining);
+        e.endowmentRemaining = FHE.sub(e.endowmentRemaining, actual);
+        e.distribution = FHE.add(e.distribution, actual);
+
+        FHE.allowThis(e.endowmentRemaining);
+        FHE.allowThis(e.distribution);
+        FHE.allow(e.distribution, ownerOf(tokenId));
+
+        uint64 end = Schedule.scheduleEnd(e.schedule, e.scheduleStart);
+        e.lastAccrualAt = nowTs < end ? nowTs : end;
+    }
 }
