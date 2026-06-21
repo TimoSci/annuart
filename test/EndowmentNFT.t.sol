@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import {FhevmTest} from "forge-fhevm/FhevmTest.sol";
 import {FHE, euint64, externalEuint64} from "@fhevm/solidity/lib/FHE.sol";
 import "encrypted-types/EncryptedTypes.sol";
-import {MockConfidentialToken} from "./mocks/MockConfidentialToken.sol";
+import {MockConfidentialToken} from "../src/mocks/MockConfidentialToken.sol";
 import {EndowmentNFT} from "../src/EndowmentNFT.sol";
 import {Schedule, Segment} from "../src/libraries/Schedule.sol";
 import {IERC7984} from "@openzeppelin/confidential-contracts/interfaces/IERC7984.sol";
