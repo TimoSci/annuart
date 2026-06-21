@@ -90,4 +90,29 @@ contract EndowmentNFTTest is FhevmTest {
         nft.accrue(id); // same block
         assertEq(decrypt(nft.distributionHandle(id)), 0);
     }
+
+    function test_claim_transfersAndResets() public {
+        uint256 id = _mintEndowment(alice, 500, false);
+        vm.warp(block.timestamp + 100); // accrue 100
+        vm.prank(alice);
+        nft.claim(id);
+        assertEq(decrypt(token.confidentialBalanceOf(alice)), 100);
+        assertEq(decrypt(token.confidentialBalanceOf(address(nft))), 400); // 500 - 100
+        assertEq(decrypt(nft.distributionHandle(id)), 0); // reset
+    }
+
+    function test_claim_onlyOwner() public {
+        uint256 id = _mintEndowment(alice, 500, false);
+        vm.warp(block.timestamp + 100);
+        vm.expectRevert(EndowmentNFT.NotOwner.selector);
+        vm.prank(bob);
+        nft.claim(id);
+    }
+
+    function test_claim_emptyDistributionIsNoopTransfer() public {
+        uint256 id = _mintEndowment(alice, 500, false);
+        vm.prank(alice);
+        nft.claim(id); // nothing accrued yet
+        assertEq(decrypt(token.confidentialBalanceOf(alice)), 0);
+    }
 }
