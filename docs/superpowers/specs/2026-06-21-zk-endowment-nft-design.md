@@ -16,6 +16,25 @@ A single Solidity contract, `EndowmentNFT`, that behaves as an ERC-721 where eac
 
 The system is fully homomorphic end to end: **no decryption oracle is used in any on-chain path.** Owners decrypt their own distribution balance off-chain via the relayer SDK (user-decryption), authorized by the on-chain ACL.
 
+## 1a. Deployment topology (resolved 2026-06-21)
+
+**This is a single-chain system. No cross-chain bridge, oracle, or "FHEVM chain" is involved.**
+
+Research into the Zama Protocol resolved an early misconception (that FHEVM is a separate chain requiring a bridge):
+
+- The Zama Protocol is a **confidentiality layer on top of existing host chains, not a new L1/L2.** A confidential contract's bytecode is deployed **directly on a normal host chain** (e.g. Ethereum L1 mainnet, chain 1) at a real address on that chain's explorer. FHE work is offloaded to an off-chain coprocessor network via events; on-chain host contracts (ACL, FHEVMExecutor, KMSVerifier, InputVerifier) live on the same host chain. ([litepaper](https://docs.zama.org/protocol/zama-protocol-litepaper), [host contract addresses](https://docs.zama.org/protocol/solidity-guides/smart-contract/configure/contract_addresses))
+- **Chain ID 261131 ("Zama Gateway") is NOT a deployment target** — it is the protocol's internal Arbitrum orchestration rollup and "doesn't allow third party contracts to be deployed on it." (It is a LayerZero endpoint only for the protocol's own messaging/$ZAMA token, which is why it surfaced in bridge listings.)
+- **Officially supported host chains:** mainnet — Ethereum (1), BSC (56), HyperEVM (999), Solana; testnet — Ethereum Sepolia (11155111), BSC Testnet (97), Polygon Amoy (80002).
+
+**Consequence for this design:** `EndowmentNFT` deploys directly on the chosen host chain as a standard ERC-721 at a normal address, so any exchange/marketplace on that chain recognizes and trades it. "Only the NFT owner controls the endowment" is therefore just native same-chain `ownerOf()` — **no cross-chain ownership binding, attestation oracle, or LayerZero/CCIP message-passing is required.** The previously-considered "mainnet deed ↔ FHEVM vault" two-chain architecture is **explicitly out of scope and not needed.**
+
+**Host-chain selection is a deploy-time cost/reach tradeoff (deferred):**
+- **Ethereum mainnet (chain 1):** widest exchange/marketplace recognition; highest per-tx cost. FHE ops are metered in **HCU (Homomorphic Complexity Units)** — far heavier than native ops (e.g. an encrypted `add` ≈ tens of thousands of HCU vs. 3 gas) — plus small **$ZAMA** protocol fees for input-verification/decryption. ([HCU docs](https://docs.zama.org/protocol/solidity-guides/development-guide/hcu))
+- **Cheaper host chain (BSC / HyperEVM):** much lower FHE-op cost; narrower NFT-marketplace coverage. Same contract code.
+- The design's lazy accrual already mitigates cost: distribution accrues regardless of poking, so owners can `claim` infrequently. Per-op HCU stays well within the 20M-HCU/tx limit.
+
+The contract code is **chain-agnostic**; the only per-network difference is the FHE config base contract (`ZamaEthereumConfig` for mainnet vs. the Sepolia config for testing), resolved by `block.chainid`. Development/testing target is **Ethereum Sepolia**; the production host chain is chosen at deploy time and does not affect the implementation plan.
+
 ## 2. Decisions (locked)
 
 | Topic | Decision |
@@ -33,6 +52,7 @@ The system is fully homomorphic end to end: **no decryption oracle is used in an
 | Amount type | `euint64` (max ~1.8×10¹⁹ base units). |
 | Contract structure | Single pooled contract (ERC-721 + escrow + accrual engine). |
 | Client tooling | TypeScript `@zama-fhe/relayer-sdk` for Sepolia; contracts + tests are pure Foundry. |
+| Deployment topology | Single-chain. Deploy directly on a host chain (Ethereum L1 or cheaper EVM host). No bridge/oracle/cross-chain binding (see §1a). Owner control = native `ownerOf()`. Production host chain deferred to deploy time. |
 
 ## 3. Privacy / trust model
 
