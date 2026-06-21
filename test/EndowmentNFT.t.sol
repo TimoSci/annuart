@@ -115,4 +115,32 @@ contract EndowmentNFTTest is FhevmTest {
         nft.claim(id); // nothing accrued yet
         assertEq(decrypt(token.confidentialBalanceOf(alice)), 0);
     }
+
+    function test_transfer_newOwnerCanReadOldOwnerCannot() public {
+        uint256 id = _mintEndowment(alice, 500, false);
+        vm.warp(block.timestamp + 100); // accrue 100 under alice
+        nft.accrue(id);
+
+        vm.prank(alice);
+        nft.transferFrom(alice, bob, id);
+
+        euint64 dist = nft.distributionHandle(id);
+        assertTrue(_acl.isAllowed(euint64.unwrap(dist), bob));   // new owner can read
+        assertFalse(_acl.isAllowed(euint64.unwrap(dist), alice)); // old owner cannot read post-transfer handle
+        assertEq(nft.ownerOf(id), bob);
+    }
+
+    function test_transfer_unclaimedTravelsAndAccrualContinues() public {
+        uint256 id = _mintEndowment(alice, 500, false);
+        vm.warp(block.timestamp + 100); // 100 accrued
+        nft.accrue(id);
+        vm.prank(alice);
+        nft.transferFrom(alice, bob, id);
+
+        vm.warp(block.timestamp + 50); // +50 more under bob
+        vm.prank(bob);
+        nft.claim(id);
+        // bob receives the 100 that traveled + 50 new = 150
+        assertEq(decrypt(token.confidentialBalanceOf(bob)), 150);
+    }
 }

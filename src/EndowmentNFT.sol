@@ -104,6 +104,25 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
         token.confidentialTransfer(msg.sender, amt);
     }
 
+    function _update(address to, uint256 tokenId, address auth)
+        internal
+        override
+        returns (address from)
+    {
+        from = super._update(to, tokenId, auth);
+
+        // Only on real transfers (skip mint from==0 and burn to==0).
+        if (from != address(0) && to != address(0)) {
+            _accrue(tokenId); // settle the clock before the handoff
+            Endowment storage e = _endowments[tokenId];
+            // Refresh the distribution handle so the prior owner's ACL no longer applies,
+            // then grant read access to the new owner only. (Covers the no-op accrue case too.)
+            e.distribution = FHE.add(e.distribution, FHE.asEuint64(0));
+            FHE.allowThis(e.distribution);
+            FHE.allow(e.distribution, to);
+        }
+    }
+
     function _accrue(uint256 tokenId) internal {
         Endowment storage e = _endowments[tokenId];
         uint64 nowTs = uint64(block.timestamp);
