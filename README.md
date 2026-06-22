@@ -174,6 +174,72 @@ docs/superpowers/specs/     # Design spec
 
 ---
 
+## Interacting via Hardhat
+
+A Hardhat setup with the Zama FHEVM plugin (`@fhevm/hardhat-plugin`) is included for
+interactive use — deploying and calling the contract with encrypted inputs and
+user-decryption — alongside the Foundry test suite. Hardhat compiles the same
+contracts in `src/`, uses a separate `cache-hardhat/` directory, and leaves Foundry's
+`forge test` untouched.
+
+### Prerequisite: Node ≥ 20
+
+The fhevm Hardhat plugin requires **Node 20+** (it hard-fails on Node 18). If your
+default `node` is older, install Node 22 (e.g. Homebrew keg-only) and put it first on
+PATH for Hardhat commands:
+
+```bash
+export PATH="/opt/homebrew/opt/node@22/bin:$PATH"   # adjust to your Node ≥20 install
+node --version   # must be >= 20
+```
+
+### Build & smoke test (in-process mock — no external services)
+
+```bash
+npx hardhat compile
+npx hardhat test test/EndowmentNFT.hh.ts
+```
+
+The smoke test deploys the contract, mints with an encrypted endowment, accrues over
+simulated time, user-decrypts the distribution, and claims — all on the plugin's local
+FHEVM mock.
+
+### Deploy
+
+```bash
+# Local: start a node, then deploy (writes deployments/local.json)
+npx hardhat node                                        # terminal 1
+npx hardhat run scripts/deploy.ts --network localhost   # terminal 2
+
+# Sepolia (set a real confidential token to skip the dev mock)
+export SEPOLIA_RPC_URL=...  PRIVATE_KEY=0x...  TOKEN_ADDRESS=0x...
+npx hardhat run scripts/deploy.ts --network sepolia
+```
+
+If `TOKEN_ADDRESS` is unset, the deploy uses `MockConfidentialToken` (dev only — its
+constructor reverts on mainnet/BSC/HyperEVM).
+
+### Interaction tasks
+
+Addresses are read from `deployments/local.json` (override with `--nft`/`--token`).
+Add `--network localhost` or `--network sepolia` as appropriate.
+
+```bash
+npx hardhat task:mint --amount 1000000 --topups true   # mint a new endowment NFT
+npx hardhat task:accrue --id 1                          # advance accrual (anyone)
+npx hardhat task:distribution --id 1                    # decrypt your claimable balance
+npx hardhat task:claim --id 1                           # claim (owner only)
+npx hardhat task:info --id 1                            # owner, mode, distribution handle
+```
+
+The endowment balance is deliberately **not** decryptable — there is no task for it,
+and any attempt to user-decrypt the endowment handle is rejected by the FHEVM ACL.
+
+For ad-hoc exploration, `npx hardhat console --network localhost` exposes `ethers` and
+`fhevm` (the encrypt/decrypt helpers).
+
+---
+
 ## License
 
 MIT

@@ -5,3 +5,11 @@ broadcast/
 .env
 client/node_modules/
 client/dist/
+
+# Hardhat
+artifacts/
+cache-hardhat/
+types/
+deployments/
+dist/
+fhevmTemp/
