@@ -179,10 +179,12 @@ defmodule AnnuartWeb.EnftLiveTest do
       assert html =~ "As of the last accrual."
       assert has_element?(view, ~s(#tx-claim[phx-hook="TxAction"][data-action="claim"]), "Claim")
       assert has_element?(view, ~s(#tx-transfer[data-action="transfer"] input[data-arg="to"]))
+      # Not data-confirm: phoenix_html would ask that itself, a second time.
+      refute render(view) =~ "data-confirm"
       # The hook fills in the recipient typed into the input, in the browser.
       assert has_element?(
                view,
-               ~s(#tx-transfer[data-confirm="Transfer ENFT #1 to {to}? Unclaimed balance goes with the ENFT. Claim first if you want to keep it."])
+               ~s(#tx-transfer[data-question="Transfer ENFT #1 to {to}? Unclaimed balance goes with the ENFT. Claim first if you want to keep it."])
              )
 
       assert html =~ "Unclaimed balance goes with the ENFT. Claim first if you want to keep it."
@@ -245,7 +247,7 @@ defmodule AnnuartWeb.EnftLiveTest do
       # The amount is filled in by the hook, in the browser; the server never has it.
       assert has_element?(
                view,
-               ~s(#tx-donate[data-confirm="Donate {amount} {symbol} to ENFT #1? This cannot be undone."])
+               ~s(#tx-donate[data-question="Donate {amount} {symbol} to ENFT #1? This cannot be undone."])
              )
     end
 

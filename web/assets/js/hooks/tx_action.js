@@ -245,7 +245,7 @@ export class TxActionController {
 
   async attempt() {
     if (this.running) return;
-    const {action, confirm} = {...this.el.dataset};
+    const {action, question} = {...this.el.dataset};
     this.say("");
     let args;
     try {
@@ -257,7 +257,7 @@ export class TxActionController {
     }
     if (!this.deps.session()) { this.say("Connect a wallet first."); return; }
     if (!this.deps.actions[action] || !this.deps.contract(this.el.dataset.label)) { this.say("This action is not available."); return; }
-    if (confirm && !this.deps.confirm(this.confirmText(confirm, args))) return;
+    if (question && !this.deps.confirm(this.confirmText(question, args))) return;
     return this.execute(action, args);
   }
 

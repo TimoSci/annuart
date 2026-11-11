@@ -192,7 +192,7 @@ test("without a wallet nothing runs and the person is told to connect", async ()
 });
 
 test("a declined confirmation runs nothing", async () => {
-  const {el} = setup({action: "transfer", attrs: `data-confirm="Sure?"`, extra: `<input data-arg="to" value="0x${"ab".repeat(20)}">`});
+  const {el} = setup({action: "transfer", attrs: `data-question="Sure?"`, extra: `<input data-arg="to" value="0x${"ab".repeat(20)}">`});
   let ran = false;
   let asked;
   const {ctl} = controller(el, {run: async () => { ran = true; }, confirm: t => { asked = t; return false; }});
@@ -462,12 +462,12 @@ test("a failed action is announced as a failure, for the Tokens card to refresh"
 
 test("a confirmation can name the typed amount, ungrouped, and the recipient", async () => {
   const to = "0x" + "ab".repeat(20);
-  const donate = setup({attrs: `data-confirm="Donate {amount} {symbol} to ENFT #7? This cannot be undone."`,
+  const donate = setup({attrs: `data-question="Donate {amount} {symbol} to ENFT #7? This cannot be undone."`,
     extra: `<input data-arg="amount" value="123456.5">`});
   const asked = [];
   const d = controller(donate.el, {run: async () => ({hash: "0x1"}), confirm: t => { asked.push(t); return true; }});
   await d.ctl.run();
-  const transfer = setup({action: "transfer", attrs: `data-confirm="Transfer ENFT #7 to {to}? Unclaimed balance goes with the ENFT."`,
+  const transfer = setup({action: "transfer", attrs: `data-question="Transfer ENFT #7 to {to}? Unclaimed balance goes with the ENFT."`,
     extra: `<input data-arg="to" value="${to}">`});
   const t = controller(transfer.el, {run: async () => ({hash: "0x1"}), confirm: x => { asked.push(x); return true; }});
   await t.ctl.run();

@@ -8,7 +8,7 @@
 // forward: a flow that moves the chain clock does so after its own ENFTs exist.
 import {test, expect} from "@playwright/test";
 import {execFileSync, spawn} from "node:child_process";
-import {HDNodeWallet} from "ethers";
+import {HDNodeWallet, Interface} from "ethers";
 import {deploy, readDeployments, rpc, REPO_ROOT, RPC_URL} from "./global-setup.js";
 
 const MNEMONIC = "test test test test test test test test test test test junk";
@@ -79,7 +79,19 @@ async function runTx(tx) {
   await expectDone(tx);
 }
 
-// Faucet on the Tokens page: 1,000 MOCK per run.
+// Gives dev account `index` `whole` MOCK (6 decimals) straight from the node:
+// the mock token's mint is open to anyone, and Hardhat's account 9, which no
+// flow logs in as, sends it. For amounts the faucet would take many runs for.
+const MINTER = HDNodeWallet.fromPhrase(MNEMONIC, undefined, "m/44'/60'/0'/0/9").address;
+async function fundMock(index, whole) {
+  const token = readDeployments().contracts.find(c => c.label === "mock").token;
+  const data = new Interface(["function mint(address to, uint64 amount)"])
+    .encodeFunctionData("mint", [ACCOUNTS[index], BigInt(whole) * 10n ** 6n]);
+  const hash = await rpc("eth_sendTransaction", [{from: MINTER, to: token, data}]);
+  expect((await rpc("eth_getTransactionReceipt", [hash])).status).toBe("0x1");
+}
+
+// Faucet on the Tokens page: 1000 MOCK per run.
 async function getTestTokens(page, index, runs = 1) {
   await page.goto("/tokens");
   await connectedAs(page, index);
@@ -124,6 +136,17 @@ async function reveal(scope) {
 }
 
 const amountOf = text => Number(text.replace(/[^0-9.]/g, ""));
+
+// A revealed amount such as "4,000.5 MOCK" in base units, exactly.
+function unitsOf(text, decimals) {
+  const [whole, frac = ""] = text.replace(/[^0-9.]/g, "").split(".");
+  return BigInt(whole + frac.padEnd(decimals, "0"));
+}
+
+// Accepts the next confirmation dialog and resolves to its text.
+function acceptDialog(page) {
+  return new Promise(resolve => page.once("dialog", dialog => { resolve(dialog.message()); dialog.accept(); }));
+}
 
 // --lvl as the activity controller set it, and the computed background as
 // [r, g, b] in 0..255. The computed value may be rgb(), color(srgb) or, while
@@ -233,7 +256,10 @@ test("dev login: get test tokens, create an ENFT, land on its page", async ({pag
   expect(await reveal(balance)).toMatch(/^[\d,.]+ cWETH$/);
   await form.locator("select[data-role=token]").selectOption("mock");
   await expect(balance.locator(".secret-value")).toHaveText("•••••");
-  expect(await reveal(balance)).toMatch(/^[\d,.]+ MOCK$/);
+  const before = await reveal(balance);
+  expect(before).toMatch(/^[\d,.]+ MOCK$/);
+  // The two faucet runs above pay for this create.
+  expect(unitsOf(before, 6)).toBeGreaterThanOrEqual(2000n * 10n ** 6n);
   await form.locator("[data-role=amount]").fill("2000");
   await expect(form.locator(".amount-echo").first()).toHaveText("= 2000 MOCK");
   await fillPeriod(form, {length: "1", unit: "days", rate: "1000", per: "day"});
@@ -258,13 +284,18 @@ test("dev login: get test tokens, create an ENFT, land on its page", async ({pag
 
   // Every step reaches its end, then the page waits for the indexer and moves on.
   await page.waitForURL(/\/enft\/mock\/\d+$/, {timeout: 90_000});
-  expect(await page.evaluate(() => window.__steps)).toMatchObject({encrypt: "done", confirm: "done", mined: "done"});
+  expect(await page.evaluate(() => window.__steps)).toMatchObject({balance: "done", encrypt: "done", confirm: "done", mined: "done"});
   // Account 0 may have authorised the contract in an earlier flow.
   expect(await page.evaluate(() => window.__steps.authorise)).toMatch(/^(done|skipped)$/);
   await expect(page.locator("h1")).toHaveText(/ENFT #\d+/);
   await expect(page.locator("#panel-yours")).toBeVisible();
   await expect(panel(page, "details")).toContainText("Donations");
   await expect(panel(page, "details").locator(".kv")).toContainText("On");
+
+  // The endowment really left the wallet: the balance fell by exactly 2000.
+  await page.locator('[data-activity-id="nav:tokens"]').click();
+  const after = await reveal(page.locator("#balance-mock"));
+  expect(unitsOf(before, 6) - unitsOf(after, 6)).toBe(2000n * 10n ** 6n);
 });
 
 test("owner reveals, claims; a second account donates; owner transfers", async ({page}) => {
@@ -321,7 +352,9 @@ test("owner reveals, claims; a second account donates; owner transfers", async (
   const donate = page.locator("#tx-donate");
   await donate.locator("input[data-arg=amount]").fill("100");
   await expect(donate.locator(".amount-echo")).toHaveText("= 100 MOCK");
+  const donateQuestion = acceptDialog(page);
   await runTx(donate);
+  expect(await donateQuestion).toBe(`Donate 100 MOCK to ENFT #${id}? This cannot be undone.`);
 
   // Back to the owner, who transfers it to account 2. The page follows the
   // indexer: once the transfer is indexed the Yours panel (and the transfer
@@ -336,7 +369,7 @@ test("owner reveals, claims; a second account donates; owner transfers", async (
   await runButton(transfer).click();
   await expect(panel(page, "details").locator(".addr").first())
     .toHaveAttribute("title", ACCOUNTS[2].toLowerCase(), {timeout: 90_000});
-  expect(confirmText).toBe("Unclaimed balance goes with the ENFT. Claim first if you want to keep it.");
+  expect(confirmText).toBe(`Transfer ENFT #${id} to ${ACCOUNTS[2]}? Unclaimed balance goes with the ENFT. Claim first if you want to keep it.`);
   await expect(page.locator("#panel-yours")).toHaveCount(0);
   await expect(panel(page, "history")).toContainText("Transferred to");
 });
@@ -375,7 +408,8 @@ test("wrapped token: wrap 0.01 ETH, then unwrap it", async ({page}) => {
   const unwrap = page.locator("#tx-unwrap-wrapped");
   await unwrap.locator("input[data-arg=amount]").fill("0.01");
   await runTx(unwrap);
-  for (const id of ["encrypt", "request", "decrypt", "finalise", "withdraw"]) {
+  // Exactly the whole confidential balance: the balance check lets it through.
+  for (const id of ["balance", "encrypt", "request", "decrypt", "finalise", "withdraw"]) {
     await expect(step(unwrap, id)).toHaveAttribute("data-state", "done");
   }
   // Hidden by the confirmation; the confidential balance is back to zero.
@@ -389,6 +423,7 @@ test("wrapped token: wrap 0.01 ETH, then unwrap it", async ({page}) => {
 test("create with a later start, two periods ending indefinitely, for another address", async ({page}) => {
   await page.goto("/");
   await login(page, 0);
+  await getTestTokens(page, 0, 1);
   await page.goto("/create");
   const form = page.locator("#create-form");
   await expect(form).toBeVisible();
@@ -454,6 +489,8 @@ test("a failed action shows its reason and can be retried", async ({page}) => {
 
   const donate = page.locator("#tx-donate");
   await donate.locator("input[data-arg=amount]").fill("5");
+  const questions = [];
+  page.on("dialog", dialog => { questions.push(dialog.message()); dialog.accept(); });
   await runButton(donate).click();
   const failed = donate.locator("ol.steps li[data-state=failed]");
   await expect(failed).toHaveCount(1, {timeout: 60_000});
@@ -476,6 +513,10 @@ test("a failed action shows its reason and can be retried", async ({page}) => {
   await expect(donate.locator("ol.steps li[data-state=failed]"))
     .toContainText("failed: This ENFT's schedule has ended, so it no longer accepts donations.", {timeout: 60_000});
   await expect(runButton(donate)).toBeEnabled();
+  // Nothing was sent (the contract refused it before), so it was "Try again"
+  // both times, and each run asked the donation question again.
+  await expect(donate.locator("button[data-role=start-over]")).toHaveCount(0);
+  expect(questions).toEqual(Array(2).fill(`Donate 5 MOCK to ENFT #${id}? This cannot be undone.`));
 });
 
 test("activity brightness persists across reload and clears", async ({browser}) => {
@@ -598,14 +639,18 @@ test("no request body or websocket frame contains the entered amount", async ({p
 
   await page.goto("/");
   await login(page, 0);
-  await getTestTokens(page, 0, 1);
+  // Enough for the endowment and the donation below.
+  await fundMock(0, 32_000);
   const id = await createEnft(page, {amount: "31337.42", period: {length: "1", unit: "years", rate: "10", per: "day"}});
   await expect(page.locator("#panel-yours")).toBeVisible();
 
   const donate = page.locator("#tx-donate");
   await donate.locator("input[data-arg=amount]").fill("271.83");
   await expect(donate.locator(".amount-echo")).toHaveText("= 271.83 MOCK");
+  const question = acceptDialog(page);
   await runTx(donate);
+  // Asked in the page; a dialog is not sent anywhere.
+  expect(await question).toBe(`Donate 271.83 MOCK to ENFT #${id}? This cannot be undone.`);
   await expect(page).toHaveURL(new RegExp(`/enft/mock/${id}$`));
 
   // The matcher is checked before it is trusted: it must flag every form an

@@ -5,6 +5,10 @@ defmodule AnnuartWeb.TxComponents do
   in the browser and draws the steps. LiveView never touches this region
   (`phx-update="ignore"`), and inputs in it must carry `data-arg` and no `name`,
   so no amount can reach the server.
+
+  The confirmation is `data-question`, not `data-confirm`: phoenix_html asks
+  its own `window.confirm` for any click inside an element with
+  `data-confirm`, which would show the question a second time, unfilled.
   """
   use Phoenix.Component
 
@@ -32,7 +36,7 @@ defmodule AnnuartWeb.TxComponents do
       data-action={@action}
       data-label={@contract_label}
       data-token-id={@token_id}
-      data-confirm={@confirm}
+      data-question={@confirm}
       data-decimals={@decimals}
       data-symbol={@symbol}
     >
