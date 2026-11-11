@@ -94,7 +94,9 @@ h1 { font-size: 26px; font-weight: 500; color: var(--hot-fg); margin: 0 0 4px; l
   display: grid; grid-template-columns: 70px 1fr 1fr 110px; gap: 10px;
   padding: 10px 20px; border-radius: 8px; margin-bottom: 4px;
 }
-.rows .row:hover { background: var(--hot-bg); color: var(--hot-fg); }
+/* Hover and focus are marked by an outline, never by brightness: brightness
+   means "recently clicked" and nothing else. */
+.rows .row:hover, .rows .row:focus-visible { outline: 1px solid var(--rest-fg); outline-offset: -1px; }
 @media (max-width: 760px) { .rows .row { grid-template-columns: 1fr 1fr; } }
 
 .bars { display: flex; align-items: flex-end; gap: 3px; height: 84px; margin: 4px 0 14px; }
