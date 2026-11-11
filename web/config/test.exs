@@ -24,6 +24,9 @@ config :annuart, dev_wallet: true
 # Preset so the app does not read a deployment file during tests.
 config :annuart, :chain, chain_id: 31337, rpc_url: "http://127.0.0.1:8545", contracts: []
 
+# Tests never touch a chain: all RPC goes through the stub.
+config :annuart, :rpc, Annuart.RpcStub
+
 config :logger, level: :warning
 
 # Initialize plugs at runtime for faster test compilation
