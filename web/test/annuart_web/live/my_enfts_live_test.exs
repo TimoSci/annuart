@@ -35,7 +35,41 @@ defmodule AnnuartWeb.MyEnftsLiveTest do
     assert html =~ ~s(data-secret="distribution")
     assert html =~ ~s(data-label="mock")
     assert html =~ ~s(data-id="3")
-    assert html =~ ~s(phx-update="ignore")
+    # The reveal slot itself is left alone by LiveView patches.
+    assert has_element?(
+             view,
+             ~s(#secret-distribution-mock-3[phx-hook="SecretValue"][phx-update="ignore"])
+           )
+  end
+
+  test "each row has a Claim action for that ENFT", %{conn: conn} do
+    {:ok, view, _} = live(conn, ~p"/mine")
+    render_hook(view, "wallet:changed", %{"address" => @alice})
+
+    for id <- [1, 3] do
+      claim = ~s(#mine-mock-#{id} #claim-mock-#{id})
+      assert has_element?(view, claim <> ~s([phx-hook="TxAction"][phx-update="ignore"]))
+      assert has_element?(view, claim <> ~s([data-action="claim"][data-label="mock"]))
+      assert has_element?(view, claim <> ~s([data-token-id="#{id}"]))
+      assert has_element?(view, claim <> " button[data-role=run]", "Claim")
+    end
+
+    refute has_element?(view, "#claim-mock-2")
+  end
+
+  test "a confirmed claim is accepted and the list stays", %{conn: conn} do
+    {:ok, view, _} = live(conn, ~p"/mine")
+    render_hook(view, "wallet:changed", %{"address" => @alice})
+
+    html =
+      render_hook(view, "tx:confirmed", %{
+        "action" => "claim",
+        "label" => "mock",
+        "tokenId" => "1",
+        "hash" => "0x" <> String.duplicate("ab", 32)
+      })
+
+    assert html =~ ~s(href="/enft/mock/1")
   end
 
   test "updates when the address changes", %{conn: conn} do

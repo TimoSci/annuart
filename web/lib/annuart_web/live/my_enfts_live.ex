@@ -6,12 +6,19 @@ defmodule AnnuartWeb.MyEnftsLive do
   use AnnuartWeb, :live_view
 
   alias Annuart.Chain.{Config, Reader}
-  alias Annuart.Enfts
-  alias AnnuartWeb.{EnftComponents, Layouts}
+  alias Annuart.{Enfts, Indexer}
+  alias AnnuartWeb.{EnftComponents, Layouts, TxComponents}
 
   def mount(_params, _session, socket) do
     if connected?(socket), do: Phoenix.PubSub.subscribe(Annuart.PubSub, "enfts")
     {:ok, assign(socket, page_title: "My ENFTs", refresh: 0)}
+  end
+
+  # A claim was confirmed in the browser. Nothing in the event is used: the
+  # indexer is asked to look, and the hook re-reads what is secret itself.
+  def handle_event("tx:confirmed", _params, socket) do
+    Indexer.sync_now()
+    {:noreply, socket}
   end
 
   # Ownership may have changed: bump a counter so the list below is re-read.
@@ -70,6 +77,13 @@ defmodule AnnuartWeb.MyEnftsLive do
             phx-update="ignore"
           >
           </span>
+          <TxComponents.action
+            id={"claim-#{e.label}-#{e.token_id}"}
+            action="claim"
+            label="Claim"
+            contract_label={e.label}
+            token_id={e.token_id}
+          />
         </div>
       </div>
     </Layouts.app>

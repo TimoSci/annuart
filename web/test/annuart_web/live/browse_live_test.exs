@@ -107,6 +107,84 @@ defmodule AnnuartWeb.BrowseLiveTest do
     assert html =~ "No ENFTs yet."
   end
 
+  @other_nft "0x" <> String.duplicate("a9", 20)
+
+  # A second contract, "other", using the same token.
+  defp add_other_contract do
+    chain = Application.get_env(:annuart, :chain)
+    [first] = chain[:contracts]
+    other = %{first | label: "other", nft: @other_nft}
+    Application.put_env(:annuart, :chain, Keyword.put(chain, :contracts, [first, other]))
+  end
+
+  defp row_text(view, label, id),
+    do: view |> element(~s(#enfts [data-activity-id="enft:#{label}:#{id}"])) |> render()
+
+  test "each row shows the contract label, the token symbol and the created date", %{conn: conn} do
+    mint(token_id: 1, created_at: ~U[2026-11-12 14:03:00Z])
+    {:ok, view, _html} = live(conn, ~p"/")
+    row = row_text(view, "mock", 1)
+    assert row =~ ~r/>\s*mock\s*</
+    assert row =~ "TKN"
+    assert row =~ ~s(datetime="2026-11-12T14:03:00Z")
+    assert row =~ "2026-11-12"
+  end
+
+  test "with one contract there is no contract filter", %{conn: conn} do
+    mint(token_id: 1)
+    {:ok, view, _html} = live(conn, ~p"/")
+    refute has_element?(view, "#contract-filter")
+    assert has_element?(view, "#sort-newest")
+  end
+
+  test "with several contracts a contract filter narrows the list", %{conn: conn} do
+    add_other_contract()
+    mint(token_id: 1)
+    mint(label: "other", nft: @other_nft, token_id: 7)
+
+    {:ok, view, _html} = live(conn, ~p"/")
+    assert has_element?(view, "#contract-filter")
+    assert has_element?(view, ~s(#enfts [data-activity-id="enft:mock:1"]))
+    assert has_element?(view, ~s(#enfts [data-activity-id="enft:other:7"]))
+
+    view |> element("#contract-other") |> render_click()
+    refute has_element?(view, ~s(#enfts [data-activity-id="enft:mock:1"]))
+    assert has_element?(view, ~s(#enfts [data-activity-id="enft:other:7"]))
+    assert has_element?(view, "#contract-other.on")
+
+    # Combined with the donations filter.
+    view |> element("#filter-off") |> render_click()
+    refute has_element?(view, ~s(#enfts [data-activity-id="enft:other:7"]))
+
+    view |> element("#filter-all") |> render_click()
+    view |> element("#contract-all") |> render_click()
+    assert has_element?(view, ~s(#enfts [data-activity-id="enft:mock:1"]))
+    assert has_element?(view, ~s(#enfts [data-activity-id="enft:other:7"]))
+  end
+
+  test "an unknown contract filter is ignored", %{conn: conn} do
+    add_other_contract()
+    mint(token_id: 1)
+    {:ok, view, _html} = live(conn, ~p"/")
+    render_click(view, "contract", %{"label" => "nope"})
+    assert has_element?(view, ~s(#enfts [data-activity-id="enft:mock:1"]))
+  end
+
+  test "sorts newest first or oldest first", %{conn: conn} do
+    mint(token_id: 1, created_at: ~U[2026-11-01 00:00:00Z])
+    mint(token_id: 2, created_at: ~U[2026-11-02 00:00:00Z])
+    {:ok, view, html} = live(conn, ~p"/")
+    assert position(html, "enft:mock:2") < position(html, "enft:mock:1")
+    assert has_element?(view, "#sort-newest.on")
+
+    html = view |> element("#sort-oldest") |> render_click()
+    assert position(html, "enft:mock:1") < position(html, "enft:mock:2")
+    assert has_element?(view, "#sort-oldest.on")
+
+    html = view |> element("#sort-newest") |> render_click()
+    assert position(html, "enft:mock:2") < position(html, "enft:mock:1")
+  end
+
   test "empty state", %{conn: conn} do
     {:ok, _v, html} = live(conn, ~p"/")
     assert html =~ "No ENFTs yet."

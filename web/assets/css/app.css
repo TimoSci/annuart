@@ -83,7 +83,8 @@ h1 { font-size: 26px; font-weight: 500; color: var(--hot-fg); margin: 0 0 4px; l
 .kv .k { opacity: .7; }
 .note { font-size: 12px; opacity: .7; margin: 8px 0 0; }
 
-.filters { display: flex; gap: 6px; margin: 14px 0; }
+.filters { display: flex; flex-wrap: wrap; gap: 6px 22px; margin: 14px 0; }
+.filters .filter-group { display: flex; flex-wrap: wrap; gap: 6px; }
 .filters button {
   background: none; color: inherit; font: inherit; cursor: pointer;
   border: 1px solid var(--line); border-radius: 6px; padding: 3px 12px;
@@ -91,13 +92,13 @@ h1 { font-size: 26px; font-weight: 500; color: var(--hot-fg); margin: 0 0 4px; l
 .filters button.on { border-color: var(--rest-fg); color: var(--hot-fg); }
 
 .rows .row {
-  display: grid; grid-template-columns: 70px 1fr 1fr 110px; gap: 10px;
+  display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 10px;
   padding: 10px 20px; border-radius: 8px; margin-bottom: 4px;
 }
 /* Hover and focus are marked by an outline, never by brightness: brightness
    means "recently clicked" and nothing else. */
 .rows .row:hover, .rows .row:focus-visible { outline: 1px solid var(--rest-fg); outline-offset: -1px; }
-@media (max-width: 760px) { .rows .row { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 760px) { .rows .row { grid-auto-flow: row; grid-template-columns: 1fr 1fr; } }
 
 .bars { display: flex; align-items: flex-end; gap: 3px; height: 84px; margin: 4px 0 14px; }
 .bars .bar { background: currentColor; opacity: .55; border-radius: 2px 2px 0 0; }
