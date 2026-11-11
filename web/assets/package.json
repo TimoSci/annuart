@@ -1,0 +1,6 @@
+{
+  "name": "annuart-assets",
+  "private": true,
+  "description": "JS dependencies for the Annuart web app, bundled by esbuild via mix",
+  "dependencies": {}
+}

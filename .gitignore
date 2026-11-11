@@ -16,3 +16,12 @@ fhevmTemp/
 
 # Claude/superpowers scratch
 .superpowers/
+
+# Phoenix web app
+web/_build/
+web/deps/
+web/priv/static/assets/
+web/priv/static/vendor/
+web/assets/node_modules/
+web/*.db
+web/*.db-*
