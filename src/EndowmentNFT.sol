@@ -17,6 +17,7 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
         uint64 lastAccrualAt;
         uint64 scheduleStart;
         bool topUpsAllowed;
+        bool settled;               // fixed-end schedule is over and the leftover was released
         Segment[] schedule;
     }
 
@@ -40,6 +41,7 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
     error TopUpsDisabled();
     error NonexistentToken();
     error NotOwner();
+    error ScheduleEnded();
 
     constructor(IERC7984 token_) ERC721("Endowment NFT", "ENDOW") {
         token = token_;
@@ -107,6 +109,12 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
         return _endowments[tokenId].lastAccrualAt;
     }
 
+    /// @return true once the schedule has ended and the whole endowment was released.
+    function settledOf(uint256 tokenId) external view returns (bool) {
+        _requireMinted(tokenId);
+        return _endowments[tokenId].settled;
+    }
+
     function _requireMinted(uint256 tokenId) internal view {
         if (_ownerOf(tokenId) == address(0)) revert NonexistentToken();
     }
@@ -150,6 +158,8 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
         Endowment storage e = _endowments[tokenId];
         if (_ownerOf(tokenId) == address(0)) revert NonexistentToken();
         if (!e.topUpsAllowed) revert TopUpsDisabled();
+        // Funds added after the end could never be scheduled, so refuse them.
+        if (block.timestamp >= Schedule.scheduleEnd(e.schedule, e.scheduleStart)) revert ScheduleEnded();
 
         euint64 amount = FHE.fromExternal(encAmount, inputProof);
         FHE.allowTransient(amount, address(token));
@@ -180,7 +190,23 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
 
     function _accrue(uint256 tokenId) internal {
         Endowment storage e = _endowments[tokenId];
+        if (e.settled) return;
         uint64 nowTs = uint64(block.timestamp);
+        uint64 end = Schedule.scheduleEnd(e.schedule, e.scheduleStart);
+
+        if (nowTs >= end) {
+            // Fixed-end schedule is over: release everything that is left to the owner.
+            // An indefinite schedule's end is type(uint64).max, so it never gets here.
+            e.distribution = FHE.add(e.distribution, e.endowmentRemaining);
+            e.endowmentRemaining = FHE.asEuint64(0);
+            e.settled = true;
+            e.lastAccrualAt = end;
+            FHE.allowThis(e.endowmentRemaining); // never granted to any owner
+            FHE.allowThis(e.distribution);
+            FHE.allow(e.distribution, ownerOf(tokenId));
+            return;
+        }
+
         uint64 owed = Schedule.integrate(e.schedule, e.scheduleStart, e.lastAccrualAt, nowTs);
         if (owed == 0) return;
 
@@ -192,7 +218,6 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
         FHE.allowThis(e.distribution);
         FHE.allow(e.distribution, ownerOf(tokenId));
 
-        uint64 end = Schedule.scheduleEnd(e.schedule, e.scheduleStart);
-        e.lastAccrualAt = nowTs < end ? nowTs : end;
+        e.lastAccrualAt = nowTs;
     }
 }

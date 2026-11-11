@@ -298,6 +298,8 @@ contract EndowmentNFTTest is FhevmTest {
         nft.scheduleEndOf(99);
         vm.expectRevert(EndowmentNFT.NonexistentToken.selector);
         nft.lastAccrualAtOf(99);
+        vm.expectRevert(EndowmentNFT.NonexistentToken.selector);
+        nft.settledOf(99);
     }
 
     function test_mint_emitsEndowmentMinted() public {
@@ -309,5 +311,108 @@ contract EndowmentNFTTest is FhevmTest {
         emit EndowmentNFT.EndowmentMinted(1, creator, alice, uint64(block.timestamp), true);
         vm.prank(creator);
         nft.mint(alice, h, p, _segments(), 0, true); // 0 resolves to block.timestamp
+    }
+
+    function test_sweep_releasesLeftoverAtEnd() public {
+        uint256 id = _mintEndowment(alice, 5_000, false); // schedule total is 1000
+        vm.warp(block.timestamp + 999);
+        nft.accrue(id);
+        assertEq(decrypt(nft.distributionHandle(id)), 999);
+        assertFalse(nft.settledOf(id));
+        vm.warp(block.timestamp + 1); // exactly the end
+        nft.accrue(id);
+        assertEq(decrypt(nft.distributionHandle(id)), 5_000);
+        assertEq(decrypt(nft.endowmentHandle(id)), 0); // test-only: decrypt() bypasses ACL
+        assertTrue(nft.settledOf(id));
+        assertEq(nft.lastAccrualAtOf(id), nft.scheduleEndOf(id));
+        // the swept distribution is readable by the owner; the zeroed endowment is not
+        assertTrue(_acl.isAllowed(euint64.unwrap(nft.distributionHandle(id)), alice));
+        assertFalse(_acl.isAllowed(euint64.unwrap(nft.endowmentHandle(id)), alice));
+        assertTrue(_acl.isAllowed(euint64.unwrap(nft.endowmentHandle(id)), address(nft)));
+    }
+
+    function test_sweep_claimPaysEverything() public {
+        uint256 id = _mintEndowment(alice, 5_000, false);
+        vm.warp(block.timestamp + 2_000);
+        vm.prank(alice);
+        nft.claim(id);
+        assertEq(decrypt(token.confidentialBalanceOf(alice)), 5_000);
+        assertEq(decrypt(token.confidentialBalanceOf(address(nft))), 0);
+    }
+
+    // A settled endowment stays settled: later accruals and claims move nothing.
+    function test_sweep_repeatAccrueAndClaimPayNothingMore() public {
+        uint256 id = _mintEndowment(alice, 5_000, false);
+        vm.warp(block.timestamp + 2_000);
+        vm.prank(alice);
+        nft.claim(id);
+        vm.warp(block.timestamp + 500);
+        nft.accrue(id);
+        assertEq(decrypt(nft.distributionHandle(id)), 0);
+        vm.prank(alice);
+        nft.claim(id);
+        assertEq(decrypt(token.confidentialBalanceOf(alice)), 5_000);
+        assertEq(decrypt(token.confidentialBalanceOf(address(nft))), 0);
+    }
+
+    // A schedule whose end is already in the past at mint is swept on first accrual
+    // and refuses top-ups.
+    function test_sweep_scheduleAlreadyOverAtMint() public {
+        vm.warp(1_000_000);
+        uint256 id = _mintWith(alice, 700, true, _segments(), uint64(block.timestamp - 5_000));
+        nft.accrue(id);
+        assertEq(decrypt(nft.distributionHandle(id)), 700);
+        assertTrue(nft.settledOf(id));
+        token.mint(bob, 100);
+        vm.prank(bob);
+        token.setOperator(address(nft), uint48(block.timestamp + 365 days));
+        (externalEuint64 h, bytes memory p) = encryptUint64(100, bob, address(nft));
+        vm.expectRevert(EndowmentNFT.ScheduleEnded.selector);
+        vm.prank(bob);
+        nft.topUp(id, h, p);
+    }
+
+    // A transfer after the end settles the leftover onto the new owner's handle only.
+    function test_sweep_transferAfterEndGivesLeftoverToNewOwner() public {
+        uint256 id = _mintEndowment(alice, 5_000, false);
+        vm.warp(block.timestamp + 2_000);
+        vm.prank(alice);
+        nft.transferFrom(alice, bob, id);
+        assertTrue(nft.settledOf(id));
+
+        euint64 dist = nft.distributionHandle(id);
+        assertTrue(_acl.isAllowed(euint64.unwrap(dist), bob));    // new owner can read
+        assertFalse(_acl.isAllowed(euint64.unwrap(dist), alice)); // old owner cannot read post-transfer handle
+        assertEq(decrypt(dist), 5_000);
+
+        vm.prank(bob);
+        nft.claim(id);
+        assertEq(decrypt(token.confidentialBalanceOf(bob)), 5_000);
+        assertEq(decrypt(token.confidentialBalanceOf(alice)), 0);
+        assertFalse(_acl.isAllowed(euint64.unwrap(nft.distributionHandle(id)), alice));
+    }
+
+    function test_topUp_allowedBeforeEndRejectedAtEnd() public {
+        uint256 id = _mintEndowment(alice, 500, true);
+        vm.warp(block.timestamp + 999);
+        _topUp(id, bob, 10); // one second before the end: fine
+        vm.warp(block.timestamp + 1);
+        token.mint(bob, 100);
+        vm.prank(bob);
+        token.setOperator(address(nft), uint48(block.timestamp + 365 days));
+        (externalEuint64 h, bytes memory p) = encryptUint64(100, bob, address(nft));
+        vm.expectRevert(EndowmentNFT.ScheduleEnded.selector);
+        vm.prank(bob);
+        nft.topUp(id, h, p);
+        // the accepted top-up is part of what the sweep releases
+        nft.accrue(id);
+        assertEq(decrypt(nft.distributionHandle(id)), 510);
+    }
+
+    function test_topUp_neverRejectedOnIndefinite() public {
+        uint256 id = _mintWith(alice, 500, true, _open(1), uint64(block.timestamp));
+        vm.warp(block.timestamp + 10 * 365 days);
+        _topUp(id, bob, 10); // must not revert
+        assertFalse(nft.settledOf(id));
     }
 }
