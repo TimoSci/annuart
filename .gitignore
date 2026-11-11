@@ -13,3 +13,6 @@ types/
 deployments/
 dist/
 fhevmTemp/
+
+# Claude/superpowers scratch
+.superpowers/
