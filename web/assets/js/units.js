@@ -22,18 +22,17 @@ export class ScheduleError extends Error {
 const UNIT_SECONDS = { days: 86400n, weeks: 604800n, months: 2592000n, years: 31536000n };
 const PER_SECONDS = { day: 86400n, month: 2592000n, year: 31536000n };
 
+// Digits and at most one period, nothing else: "1,500" could be one and a half
+// or fifteen hundred, so any separator is refused rather than guessed at.
+const SEPARATED = /^-?[\d.,\s'\u2019_]*\d[\d.,\s'\u2019_]*$/;
+
 export function parseAmount(text, decimals) {
   const trimmed = String(text ?? "").trim();
   if (trimmed === "") throw new AmountError("empty", decimals);
-  // A comma is a thousands separator only: integer part, groups of exactly three.
-  const intPart = trimmed.split(".")[0];
-  if (intPart.includes(",") && !/^-?\d{1,3}(,\d{3})+$/.test(intPart)) {
-    throw new AmountError("not_a_number", decimals);
+  const m = /^(-)?(\d*)(?:\.(\d*))?$/.exec(trimmed);
+  if (!m || (m[2] === "" && (m[3] ?? "") === "")) {
+    throw new AmountError(SEPARATED.test(trimmed) ? "separator" : "not_a_number", decimals);
   }
-  if (trimmed.split(".").slice(1).join(".").includes(",")) throw new AmountError("not_a_number", decimals);
-  const raw = trimmed.replace(/,/g, "");
-  const m = /^(-)?(\d*)(?:\.(\d*))?$/.exec(raw);
-  if (!m || (m[2] === "" && (m[3] ?? "") === "")) throw new AmountError("not_a_number", decimals);
   const [, neg, whole, frac = ""] = m;
   if (frac.length > decimals) {
     // Extra digits are fine only if they are all zeros.
@@ -46,9 +45,12 @@ export function parseAmount(text, decimals) {
   return units;
 }
 
-export function formatAmount(units, decimals) {
+// `grouping: false` leaves out the thousands separators: a value the person
+// typed is shown back to them exactly as the app reads it ("1500.25").
+export function formatAmount(units, decimals, {grouping = true} = {}) {
   const base = 10n ** BigInt(decimals);
-  const whole = (units / base).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const digits = (units / base).toString();
+  const whole = grouping ? digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",") : digits;
   const frac = (units % base).toString().padStart(decimals, "0").replace(/0+$/, "");
   return frac ? `${whole}.${frac}` : whole;
 }
@@ -71,8 +73,8 @@ export function ratePerSecond(amountText, per, decimals) {
   return rate;
 }
 
-export function effectiveRate(perSec, per, decimals) {
-  return formatAmount(perSec * perSeconds(per), decimals);
+export function effectiveRate(perSec, per, decimals, options) {
+  return formatAmount(perSec * perSeconds(per), decimals, options);
 }
 
 export function toSegments(rows, decimals) {

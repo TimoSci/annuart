@@ -32,7 +32,7 @@ function controller(el, {run, session = SESSION, confirm = () => true} = {}) {
 }
 
 const states = el => [...el.querySelectorAll("ol.steps li")].map(li => [li.dataset.step, li.dataset.state]);
-const AMOUNT = `<input data-arg="amount" value="1,500">`;
+const AMOUNT = `<input data-arg="amount" value="1500">`;
 
 test("renders steps as the action reports them", async () => {
   const {el} = setup({extra: AMOUNT});
@@ -135,13 +135,13 @@ test("user rejection leaves no step in progress", async () => {
 });
 
 test("an invalid amount is refused before any action runs", async () => {
-  const {el} = setup({extra: `<input data-arg="amount" value="1,5">`});
+  const {el} = setup({extra: `<input data-arg="amount" value="1,500">`});
   let ran = false;
   const {ctl, pushed} = controller(el, {run: async () => { ran = true; }});
   await ctl.run();
   assert.equal(ran, false);
   assert.equal(pushed.length, 0);
-  assert.match(el.querySelector(".tx-message").textContent, /Enter the amount as a number\./);
+  assert.equal(el.querySelector(".tx-message").textContent, "Use a period for decimals and no separators, for example 1500.25.");
   assert.equal(states(el).length, 0);
 });
 
@@ -202,10 +202,14 @@ test("the amount echo shows the parsed value, or the reason it is invalid", () =
   controller(el, {run: async () => ({})});
   const input = el.querySelector("[data-arg=amount]");
   const echo = () => el.querySelector(".amount-echo").textContent;
+  // What was typed is shown back without digit grouping.
+  input.value = "1500.25";
+  input.dispatchEvent(new window.Event("input", {bubbles: true}));
+  assert.equal(echo(), "= 1500.25 TKN");
   input.value = "1,500";
   input.dispatchEvent(new window.Event("input", {bubbles: true}));
-  assert.equal(echo(), "= 1,500 TKN");
-  input.value = "1,5";
+  assert.equal(echo(), "Use a period for decimals and no separators, for example 1500.25.");
+  input.value = "abc";
   input.dispatchEvent(new window.Event("input", {bubbles: true}));
   assert.equal(echo(), "Enter the amount as a number.");
   input.value = "";

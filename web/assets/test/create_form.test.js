@@ -85,7 +85,7 @@ function fillRow(row, {length, unit = "months", rate, per = "day", indefinite = 
 }
 
 // 18 months at 100/day, then indefinitely at 25/day.
-function fillDefault(el, amount = "1,500") {
+function fillDefault(el, amount = "1500") {
   type(q(el, "amount"), amount);
   click(q(el, "add-period"));
   const [first, second] = rows(el);
@@ -133,7 +133,7 @@ test("shows the stops_early warning with a date", () => {
 
 test("shows the leftover warning with the extra amount and symbol", () => {
   const t = make();
-  type(q(t.el, "amount"), "60,000");
+  type(q(t.el, "amount"), "60000");
   fillRow(rows(t.el)[0], {length: 18, unit: "months", rate: "100"});
   assert.match(q(t.el, "warning").textContent, /^6,019.008 TKN extra will be paid to the owner as a lump sum when the schedule ends\.$/);
 });
@@ -300,8 +300,10 @@ test("validation stops at the first failure, in order: amount, rows, recipient, 
 
 test("the amount echo shows the parsed value, or the reason it is invalid", () => {
   const t = make();
-  type(q(t.el, "amount"), "1500");
-  assert.equal(t.el.querySelector(".amount-echo").textContent, "= 1,500 TKN");
+  type(q(t.el, "amount"), "123456.5");
+  assert.equal(t.el.querySelector(".amount-echo").textContent, "= 123456.5 TKN");
+  type(q(t.el, "amount"), "1,500");
+  assert.equal(t.el.querySelector(".amount-echo").textContent, "Use a period for decimals and no separators, for example 1500.25.");
   type(q(t.el, "amount"), "1.2345678");
   assert.equal(t.el.querySelector(".amount-echo").textContent, "Use at most 6 decimal places.");
   type(q(t.el, "amount"), "");
@@ -321,7 +323,7 @@ test("a summary precedes the first transaction and states what will be locked", 
   assert.equal(t.calls.length, 0, "nothing runs before confirmation");
   const text = summary.textContent;
   for (const part of [
-    "1,500 TKN",
+    "You are about to lock 1500 TKN in a new ENFT.",
     OTHER,
     "1 June 2031, 12:00",
     "Donations are allowed",
@@ -455,5 +457,34 @@ test("confirming re-checks that a chosen start is still in the future", async ()
   await t.ctl.pending;
   assert.match(message(t.el), /start.*future/i);
   assert.equal(q(t.el, "summary").hidden, true);
+  assert.equal(t.calls.length, 0);
+});
+
+test("values the person typed are echoed without grouping; computed totals keep it", async () => {
+  const t = make();
+  type(q(t.el, "amount"), "60000");
+  fillRow(rows(t.el)[0], {length: 18, unit: "months", rate: "1500", per: "month"});
+  const [row] = rows(t.el);
+  // 1500 a month at 6 decimals is 578 base units a second, so 1498.176 a month.
+  assert.equal(q(row, "effective").textContent, "= 1498.176 TKN per month");
+  // Computed, not typed: grouped.
+  assert.equal(q(row, "upto").textContent, "Up to 26,967.168 TKN");
+  assert.equal(q(t.el, "warning").textContent, "33,032.832 TKN extra will be paid to the owner as a lump sum when the schedule ends.");
+  click(q(t.el, "run"));
+  const text = q(t.el, "summary").textContent;
+  assert.ok(text.includes("You are about to lock 60000 TKN in a new ENFT."), text);
+  assert.ok(text.includes("18 months at 1498.176 TKN per month"), text);
+  assert.ok(text.includes("33032.832 TKN extra"), text);
+  assert.doesNotMatch(text, /\d,\d{3}/, "no grouped number in the summary");
+});
+
+test("an amount typed with a separator is refused and nothing runs", async () => {
+  const t = make();
+  for (const bad of ["1,500", "0,500", "1 500", "1'500", "1.500,25"]) {
+    fillDefault(t.el, bad);
+    await submit(t);
+    assert.equal(message(t.el), "Use a period for decimals and no separators, for example 1500.25.", bad);
+    for (const row of rows(t.el).slice(1)) click(q(row, "remove-period"));
+  }
   assert.equal(t.calls.length, 0);
 });

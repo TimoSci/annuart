@@ -6,7 +6,7 @@ import {
 } from "../js/units.js";
 
 test("parseAmount", () => {
-  assert.equal(parseAmount("1,000.5", 6), 1000500000n);
+  assert.equal(parseAmount("1000.5", 6), 1000500000n);
   assert.equal(parseAmount("0.000001", 6), 1n);
   assert.throws(() => parseAmount("0.0000001", 6), { code: "too_many_decimals" });
   assert.throws(() => parseAmount("", 6), { code: "empty" });
@@ -18,6 +18,8 @@ test("parseAmount", () => {
 
 test("formatAmount", () => {
   assert.equal(formatAmount(1000500000n, 6), "1,000.5");
+  assert.equal(formatAmount(1000500000n, 6, {grouping: false}), "1000.5");
+  assert.equal(formatAmount(1234567890000000n, 6, {grouping: false}), "1234567890");
   assert.equal(formatAmount(1n, 6), "0.000001");
   assert.equal(formatAmount(2000000n, 6), "2");
   assert.equal(formatAmount(0n, 6), "0");
@@ -33,6 +35,8 @@ test("durationSeconds", () => {
 test("ratePerSecond", () => {
   assert.equal(ratePerSecond("100", "day", 6), 1157n);
   assert.equal(effectiveRate(1157n, "day", 6), "99.9648");
+  assert.equal(effectiveRate(1157000n, "day", 6), "99,964.8");
+  assert.equal(effectiveRate(1157000n, "day", 6, {grouping: false}), "99964.8");
   assert.throws(() => ratePerSecond("1", "month", 6), { code: "rate_rounds_to_zero" });
   assert.equal(ratePerSecond("0.0001", "day", 9), 1n);
 });
@@ -81,10 +85,18 @@ test("amountWarning: indefinite runs dry", () => {
   assert.deepEqual(amountWarning(s, 1000n, 500n), { kind: "runs_dry", at: 1200n });
 });
 
-test("parseAmount accepts commas only as thousands separators", () => {
-  assert.equal(parseAmount("1,000.5", 6), 1000500000n);
-  assert.equal(parseAmount("1,000,000", 6), 1000000000000n);
-  for (const bad of ["1,5", "1,0,0", "1,00", "1000,000", "1.000,5", "0.5,000"]) {
+test("parseAmount accepts digits and at most one period, and refuses any separator", () => {
+  assert.equal(parseAmount("1500.25", 6), 1500250000n);
+  assert.equal(parseAmount("1000000", 6), 1000000000000n);
+  assert.equal(parseAmount(".5", 6), 500000n);
+  assert.equal(parseAmount("  1500  ", 6), 1500000000n);
+  for (const bad of [
+    "1,500", "0,500", "1 500", "1'500", "1.500,25", "1,000.5", "1,000,000", "1,5", "1.000.000",
+    "1_500", "1\u00a0500", "1\u2009500", "1\u2019500", "-1,5",
+  ]) {
+    assert.throws(() => parseAmount(bad, 6), { name: "AmountError", code: "separator" }, bad);
+  }
+  for (const bad of ["abc", "1e5", "0x10", "1500 MOCK", "$1500", "."]) {
     assert.throws(() => parseAmount(bad, 6), { code: "not_a_number" }, bad);
   }
 });

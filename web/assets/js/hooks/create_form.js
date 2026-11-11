@@ -24,6 +24,9 @@ const INDEFINITE_SHARE = 30;
 const MIN_BAR_HEIGHT = 4;
 // Dates beyond this are outside what a JavaScript Date can show.
 const MAX_DATE_SECONDS = 8_640_000_000_000n;
+// What the person typed is shown back without digit grouping, so "1,500" can
+// never be read as one and a half; computed values keep it.
+const TYPED = {grouping: false};
 
 class InputError extends Error {}
 
@@ -48,13 +51,13 @@ function dateText(seconds, withTime = false) {
   return `${day}, ${date.toLocaleTimeString("en-GB", {hour: "2-digit", minute: "2-digit", hour12: false})}`;
 }
 
-function warningText(warning, {symbol, decimals}) {
+function warningText(warning, {symbol, decimals}, format) {
   if (!warning) return "";
   switch (warning.kind) {
     case "stops_early":
       return `Your endowment is less than the schedule total. Payouts will stop early, around ${dateText(warning.at)}.`;
     case "leftover":
-      return `${formatAmount(warning.extra, decimals)} ${symbol} extra will be paid to the owner as a lump sum when the schedule ends.`;
+      return `${formatAmount(warning.extra, decimals, format)} ${symbol} extra will be paid to the owner as a lump sum when the schedule ends.`;
     default:
       return `At these rates the endowment runs out around ${dateText(warning.at)}.`;
   }
@@ -261,7 +264,7 @@ export class CreateFormController {
       try {
         if (decimals === null) throw new InputError("Token details are unavailable. Try again later.");
         amount = parseAmount(input.value, decimals);
-        this.echo.textContent = `= ${formatAmount(amount, decimals)} ${symbol}`.trim();
+        this.echo.textContent = `= ${formatAmount(amount, decimals, TYPED)} ${symbol}`.trim();
       } catch (err) {
         this.echo.textContent = err.message && err instanceof InputError ? err.message : explainAmount(err, symbol);
       }
@@ -282,7 +285,7 @@ export class CreateFormController {
         return;
       }
       valid.push(segment);
-      effective.textContent = `= ${effectiveRate(segment.ratePerSec, rows[i].per, decimals)} ${symbol} per ${rows[i].per}`;
+      effective.textContent = `= ${effectiveRate(segment.ratePerSec, rows[i].per, decimals, TYPED)} ${symbol} per ${rows[i].per}`;
       upto.textContent = segment.duration === U64_MAX
         ? "Pays until the endowment runs out"
         : `Up to ${formatAmount(segment.duration * segment.ratePerSec, decimals)} ${symbol}`;
@@ -403,15 +406,15 @@ export class CreateFormController {
       : `Payouts start on ${dateText(args.start, true)}.`;
     const donations = args.topUps ? "Donations are allowed" : "Donations are not allowed";
     const words = rows.map((row, i) => {
-      const rate = `${effectiveRate(args.segments[i].ratePerSec, row.per, decimals)} ${symbol} per ${row.per}`;
+      const rate = `${effectiveRate(args.segments[i].ratePerSec, row.per, decimals, TYPED)} ${symbol} per ${row.per}`;
       if (row.indefinite) return `${i === 0 ? "" : "then "}indefinitely at ${rate}`;
       const n = row.length.trim();
       const unit = Number(n) === 1 ? row.unit.replace(/s$/, "") : row.unit;
       return `${i === 0 ? "" : "then "}${n} ${unit} at ${rate}`;
     }).join(", ");
-    const warning = warningText(amountWarning(args.segments, args.start === 0n ? now : args.start, args.amount), {symbol, decimals});
+    const warning = warningText(amountWarning(args.segments, args.start === 0n ? now : args.start, args.amount), {symbol, decimals}, TYPED);
     return [
-      `You are about to lock ${formatAmount(args.amount, decimals)} ${symbol} in a new ENFT.`,
+      `You are about to lock ${formatAmount(args.amount, decimals, TYPED)} ${symbol} in a new ENFT.`,
       `The ENFT will belong to ${me}.`,
       startText,
       `${donations}, and this cannot be changed later.`,

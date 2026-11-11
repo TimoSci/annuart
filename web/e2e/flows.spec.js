@@ -235,7 +235,7 @@ test("dev login: get test tokens, create an ENFT, land on its page", async ({pag
   await expect(balance.locator(".secret-value")).toHaveText("•••••");
   expect(await reveal(balance)).toMatch(/^[\d,.]+ MOCK$/);
   await form.locator("[data-role=amount]").fill("2000");
-  await expect(form.locator(".amount-echo").first()).toHaveText("= 2,000 MOCK");
+  await expect(form.locator(".amount-echo").first()).toHaveText("= 2000 MOCK");
   await fillPeriod(form, {length: "1", unit: "days", rate: "1000", per: "day"});
   // 1,000 a day is stored per second, rounded down, so a day pays slightly less.
   await expect(form.locator("[data-role=total]")).toHaveText("Schedule pays up to 999.9936 MOCK in total over 1 day.");
@@ -245,7 +245,7 @@ test("dev login: get test tokens, create an ENFT, land on its page", async ({pag
   await form.locator("button[data-role=run]").click();
   const summary = form.locator("[data-role=summary]");
   await expect(summary).toBeVisible();
-  await expect(summary).toContainText("You are about to lock 2,000 MOCK in a new ENFT.");
+  await expect(summary).toContainText("You are about to lock 2000 MOCK in a new ENFT.");
   await expect(form.locator("ol.steps li")).toHaveCount(0);
   // The steps can finish and the page move on between two polls, so the last
   // state each step showed is recorded in the page (live navigation keeps it).

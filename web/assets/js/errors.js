@@ -41,6 +41,7 @@ export function explainAmount(err, symbol) {
   switch (err?.code) {
     case "empty": return "Enter an amount.";
     case "not_a_number": return "Enter the amount as a number.";
+    case "separator": return "Use a period for decimals and no separators, for example 1500.25.";
     case "too_many_decimals": return `Use at most ${err.decimals} decimal places.`;
     case "negative": return "The amount cannot be negative.";
     case "zero": return "The amount must be above zero.";

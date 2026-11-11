@@ -39,6 +39,8 @@ const PLANS = {
 const STATE_TEXT = {waiting: "waiting", active: "in progress", done: "done", skipped: "skipped"};
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const ETH_DECIMALS = 18;
+// A value the person typed is shown back without digit grouping.
+const TYPED = {grouping: false};
 
 class InputError extends Error {}
 
@@ -162,7 +164,7 @@ export class TxActionController {
     if (input.value.trim() === "") { echo.textContent = ""; return; }
     try {
       const {value, decimals, symbol} = this.parse(input);
-      echo.textContent = `= ${formatAmount(value, decimals)} ${symbol}`.trim();
+      echo.textContent = `= ${formatAmount(value, decimals, TYPED)} ${symbol}`.trim();
     } catch (err) {
       echo.textContent = err.message;
     }
