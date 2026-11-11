@@ -37,5 +37,6 @@ test("explainAmount", () => {
   assert.equal(explainAmount(new AmountError("too_many_decimals", 6), "USDC"), "Use at most 6 decimal places.");
   assert.equal(explainAmount(new AmountError("empty"), "USDC"), "Enter an amount.");
   assert.equal(explainAmount(new ScheduleError("indefinite_not_last"), "USDC"), "Only the last period can be indefinite.");
+  assert.equal(explainAmount(new ScheduleError("too_long"), "USDC"), "This schedule runs too far into the future.");
   assert.equal(explainAmount(new ScheduleError("empty"), "USDC"), "Add at least one period.");
 });

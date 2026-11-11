@@ -38,6 +38,7 @@ export function explainAmount(err, symbol) {
     case "too_large": return `That is more ${symbol} than a single ENFT can hold.`;
     case "rate_rounds_to_zero": return "This rate is too small to pay anything. Enter a larger rate.";
     case "indefinite_not_last": return SELECTORS["0x8dba7587"];
+    case "too_long": return SELECTORS["0x15a7d4e1"];
     case "zero_length": return SELECTORS["0x91378467"];
     default: return String(err?.message || err);
   }

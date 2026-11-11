@@ -80,3 +80,24 @@ test("amountWarning: indefinite runs dry", () => {
   const s = [{ duration: 100n, ratePerSec: 2n }, { duration: U64_MAX, ratePerSec: 3n }];
   assert.deepEqual(amountWarning(s, 1000n, 500n), { kind: "runs_dry", at: 1200n });
 });
+
+test("parseAmount accepts commas only as thousands separators", () => {
+  assert.equal(parseAmount("1,000.5", 6), 1000500000n);
+  assert.equal(parseAmount("1,000,000", 6), 1000000000000n);
+  for (const bad of ["1,5", "1,0,0", "1,00", "1000,000", "1.000,5", "0.5,000"]) {
+    assert.throws(() => parseAmount(bad, 6), { code: "not_a_number" }, bad);
+  }
+});
+
+test("toSegments bounds fixed lengths", () => {
+  const row = (length, unit = "days") => [{ length, unit, rate: "1", per: "day" }];
+  for (const bad of [-1, "-1", 1.5, "1.5", "abc", "", undefined, 0]) {
+    assert.throws(() => toSegments(row(bad), 6), { code: "zero_length" }, String(bad));
+  }
+  assert.throws(() => toSegments(row("999999999999999999999"), 6), { code: "too_long" });
+  assert.throws(() => toSegments(row(1e30), 6), { code: "too_long" });
+  const half = "106751991167301"; // days; each is below U64_MAX, two together are above
+  assert.equal(toSegments(row(half), 6).length, 1);
+  assert.throws(() => toSegments([...row(half), ...row(half)], 6), { code: "too_long" });
+  assert.throws(() => toSegments([...row(half), ...row(half), { rate: "1", per: "day", indefinite: true }], 6), { code: "too_long" });
+});

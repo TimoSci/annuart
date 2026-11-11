@@ -23,8 +23,15 @@ const UNIT_SECONDS = { days: 86400n, weeks: 604800n, months: 2592000n, years: 31
 const PER_SECONDS = { day: 86400n, month: 2592000n, year: 31536000n };
 
 export function parseAmount(text, decimals) {
-  const raw = String(text ?? "").trim().replace(/,/g, "");
-  if (raw === "") throw new AmountError("empty", decimals);
+  const trimmed = String(text ?? "").trim();
+  if (trimmed === "") throw new AmountError("empty", decimals);
+  // A comma is a thousands separator only: integer part, groups of exactly three.
+  const intPart = trimmed.split(".")[0];
+  if (intPart.includes(",") && !/^-?\d{1,3}(,\d{3})+$/.test(intPart)) {
+    throw new AmountError("not_a_number", decimals);
+  }
+  if (trimmed.split(".").slice(1).join(".").includes(",")) throw new AmountError("not_a_number", decimals);
+  const raw = trimmed.replace(/,/g, "");
   const m = /^(-)?(\d*)(?:\.(\d*))?$/.exec(raw);
   if (!m || (m[2] === "" && (m[3] ?? "") === "")) throw new AmountError("not_a_number", decimals);
   const [, neg, whole, frac = ""] = m;
@@ -70,17 +77,32 @@ export function effectiveRate(perSec, per, decimals) {
 
 export function toSegments(rows, decimals) {
   if (!rows || rows.length === 0) throw new ScheduleError("empty");
-  return rows.map((row, i) => {
+  let fixedTotal = 0n;
+  const segments = rows.map((row, i) => {
     let duration;
     if (row.indefinite) {
       if (i !== rows.length - 1) throw new ScheduleError("indefinite_not_last");
       duration = U64_MAX;
     } else {
-      duration = durationSeconds(row.length || 0, row.unit);
-      if (duration === 0n) throw new ScheduleError("zero_length");
+      duration = fixedDuration(row.length, row.unit);
+      fixedTotal += duration;
+      if (fixedTotal >= U64_MAX) throw new ScheduleError("too_long");
     }
     return { duration, ratePerSec: ratePerSecond(row.rate, row.per, decimals) };
   });
+  return segments;
+}
+
+// A whole, positive number of units, with duration below U64_MAX.
+function fixedDuration(length, unit) {
+  let n;
+  if (typeof length === "number" && Number.isInteger(length)) n = BigInt(length);
+  else if (typeof length === "string" && /^\d+$/.test(length.trim())) n = BigInt(length.trim());
+  else throw new ScheduleError("zero_length");
+  if (n <= 0n) throw new ScheduleError("zero_length");
+  const duration = durationSeconds(n, unit);
+  if (duration >= U64_MAX) throw new ScheduleError("too_long");
+  return duration;
 }
 
 const isIndefinite = (segments) => segments.some((s) => s.duration === U64_MAX);
