@@ -49,19 +49,41 @@ const actions = await import("../js/chain/actions.js");
 const {explain} = await import("../js/errors.js");
 const {createDevSigner} = await import("../js/chain/signer/dev.js");
 const {createMockFhe} = await import("../js/chain/fhe/mock.js");
+const {getFhe} = await import("../js/chain/fhe.js");
 
 const provider = new JsonRpcProvider(RPC_URL, undefined, {cacheTimeout: -1, pollingInterval: 100});
 const mock = chain.contracts.find(c => c.label === "mock");
 const wrapped = chain.contracts.find(c => c.label === "wrapped");
 const DAY = 86400;
 
-let alice, bob, carol;
+let alice, bob, carol, dave;
 if (!skip) {
   // As dev.js does in the browser: the mock FHE client is registered by the dev bundle.
   window.__annuartDev = {createFhe: session => createMockFhe(session, {provider})};
   alice = await createDevSigner({index: 1, provider});
   bob = await createDevSigner({index: 2, provider});
   carol = await createDevSigner({index: 3, provider});
+  dave = await createDevSigner({index: 4, provider});
+}
+
+// The same session, but its wallet rejects the nth transaction it is asked to send.
+function rejectingNth(session, n) {
+  let sent = 0;
+  const signer = new Proxy(session.signer, {
+    get(target, prop) {
+      if (prop === "sendTransaction") {
+        return async tx => {
+          if (++sent === n) {
+            throw Object.assign(new Error("user rejected transaction"), {code: "ACTION_REJECTED"});
+          }
+          return target.sendTransaction(tx);
+        };
+      }
+      const v = Reflect.get(target, prop, target);
+      return typeof v === "function" ? v.bind(target) : v;
+    },
+  });
+  return {...session, signer};
 }
 
 // Records onStep calls for one action.
@@ -227,4 +249,149 @@ test("operatorStatus reports authorised and an expiry about a year out", {skip},
 
 test("faucet refuses a token that is not the mock", {skip}, async () => {
   await assert.rejects(() => actions.faucet(alice, wrapped, {amount: 1n}, steps()), /mock token/);
+});
+
+// Recovery for wrap and unwrap. Dave (account 4) is used only here; each test
+// first clears anything an earlier failed run may have left behind.
+const ETHER = 10n ** 18n;
+const UNIT = 10n ** 9n; // wei per confidential unit: rate() of the 9-decimal wrapper
+
+async function cleanSlate(session) {
+  for (const {requestId} of await actions.pendingUnwraps(session, wrapped)) {
+    await actions.finaliseUnwrap(session, wrapped, {requestId}, steps());
+  }
+  const weth = await actions.wethBalance(session, wrapped);
+  if (weth > 0n) await actions.withdrawWeth(session, wrapped, {wei: weth}, steps());
+}
+
+// ETH, WETH and confidential balance, plus the block they were read at.
+async function snapshot(session) {
+  return {
+    block: await provider.getBlockNumber(),
+    eth: await actions.ethBalance(session),
+    weth: await actions.wethBalance(session, wrapped),
+    conf: await actions.revealBalance(session, wrapped),
+  };
+}
+const feesSince = async (session, snap) => feesPaid(session.address, snap.block, await provider.getBlockNumber());
+
+test("wrap with approve rejected, retried, moves exactly one deposit's worth", {skip}, async () => {
+  await cleanSlate(dave);
+  const before = await snapshot(dave);
+
+  const first = steps();
+  await assert.rejects(
+    () => actions.wrap(rejectingNth(dave, 2), wrapped, {wei: ETHER}, first),
+    err => explain(err) === "You cancelled the request in your wallet.",
+  );
+  assert.equal(first.state("deposit"), "done");
+  assert.equal(first.state("approve"), "failed");
+  assert.equal(await actions.wethBalance(dave, wrapped), ETHER);
+
+  const retry = steps();
+  await actions.wrap(dave, wrapped, {wei: ETHER}, retry);
+  assert.deepEqual(retry.ids(), ["deposit", "approve", "wrap", "mined"]);
+  assert.equal(retry.state("deposit"), "skipped"); // the WETH from the first attempt is used
+
+  assert.equal(await actions.wethBalance(dave, wrapped), 0n);
+  assert.equal(await actions.revealBalance(dave, wrapped), before.conf + ETHER / UNIT);
+  assert.equal(await actions.ethBalance(dave), before.eth - ETHER - await feesSince(dave, before));
+});
+
+test("wrap of an amount with dust leaves no WETH behind", {skip}, async () => {
+  await cleanSlate(dave);
+  const before = await snapshot(dave);
+  await actions.wrap(dave, wrapped, {wei: ETHER + 123n}, steps());
+  assert.equal(await actions.wethBalance(dave, wrapped), 0n);
+  assert.equal(await actions.revealBalance(dave, wrapped), before.conf + ETHER / UNIT);
+  assert.equal(await actions.ethBalance(dave), before.eth - ETHER - await feesSince(dave, before));
+});
+
+test("wrap below the wrapper's granularity throws before any transaction", {skip}, async () => {
+  const block = await provider.getBlockNumber();
+  const st = steps();
+  await assert.rejects(() => actions.wrap(dave, wrapped, {wei: UNIT - 1n}, st), /at least/);
+  assert.equal(await provider.getBlockNumber(), block);
+  assert.equal(st.state("deposit"), "failed");
+  assert.match(st.detail("deposit"), /^Wrap at least /);
+});
+
+test("unwrap with finalise rejected: pendingUnwraps lists it and finaliseUnwrap completes it", {skip}, async () => {
+  await cleanSlate(dave);
+  const before = await snapshot(dave);
+  await actions.wrap(dave, wrapped, {wei: ETHER}, steps());
+
+  const st = steps();
+  let requestId;
+  await assert.rejects(
+    () => actions.unwrap(rejectingNth(dave, 2), wrapped, {amount: UNIT}, st),
+    err => { requestId = err.requestId; return explain(err) === "You cancelled the request in your wallet."; },
+  );
+  assert.match(requestId, /^0x[0-9a-f]{64}$/);
+  assert.equal(st.state("request"), "done");
+  assert.deepEqual(st.detail("request"), {requestId});
+  assert.equal(st.state("decrypt"), "done");
+  assert.equal(st.state("finalise"), "failed");
+
+  const pending = await actions.pendingUnwraps(dave, wrapped);
+  assert.deepEqual(pending, [{requestId, amountHandle: requestId}]);
+
+  const fin = steps();
+  await actions.finaliseUnwrap(dave, wrapped, {requestId}, fin);
+  assert.deepEqual(fin.ids(), ["decrypt", "finalise", "withdraw", "mined"]);
+  assert.ok(fin.finalStates().every(s => s === "done"));
+
+  assert.deepEqual(await actions.pendingUnwraps(dave, wrapped), []);
+  assert.equal(await actions.wethBalance(dave, wrapped), 0n);
+  assert.equal(await actions.revealBalance(dave, wrapped), before.conf);
+  assert.equal(await actions.ethBalance(dave), before.eth - await feesSince(dave, before));
+});
+
+test("unwrap with withdraw rejected: wethBalance shows it and withdrawWeth recovers it", {skip}, async () => {
+  await cleanSlate(dave);
+  const before = await snapshot(dave);
+  await actions.wrap(dave, wrapped, {wei: ETHER}, steps());
+
+  const st = steps();
+  await assert.rejects(
+    () => actions.unwrap(rejectingNth(dave, 3), wrapped, {amount: UNIT}, st),
+    err => typeof err.requestId === "string",
+  );
+  assert.equal(st.state("finalise"), "done");
+  assert.equal(st.state("withdraw"), "failed");
+  assert.deepEqual(await actions.pendingUnwraps(dave, wrapped), []);
+  assert.equal(await actions.wethBalance(dave, wrapped), ETHER);
+
+  const w = steps();
+  await actions.withdrawWeth(dave, wrapped, {wei: ETHER}, w);
+  assert.deepEqual(w.ids(), ["confirm", "mined"]);
+  assert.equal(await actions.wethBalance(dave, wrapped), 0n);
+  assert.equal(await actions.revealBalance(dave, wrapped), before.conf);
+  assert.equal(await actions.ethBalance(dave), before.eth - await feesSince(dave, before));
+});
+
+test("a missing decrypted value fails the decrypt step, not the request step", {skip}, async () => {
+  await cleanSlate(dave);
+  await actions.wrap(dave, wrapped, {wei: ETHER}, steps());
+  const fhe = await getFhe(dave);
+  const realPublicDecrypt = fhe.publicDecrypt;
+  fhe.publicDecrypt = async () => ({values: new Map(), proof: "0x"});
+  const st = steps();
+  let requestId;
+  try {
+    await assert.rejects(
+      () => actions.unwrap(dave, wrapped, {amount: UNIT}, st),
+      err => { requestId = err.requestId; return /could not be decrypted/.test(err.message); },
+    );
+  } finally {
+    fhe.publicDecrypt = realPublicDecrypt;
+  }
+  assert.deepEqual(st.log.filter(e => e.id === "request").map(e => e.state), ["active", "done"]);
+  assert.equal(st.state("decrypt"), "failed");
+  assert.match(st.detail("decrypt"), /could not be decrypted/);
+  assert.ok(!st.finalStates().includes("active"));
+  // The request it left pending is recoverable.
+  assert.deepEqual((await actions.pendingUnwraps(dave, wrapped)).map(p => p.requestId), [requestId]);
+  await actions.finaliseUnwrap(dave, wrapped, {requestId}, steps());
+  assert.deepEqual(await actions.pendingUnwraps(dave, wrapped), []);
 });

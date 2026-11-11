@@ -31,6 +31,7 @@ export const TOKEN_ABI = [
   "function unwrap(address from, address to, bytes32 encAmount, bytes inputProof) returns (bytes32)",
   "function finalizeUnwrap(bytes32 unwrapRequestId, uint64 unwrapAmountCleartext, bytes decryptionProof)",
   "function rate() view returns (uint256)",
+  "function unwrapRequester(bytes32 unwrapRequestId) view returns (address)",
   "event UnwrapRequested(address indexed receiver, bytes32 indexed unwrapRequestId, bytes32 amount)",
 ];
 

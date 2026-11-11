@@ -1,5 +1,13 @@
 // Turns wallet and contract failures into plain sentences.
 
+// A failure whose message is already a plain sentence for the user.
+export class ActionError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ActionError";
+  }
+}
+
 const SELECTORS = {
   "0x4067fd1b": "This ENFT does not accept donations.",
   "0x30cd7471": "Only the owner can do this.",
@@ -20,6 +28,7 @@ function selectorOf(err) {
 }
 
 export function explain(err) {
+  if (err instanceof ActionError) return err.message;
   const sel = selectorOf(err);
   if (sel && SELECTORS[sel]) return SELECTORS[sel];
   if (err?.code === 4001 || err?.code === "ACTION_REJECTED") return "You cancelled the request in your wallet.";

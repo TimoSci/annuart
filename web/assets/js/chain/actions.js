@@ -2,12 +2,14 @@
 // or a decryption. Each action takes (session, contract, args, onStep), where
 // `contract` is an entry of chainInfo().contracts and onStep(stepId, state,
 // detail?) reports progress with state "active" | "done" | "skipped" | "failed".
-// A failure marks the step in progress (or the first step, if none had started)
-// "failed" with errors.explain(err), and rethrows.
-import {Contract} from "ethers";
+// Every piece of work runs inside the step that owns it; checks made before the
+// first step (the chain check, wrap's amount check) belong to the first step.
+// A failure marks that step "failed" with errors.explain(err) and rethrows.
+import {Contract, ZeroAddress} from "ethers";
 import {ensureChain} from "./signer.js";
 import {getFhe} from "./fhe.js";
-import {explain} from "../errors.js";
+import {ActionError, explain} from "../errors.js";
+import {formatAmount} from "../units.js";
 import {NFT_ABI, TOKEN_ABI, WETH_ABI} from "./abi.js";
 
 const YEAR = 365 * 86400;
@@ -15,28 +17,39 @@ const YEAR = 365 * 86400;
 async function withSteps(onStep, firstStep, fn) {
   const report = (id, state, detail) => onStep?.(id, state, detail);
   let active = null;
+  let started = false;
   const steps = {
-    async step(id, work) {
+    // Runs `work` as step `id`. `doneDetail(result)` is reported with "done".
+    async step(id, work, doneDetail) {
       active = id;
+      started = true;
       report(id, "active");
       const result = await work();
-      report(id, "done");
+      report(id, "done", doneDetail?.(result));
       active = null;
       return result;
     },
-    skip: id => report(id, "skipped"),
-    // Sends a transaction under `sendId`, then waits for it under `minedId`.
-    async send(sendId, minedId, sendTx) {
-      const tx = await steps.step(sendId, sendTx);
-      return steps.step(minedId, () => tx.wait());
+    skip(id) {
+      started = true;
+      report(id, "skipped");
     },
-    // Sends and waits for a transaction under one step.
-    sendAndWait: (id, sendTx) => steps.step(id, async () => (await sendTx()).wait()),
+    // Sends a transaction under `sendId`, then waits for it, and runs
+    // `onMined(receipt)`, under `minedId`.
+    async send(sendId, minedId, sendTx, onMined = receipt => receipt) {
+      const tx = await steps.step(sendId, sendTx);
+      return steps.step(minedId, async () => onMined(await tx.wait()));
+    },
+    // Sends, waits for and reads a transaction under one step.
+    sendAndWait: (id, sendTx, onMined = receipt => receipt, doneDetail) =>
+      steps.step(id, async () => onMined(await (await sendTx()).wait()), doneDetail),
   };
   try {
     return await fn(steps);
   } catch (err) {
-    report(active ?? firstStep, "failed", explain(err));
+    // With all work inside steps, nothing can fail between two steps. A step
+    // already reported done or skipped is never marked failed.
+    const failed = active ?? (started ? null : firstStep);
+    if (failed) report(failed, "failed", explain(err));
     throw err;
   }
 }
@@ -68,8 +81,7 @@ function requireKind(contract, kind, message) {
 async function authoriseIfNeeded(steps, s, contract) {
   const token = tokenOf(contract, s.signer);
   if (await token.isOperator(s.address, contract.nft)) return steps.skip("authorise");
-  const until = await yearFromNow(s);
-  await steps.sendAndWait("authorise", () => token.setOperator(contract.nft, until));
+  await steps.sendAndWait("authorise", async () => token.setOperator(contract.nft, await yearFromNow(s)));
 }
 
 export function createEnft(session, contract, {to, amount, segments, start, topUps}, onStep) {
@@ -79,9 +91,9 @@ export function createEnft(session, contract, {to, amount, segments, start, topU
     const enc = await steps.step("encrypt", async () => (await getFhe(s)).encrypt64(contract.nft, s.address, amount));
     const nft = nftOf(contract, s.signer);
     const schedule = segments.map(({duration, ratePerSec}) => ({duration, ratePerSec}));
-    const receipt = await steps.send("confirm", "mined",
-      () => nft.mint(to, enc.handle, enc.inputProof, schedule, start, topUps));
-    return {hash: receipt.hash, tokenId: findEvent(receipt, nft, "EndowmentMinted").args.tokenId};
+    return steps.send("confirm", "mined",
+      () => nft.mint(to, enc.handle, enc.inputProof, schedule, start, topUps),
+      receipt => ({hash: receipt.hash, tokenId: findEvent(receipt, nft, "EndowmentMinted").args.tokenId}));
   });
 }
 
@@ -117,8 +129,11 @@ export const transfer = (session, contract, {tokenId, to}, onStep) =>
 export function authorise(session, contract, _args, onStep) {
   return withSteps(onStep, "confirm", async steps => {
     const s = await ensureChain(session);
-    const until = await yearFromNow(s);
-    const receipt = await steps.send("confirm", "mined", () => tokenOf(contract, s.signer).setOperator(contract.nft, until));
+    let until;
+    const receipt = await steps.send("confirm", "mined", async () => {
+      until = await yearFromNow(s);
+      return tokenOf(contract, s.signer).setOperator(contract.nft, until);
+    });
     return {hash: receipt.hash, until};
   });
 }
@@ -128,39 +143,81 @@ export async function faucet(session, contract, {amount}, onStep) {
   return single(session, onStep, s => tokenOf(contract, s.signer).mint(s.address, amount));
 }
 
-// ETH -> WETH -> confidential WETH. The wrapper takes whole multiples of rate();
-// any remainder stays as WETH.
+// ETH -> WETH -> confidential WETH. The wrapper takes whole multiples of
+// rate(), so `wei` is rounded down to one. WETH the wallet already holds counts
+// towards it: a retry after a failed approve or wrap does not deposit again.
 export async function wrap(session, contract, {wei}, onStep) {
   requireKind(contract, "wrapped", "Only a wrapped token can be wrapped.");
   return withSteps(onStep, "deposit", async steps => {
     const s = await ensureChain(session);
     const weth = wethOf(contract, s.signer);
-    await steps.sendAndWait("deposit", () => weth.deposit({value: wei}));
-    await steps.sendAndWait("approve", () => weth.approve(contract.token, wei));
-    const receipt = await steps.send("wrap", "mined", () => tokenOf(contract, s.signer).wrap(s.address, wei));
+    const token = tokenOf(contract, s.signer);
+    const rate = await token.rate();
+    const amount = wei - (wei % rate);
+    if (amount === 0n) throw new ActionError(`Wrap at least ${formatAmount(rate, 18)} ETH.`);
+    const held = await weth.balanceOf(s.address);
+    if (held >= amount) steps.skip("deposit");
+    else await steps.sendAndWait("deposit", () => weth.deposit({value: amount - held}));
+    await steps.sendAndWait("approve", () => weth.approve(contract.token, amount));
+    const receipt = await steps.send("wrap", "mined", () => token.wrap(s.address, amount));
     return {hash: receipt.hash};
   });
 }
 
-// Confidential WETH -> WETH -> ETH. The burnt amount is made publicly
-// decryptable by the wrapper; its cleartext and proof finalise the unwrap.
+// Confidential WETH -> WETH -> ETH. Once "request" is mined the amount is
+// burnt and the request stays pending until finalised: its id is reported with
+// "request" done, and any later error carries it as err.requestId, so the
+// unwrap can be finished with finaliseUnwrap (see pendingUnwraps).
 export async function unwrap(session, contract, {amount}, onStep) {
   requireKind(contract, "wrapped", "Only a wrapped token can be unwrapped.");
   return withSteps(onStep, "encrypt", async steps => {
     const s = await ensureChain(session);
-    const fhe = await getFhe(s);
     const token = tokenOf(contract, s.signer);
-    const enc = await steps.step("encrypt", () => fhe.encrypt64(contract.token, s.address, amount));
-    const requested = await steps.sendAndWait("request",
-      () => token.unwrap(s.address, s.address, enc.handle, enc.inputProof));
-    const requestId = findEvent(requested, token, "UnwrapRequested").args.unwrapRequestId;
-    const {values, proof} = await steps.step("decrypt", () => fhe.publicDecrypt([requestId]));
-    const clear = values.get(requestId);
-    await steps.sendAndWait("finalise", () => token.finalizeUnwrap(requestId, clear, proof));
-    const wei = clear * (await token.rate());
-    const receipt = await steps.send("withdraw", "mined", () => wethOf(contract, s.signer).withdraw(wei));
-    return {hash: receipt.hash};
+    const enc = await steps.step("encrypt", async () => (await getFhe(s)).encrypt64(contract.token, s.address, amount));
+    const requestId = await steps.sendAndWait("request",
+      () => token.unwrap(s.address, s.address, enc.handle, enc.inputProof),
+      receipt => findEvent(receipt, token, "UnwrapRequested").args.unwrapRequestId,
+      id => ({requestId: id}));
+    try {
+      return await completeUnwrap(steps, s, contract, requestId);
+    } catch (err) {
+      if (err && typeof err === "object") err.requestId = requestId;
+      throw err;
+    }
   });
+}
+
+// Finishes a pending unwrap request: steps "decrypt", "finalise", "withdraw", "mined".
+export async function finaliseUnwrap(session, contract, {requestId}, onStep) {
+  requireKind(contract, "wrapped", "Only a wrapped token can be unwrapped.");
+  return withSteps(onStep, "decrypt", async steps => completeUnwrap(steps, await ensureChain(session), contract, requestId));
+}
+
+// The wrapper made the burnt amount publicly decryptable; its cleartext and
+// the decryption proof finalise the request, which pays out WETH.
+async function completeUnwrap(steps, s, contract, requestId) {
+  const token = tokenOf(contract, s.signer);
+  const {clear, proof} = await steps.step("decrypt", async () => {
+    if ((await token.unwrapRequester(requestId)) === ZeroAddress) {
+      throw new ActionError("This unwrap has already been finished.");
+    }
+    const {values, proof} = await (await getFhe(s)).publicDecrypt([requestId]);
+    const clear = values.get(requestId);
+    if (typeof clear !== "bigint") {
+      throw new ActionError("The unwrap amount could not be decrypted. Try finishing the unwrap again later.");
+    }
+    return {clear, proof};
+  });
+  await steps.sendAndWait("finalise", () => token.finalizeUnwrap(requestId, clear, proof));
+  const receipt = await steps.send("withdraw", "mined",
+    async () => wethOf(contract, s.signer).withdraw(clear * (await token.rate())));
+  return {hash: receipt.hash};
+}
+
+// WETH -> ETH, for WETH left behind by an unwrap whose withdraw failed.
+export async function withdrawWeth(session, contract, {wei}, onStep) {
+  requireKind(contract, "wrapped", "Only a wrapped token has WETH to withdraw.");
+  return single(session, onStep, s => wethOf(contract, s.signer).withdraw(wei));
 }
 
 // Reads.
@@ -186,6 +243,28 @@ export async function operatorStatus(session, contract) {
   const logs = await token.queryFilter(token.filters.OperatorSet(s.address, contract.nft), contract.deployBlock);
   const latest = logs.at(-1);
   return {authorised, until: latest ? Number(latest.args.until) : null};
+}
+
+// Unwrap requests paid to the session's address that are still pending. A
+// request is pending while the wrapper still maps its id to a receiver:
+// finalizeUnwrap deletes that entry, so unwrapRequester(id) is then zero.
+export async function pendingUnwraps(session, contract) {
+  requireKind(contract, "wrapped", "Only a wrapped token can be unwrapped.");
+  const s = await ensureChain(session);
+  const token = tokenOf(contract, s.provider);
+  const logs = await token.queryFilter(token.filters.UnwrapRequested(s.address), contract.deployBlock);
+  const pending = [];
+  for (const log of logs) {
+    const {unwrapRequestId: requestId, amount: amountHandle} = log.args;
+    if ((await token.unwrapRequester(requestId)) !== ZeroAddress) pending.push({requestId, amountHandle});
+  }
+  return pending;
+}
+
+export async function wethBalance(session, contract) {
+  requireKind(contract, "wrapped", "Only a wrapped token has WETH.");
+  const s = await ensureChain(session);
+  return wethOf(contract, s.provider).balanceOf(s.address);
 }
 
 export async function ethBalance(session) {

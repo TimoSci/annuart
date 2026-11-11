@@ -40,3 +40,10 @@ test("explainAmount", () => {
   assert.equal(explainAmount(new ScheduleError("too_long"), "USDC"), "This schedule runs too far into the future.");
   assert.equal(explainAmount(new ScheduleError("empty"), "USDC"), "Add at least one period.");
 });
+
+test("explain passes an ActionError's message through as it is", async () => {
+  const { ActionError } = await import("../js/errors.js");
+  const err = new ActionError("Enter at least 1 unit.");
+  assert.equal(err.name, "ActionError");
+  assert.equal(explain(err), "Enter at least 1 unit.");
+});
