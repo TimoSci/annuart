@@ -17,7 +17,11 @@ defmodule AnnuartWeb.Router do
   scope "/", AnnuartWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    live_session :public do
+      live "/", BrowseLive
+      live "/enft/:label/:id", EnftLive
+      live "/market", MarketLive
+    end
   end
 
   # Other scopes may use custom stacks.

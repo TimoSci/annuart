@@ -67,7 +67,8 @@ defmodule Annuart.Schedule do
     end
   end
 
-  defp length_text(seconds) do
+  @doc "A duration in seconds as its largest whole unit, e.g. `\"18 months\"`."
+  def length_text(seconds) do
     case Enum.find(@units, fn {_, size} -> rem(seconds, size) == 0 end) do
       {name, size} -> plural(div(seconds, size), name)
       nil -> plural(seconds, "second")
@@ -77,10 +78,12 @@ defmodule Annuart.Schedule do
   defp plural(1, name), do: "1 " <> name
   defp plural(n, name), do: "#{n} #{name}s"
 
-  # rate_per_sec * 86400 / 10^decimals as a trimmed decimal string, in integer arithmetic.
-  defp per_day(rate, decimals) do
+  @doc "Rate per second as a trimmed decimal string per day, in integer arithmetic."
+  def per_day(rate, decimals), do: format_amount(rate * @day, decimals)
+
+  @doc "A raw token amount as a trimmed decimal string, in integer arithmetic."
+  def format_amount(amount, decimals) do
     scale = Integer.pow(10, decimals)
-    amount = rate * @day
     whole = div(amount, scale)
     frac = rem(amount, scale)
 

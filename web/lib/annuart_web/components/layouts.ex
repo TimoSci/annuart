@@ -26,6 +26,7 @@ defmodule AnnuartWeb.Layouts do
 
   """
   attr :flash, :map, required: true, doc: "the map of flash messages"
+  attr :current, :atom, default: nil, doc: "the active navigation item"
 
   attr :current_scope, :map,
     default: nil,
@@ -35,10 +36,52 @@ defmodule AnnuartWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <main class="px-4 py-20 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-2xl space-y-4">
-        {render_slot(@inner_block)}
-      </div>
+    <header class="site-header">
+      <nav class="nav" aria-label="Main">
+        <.link navigate={~p"/"} class="brand">ANNUART</.link>
+        <.link
+          navigate={~p"/"}
+          class={["nav-item", @current == :browse && "current"]}
+          data-activity-id="nav:browse"
+        >
+          Browse
+        </.link>
+        <.link
+          href="/create"
+          class={["nav-item", @current == :create && "current"]}
+          data-activity-id="nav:create"
+        >
+          Create
+        </.link>
+        <.link
+          href="/mine"
+          class={["nav-item", @current == :mine && "current"]}
+          data-activity-id="nav:mine"
+        >
+          My ENFTs
+        </.link>
+        <.link
+          navigate={~p"/market"}
+          class={["nav-item", @current == :market && "current"]}
+          data-activity-id="nav:market"
+        >
+          Market<span class="soon">soon</span>
+        </.link>
+        <.link
+          href="/tokens"
+          class={["nav-item", @current == :tokens && "current"]}
+          data-activity-id="nav:tokens"
+        >
+          Tokens
+        </.link>
+        <span class="spacer"></span>
+        <div id="wallet" phx-update="ignore"></div>
+        <button type="button" id="clear-activity" class="clear">Clear my activity history</button>
+      </nav>
+    </header>
+
+    <main class="page">
+      {render_slot(@inner_block)}
     </main>
 
     <.flash_group flash={@flash} />
