@@ -2,6 +2,7 @@
 // dev-only: the dev login reaches it only through window.__annuartDev, which
 // the dev bundle registers (dev.js, loaded only when :dev_wallet is on).
 import {createWalletSigner} from "./signer/wallet.js";
+import {DEV_CHAIN} from "./chains.js";
 
 export class WrongChainError extends Error {
   constructor(message = "Switch your wallet to the right network.") {
@@ -16,11 +17,14 @@ export function chainInfo() {
   return {chainId: info.chainId ?? 0, rpcUrl: info.rpcUrl ?? "", contracts: info.contracts ?? []};
 }
 
+// The dev login exists on the local chain only, whatever bundle is loaded.
+const devLoginAllowed = () => chainInfo().chainId === DEV_CHAIN && Boolean(window.__annuartDev?.createSigner);
+
 export function availableSigners() {
   // chainId 0: the instance has no deployment, so there is nothing to sign for.
   if (chainInfo().chainId === 0) return [];
   const signers = [{id: "wallet", label: "Connect wallet"}];
-  if (window.__annuartDev?.createSigner) signers.push({id: "dev", label: "Dev login"});
+  if (devLoginAllowed()) signers.push({id: "dev", label: "Dev login"});
   return signers;
 }
 
@@ -62,7 +66,7 @@ export async function connect(id, opts = {}) {
     return next;
   }
   if (id === "dev") {
-    const create = window.__annuartDev?.createSigner;
+    const create = devLoginAllowed() ? window.__annuartDev.createSigner : null;
     if (!create) throw new Error("dev login is not available");
     const next = await create(opts);
     setSession(next);

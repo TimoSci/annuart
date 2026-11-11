@@ -182,3 +182,81 @@ test("ensureChain returns the connected session once it is on the right chain", 
   assert.equal(after.chainId, 31337);
   assert.equal(after, signer.current());
 });
+
+// Test helpers: the chain meta tag, and an EIP-1193 provider with a custom request.
+const setChainMeta = meta => { chain = meta; };
+function fakeWallet({request}) {
+  const e = new EventEmitter();
+  e.request = request;
+  e.removeListener ??= e.off.bind(e);
+  return e;
+}
+const {createWalletSigner} = await import("../js/chain/signer/wallet.js");
+
+test("the dev login is not offered off the local chain", () => {
+  setChainMeta({chainId: 11155111, rpcUrl: null, contracts: []});
+  window.__annuartDev = {createSigner: async () => ({}), accounts: []};
+  assert.deepEqual(signer.availableSigners().map(s => s.id), ["wallet"]);
+});
+
+test("connect('dev') is refused off the local chain", async () => {
+  setChainMeta({chainId: 11155111, rpcUrl: null, contracts: []});
+  window.__annuartDev = {createSigner: async () => ({kind: "dev"}), accounts: []};
+  await assert.rejects(signer.connect("dev", {index: 0}), /dev login is not available/);
+});
+
+test("an unknown chain is added, then switched to", async () => {
+  const calls = [];
+  const ethereum = fakeWallet({request: async ({method}) => {
+    calls.push(method);
+    if (method === "wallet_switchEthereumChain" && calls.filter(m => m === method).length === 1) {
+      throw Object.assign(new Error("unknown chain"), {code: 4902});
+    }
+    return null;
+  }});
+  await createWalletSigner(ethereum).switchChain(11155111);
+  assert.deepEqual(calls, ["wallet_switchEthereumChain", "wallet_addEthereumChain", "wallet_switchEthereumChain"]);
+});
+
+test("the chain is added with the app's parameters for it", async () => {
+  let added;
+  let first = true;
+  const ethereum = fakeWallet({request: async ({method, params}) => {
+    if (method === "wallet_addEthereumChain") added = params[0];
+    if (method === "wallet_switchEthereumChain" && first) { first = false; throw Object.assign(new Error("x"), {code: 4902}); }
+    return null;
+  }});
+  await createWalletSigner(ethereum).switchChain(11155111);
+  assert.deepEqual(added, {
+    chainId: "0xaa36a7", chainName: "Sepolia",
+    nativeCurrency: {name: "Sepolia Ether", symbol: "ETH", decimals: 18},
+    rpcUrls: ["https://ethereum-sepolia-rpc.publicnode.com"],
+    blockExplorerUrls: ["https://sepolia.etherscan.io"],
+  });
+});
+
+test("a chain the app has no parameters for is not added", async () => {
+  const methods = [];
+  const ethereum = fakeWallet({request: async ({method}) => {
+    methods.push(method);
+    throw Object.assign(new Error("x"), {code: 4902});
+  }});
+  await assert.rejects(createWalletSigner(ethereum).switchChain(424242));
+  assert.deepEqual(methods, ["wallet_switchEthereumChain"]);
+});
+
+test("another switch failure is not turned into an add", async () => {
+  const methods = [];
+  const ethereum = fakeWallet({request: async ({method}) => {
+    methods.push(method);
+    throw Object.assign(new Error("rejected"), {code: 4001});
+  }});
+  await assert.rejects(createWalletSigner(ethereum).switchChain(11155111), /rejected/);
+  assert.deepEqual(methods, ["wallet_switchEthereumChain"]);
+});
+
+test("a wallet session carries the provider it was made from", async () => {
+  const eth = setup();
+  const session = await signer.connect("wallet");
+  assert.equal(session.ethereum, eth);
+});

@@ -45,6 +45,11 @@ globalThis.document = {
   querySelector: sel => sel === "meta[name='annuart-chain']" ? {content: JSON.stringify(chain)} : null,
 };
 
+const store = new Map();
+globalThis.localStorage = {
+  getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)), removeItem: k => store.delete(k),
+};
+
 const actions = await import("../js/chain/actions.js");
 const {explain} = await import("../js/errors.js");
 const {formatAmount} = await import("../js/units.js");
@@ -579,4 +584,28 @@ test("finishing an unwrap that was already finished points to Convert to ETH", {
   assert.equal(st.detail("decrypt"),
     "This unwrap has already been finished. If the ETH did not arrive, use Convert to ETH below.");
   assert.equal(await provider.getBlockNumber(), block);
+});
+
+test("an unwrap request older than the log look-back is found from storage until it is finished", {skip}, async () => {
+  await cleanSlate(dave);
+  await actions.wrap(dave, wrapped, {wei: ETHER}, steps());
+  let requestId;
+  await assert.rejects(
+    () => actions.unwrap(rejectingNth(dave, 2), wrapped, {amount: UNIT, ...WRAPPED_UNITS}, steps()),
+    err => { requestId = err.requestId; return true; },
+  );
+  const key = `annuart:unwraps:31337:${wrapped.token}:${dave.address}`.toLowerCase();
+  assert.deepEqual(JSON.parse(store.get(key)).map(u => u.requestId), [requestId]);
+
+  // Push the request out of the look-back: the logs no longer reach it.
+  await provider.send("hardhat_mine", ["0x" + (50_100).toString(16)]);
+  const pending = await actions.pendingUnwraps(dave, wrapped);
+  assert.deepEqual(pending.map(u => u.requestId), [requestId]);
+  assert.equal(typeof pending[0].amountHandle, "string");
+  assert.ok(store.has(key));
+
+  await actions.finaliseUnwrap(dave, wrapped, {requestId}, steps());
+  assert.deepEqual(await actions.pendingUnwraps(dave, wrapped), []);
+  assert.equal(store.has(key), false);
+  await cleanSlate(dave);
 });

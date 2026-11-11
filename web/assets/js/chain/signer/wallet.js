@@ -1,6 +1,7 @@
 // Browser wallet (MetaMask-style, EIP-1193). The wallet holds the keys; this
 // module only asks it for accounts and hands ethers a signer that asks it to sign.
 import {BrowserProvider, getAddress} from "ethers";
+import {addChainParams} from "../chains.js";
 
 const hex = n => "0x" + Number(n).toString(16);
 
@@ -18,7 +19,7 @@ export function createWalletSigner(ethereum = window.ethereum) {
     // "any": the wallet may change chain under us; ethers must not throw on that.
     const provider = new BrowserProvider(ethereum, "any");
     const signer = await provider.getSigner(accounts[0]);
-    return {kind: "wallet", address: getAddress(accounts[0]), signer, provider, chainId: await chainId()};
+    return {kind: "wallet", address: getAddress(accounts[0]), signer, provider, ethereum, chainId: await chainId()};
   }
 
   const emit = session => listeners.forEach(fn => fn(session));
@@ -47,8 +48,18 @@ export function createWalletSigner(ethereum = window.ethereum) {
       return () => listeners.delete(fn);
     },
 
+    // A wallet that does not know the chain (code 4902) is asked to add it,
+    // then to switch again. A chain the app has no parameters for is not added.
     async switchChain(id) {
-      await ethereum.request({method: "wallet_switchEthereumChain", params: [{chainId: hex(id)}]});
+      const switchTo = () => ethereum.request({method: "wallet_switchEthereumChain", params: [{chainId: hex(id)}]});
+      try {
+        await switchTo();
+      } catch (err) {
+        const params = addChainParams(id);
+        if (err?.code !== 4902 || !params) throw err;
+        await ethereum.request({method: "wallet_addEthereumChain", params: [params]});
+        await switchTo();
+      }
     },
 
     close() {

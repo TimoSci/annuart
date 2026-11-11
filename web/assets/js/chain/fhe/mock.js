@@ -6,8 +6,8 @@ import {JsonRpcProvider} from "ethers";
 import {MockFhevmInstance, contracts, relayer} from "@fhevm/mock-utils";
 import {chainInfo} from "../signer.js";
 import {fheFromInstance} from "../fhe.js";
+import {DEV_CHAIN} from "../chains.js";
 
-const DEV_CHAIN = 31337;
 const refuse = () => new Error(`the mock FHE client is only available on chain ${DEV_CHAIN}`);
 
 // `initWasm` loads the TKMS WASM that generateKeypair() needs (the browser

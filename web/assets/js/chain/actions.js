@@ -12,6 +12,7 @@ import {ensureChain} from "./signer.js";
 import {getFhe} from "./fhe.js";
 import {ActionError, explain} from "../errors.js";
 import {formatAmount} from "../units.js";
+import {recentLogs} from "./logs.js";
 import {NFT_ABI, TOKEN_ABI, WETH_ABI} from "./abi.js";
 
 const YEAR = 365 * 86400;
@@ -28,6 +29,11 @@ async function mined(tx) {
   try {
     return await tx.replaceableTransaction(startBlock).wait();
   } catch (err) {
+    if (err?.code === "TRANSACTION_REPLACED" && (err.reason === "cancelled" || err.reason === "replaced")) {
+      // The transaction that mines is not the one sent: the failure names it.
+      err.replacement = {hash: err.replacement?.hash ?? err.receipt?.hash};
+      throw err;
+    }
     if (err?.code !== "TRANSACTION_REPLACED" || err.reason !== "repriced" || !err.receipt) throw err;
     // wait() checks a mined receipt's status, but not a replacement's.
     if (err.receipt.status !== 1) {
@@ -234,7 +240,11 @@ export async function unwrap(session, contract, {amount, symbol, decimals}, onSt
     const enc = await steps.step("encrypt", async () => (await getFhe(s)).encrypt64(contract.token, s.address, amount));
     const requestId = await steps.sendAndWait("request",
       () => token.unwrap(s.address, s.address, enc.handle, enc.inputProof),
-      receipt => findEvent(receipt, token, "UnwrapRequested").args.unwrapRequestId,
+      receipt => {
+        const {unwrapRequestId, amount: amountHandle} = findEvent(receipt, token, "UnwrapRequested").args;
+        rememberUnwrap(s, contract, {requestId: unwrapRequestId, amountHandle});
+        return unwrapRequestId;
+      },
       id => ({requestId: id}));
     try {
       return await completeUnwrap(steps, s, contract, requestId);
@@ -298,9 +308,35 @@ export async function operatorStatus(session, contract) {
   const s = await ensureChain(session);
   const token = tokenOf(contract, s.provider);
   const authorised = await token.isOperator(s.address, contract.nft);
-  const logs = await token.queryFilter(token.filters.OperatorSet(s.address, contract.nft), contract.deployBlock);
+  const logs = await recentLogs(token, token.filters.OperatorSet(s.address, contract.nft), contract.deployBlock);
   const latest = logs.at(-1);
   return {authorised, until: latest ? Number(latest.args.until) : null};
+}
+
+// Unwrap requests are also remembered in this browser when they are made, so
+// one older than the log look-back is not lost while it is still pending.
+const unwrapsKey = (s, contract) =>
+  `annuart:unwraps:${s.chainId}:${contract.token}:${s.address}`.toLowerCase();
+
+function storedUnwraps(key) {
+  try {
+    const list = JSON.parse(localStorage.getItem(key));
+    return Array.isArray(list) ? list.filter(u => u && typeof u.requestId === "string") : [];
+  } catch { return []; }
+}
+
+function storeUnwraps(key, list) {
+  try {
+    if (list.length) localStorage.setItem(key, JSON.stringify(list));
+    else localStorage.removeItem(key);
+  } catch { /* storage unavailable: the request is found through the logs */ }
+}
+
+function rememberUnwrap(s, contract, {requestId, amountHandle}) {
+  const key = unwrapsKey(s, contract);
+  const id = String(requestId);
+  const list = storedUnwraps(key).filter(u => u.requestId !== id);
+  storeUnwraps(key, [...list, {requestId: id, amountHandle: String(amountHandle)}]);
 }
 
 // Unwrap requests paid to the session's address that are still pending. A
@@ -310,12 +346,22 @@ export async function pendingUnwraps(session, contract) {
   requireKind(contract, "wrapped", "Only a wrapped token can be unwrapped.");
   const s = await ensureChain(session);
   const token = tokenOf(contract, s.provider);
-  const logs = await token.queryFilter(token.filters.UnwrapRequested(s.address), contract.deployBlock);
-  const pending = [];
+  const logs = await recentLogs(token, token.filters.UnwrapRequested(s.address), contract.deployBlock);
+  const key = unwrapsKey(s, contract);
+  const stored = storedUnwraps(key);
+  const candidates = new Map();
+  for (const u of stored) candidates.set(u.requestId, {requestId: u.requestId, amountHandle: u.amountHandle});
   for (const log of logs) {
     const {unwrapRequestId: requestId, amount: amountHandle} = log.args;
-    if ((await token.unwrapRequester(requestId)) !== ZeroAddress) pending.push({requestId, amountHandle});
+    candidates.set(String(requestId), {requestId, amountHandle});
   }
+  const pending = [];
+  const finished = new Set();
+  for (const [id, request] of candidates) {
+    if ((await token.unwrapRequester(request.requestId)) !== ZeroAddress) pending.push(request);
+    else finished.add(id);
+  }
+  if (stored.some(u => finished.has(u.requestId))) storeUnwraps(key, stored.filter(u => !finished.has(u.requestId)));
   return pending;
 }
 

@@ -80,13 +80,12 @@ export const Wallet = {
         type: "button", className: "wallet-disconnect", textContent: "Disconnect",
         onclick: () => { remember(null); disconnect(); },
       }));
-    } else if (signers.some(s => s.id === "dev")) {
-      children.push(this.devSelect(null));
     } else {
       children.push(el("button", {
         type: "button", className: "wallet-connect", textContent: "Connect wallet",
         onclick: () => this.connectWith({id: "wallet"}),
       }));
+      if (signers.some(s => s.id === "dev")) children.push(this.devSelect(null));
     }
 
     if (this.message) children.push(el("span", {className: "wallet-note", role: "alert"}, this.message));

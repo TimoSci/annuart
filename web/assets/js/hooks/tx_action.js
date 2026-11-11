@@ -39,6 +39,11 @@ const PLANS = {
 // Steps that are done once their transaction has been broadcast.
 const SENDING = new Set(["authorise", "confirm", "deposit", "approve", "wrap", "request", "finalise", "withdraw"]);
 
+// A transaction pending this long may have been dropped by the wallet.
+export const STILL_WAITING_MS = 180_000;
+export const STILL_WAITING_NOTE =
+  "Still waiting. If your wallet shows this transaction as dropped, reload the page and check your balance before trying again.";
+
 export const START_OVER_QUESTION = "This sends the transaction again. Continue?";
 const shortHash = hash => (hash.length > 18 ? `${hash.slice(0, 10)}…${hash.slice(-6)}` : hash);
 
@@ -58,7 +63,12 @@ class InputError extends Error {}
 // the failure says so and offers "Start over" (data-role "start-over"), which
 // the form must confirm with START_OVER_QUESTION before it reruns anything.
 export class StepList {
-  constructor(list) {
+  // opts.setTimeout / opts.clearTimeout time the "still waiting" note.
+  constructor(list, opts = {}) {
+    this.setTimer = opts.setTimeout ?? ((fn, ms) => globalThis.setTimeout(fn, ms));
+    this.clearTimer = opts.clearTimeout ?? (t => globalThis.clearTimeout(t));
+    this.timer = null;
+    this.hash = null;
     this.list = list;
     this.doc = list.ownerDocument;
     this.steps = [];
@@ -69,6 +79,8 @@ export class StepList {
   begin(action) {
     this.steps = (PLANS[action] ?? SEND).map(id => ({id, state: "waiting"}));
     this.recovery = null;
+    this.hash = null;
+    this.stopWaiting();
     this.render();
   }
 
@@ -77,7 +89,23 @@ export class StepList {
     if (!step) { step = {id, state}; this.steps.push(step); }
     step.state = state;
     step.detail = detail;
+    this.stopWaiting();
+    if (detail?.hash) this.hash = detail.hash;
+    // In progress after a transaction went out: the step is waiting for it.
+    if (state === "active" && this.hash) {
+      this.timer = this.setTimer(() => {
+        this.timer = null;
+        if (step.state === "active") { step.waitingNote = true; this.render(); }
+      }, STILL_WAITING_MS);
+    }
     this.render();
+  }
+
+  // Clears the timer and every "still waiting" note.
+  stopWaiting() {
+    if (this.timer !== null) this.clearTimer(this.timer);
+    this.timer = null;
+    for (const step of this.steps) step.waitingNote = false;
   }
 
   // An action that threw without reporting leaves its step active, or no step
@@ -85,6 +113,7 @@ export class StepList {
   // Returns how the failure may be recovered from: {kind: "retry"} or
   // {kind: "start-over", hash}.
   fail(err) {
+    this.stopWaiting();
     const active = this.steps.filter(step => step.state === "active");
     if (active.length === 0 && !this.steps.some(step => step.state === "failed")) {
       const next = this.steps.find(step => step.state === "waiting");
@@ -105,7 +134,7 @@ export class StepList {
   // step that sends one was reported done.
   recoveryFor(err) {
     const sent = this.steps.filter(step => SENDING.has(step.id) && step.state === "done");
-    const hash = err?.sentHash ?? sent.map(step => step.detail?.hash).filter(Boolean).at(-1) ?? null;
+    const hash = err?.replacement?.hash ?? err?.sentHash ?? sent.map(step => step.detail?.hash).filter(Boolean).at(-1) ?? null;
     return hash || sent.length > 0 ? {kind: "start-over", hash} : {kind: "retry"};
   }
 
@@ -130,6 +159,7 @@ export class StepList {
         li.append(button);
       } else {
         li.append(`${name}: ${STATE_TEXT[step.state]}`);
+        if (step.waitingNote) li.append(` ${STILL_WAITING_NOTE}`);
       }
       return li;
     });
@@ -155,7 +185,7 @@ export class TxActionController {
     this.message.setAttribute("role", "alert");
     this.list = el.querySelector("ol.steps");
     this.list.before(this.message);
-    this.stepList = new StepList(this.list);
+    this.stepList = new StepList(this.list, {setTimeout: deps.setTimeout, clearTimeout: deps.clearTimeout});
 
     this.echoes = [...el.querySelectorAll("[data-arg=amount], [data-arg=wei]")].map(input => {
       const echo = this.doc.createElement("span");

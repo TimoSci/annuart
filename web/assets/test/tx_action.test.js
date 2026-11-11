@@ -17,7 +17,7 @@ function setup({action = "donate", extra = "", attrs = ""} = {}) {
   return {document, window, el: document.getElementById("tx")};
 }
 
-function controller(el, {run, finish, session = SESSION, confirm = () => true} = {}) {
+function controller(el, {run, finish, session = SESSION, confirm = () => true, timers = {}} = {}) {
   const pushed = [];
   const events = [];
   const failures = [];
@@ -29,6 +29,7 @@ function controller(el, {run, finish, session = SESSION, confirm = () => true} =
     confirm,
     announce: () => events.push("annuart:tx"),
     failed: () => failures.push("annuart:tx-failed"),
+    ...timers,
   });
   return {ctl, pushed, events, failures};
 }
@@ -475,4 +476,78 @@ test("a confirmation can name the typed amount, ungrouped, and the recipient", a
     "Donate 123456.5 TKN to ENFT #7? This cannot be undone.",
     `Transfer ENFT #7 to ${to}? Unclaimed balance goes with the ENFT.`,
   ]);
+});
+
+test("a replaced transaction is named by the replacement's hash", async () => {
+  const REPLACEMENT = "0x" + "cd34".repeat(16);
+  const {el} = setup({action: "claim"});
+  const {ctl} = controller(el, {run: async (_s, _c, _a, onStep) => {
+    onStep("confirm", "done", {hash: HASH});
+    onStep("mined", "active");
+    throw Object.assign(new Error("replaced"), {sentHash: HASH, replacement: {hash: REPLACEMENT}});
+  }});
+  await ctl.run();
+  const text = el.querySelector("li[data-state=failed]").textContent;
+  assert.ok(text.includes(`${REPLACEMENT.slice(0, 10)}…${REPLACEMENT.slice(-6)}`), text);
+  assert.ok(!text.includes(HASH.slice(0, 10)), text);
+});
+
+const WAITING = /Still waiting\. If your wallet shows this transaction as dropped, reload the page and check your balance before trying again\./;
+
+// Timers that run only when the test says so.
+function fakeTimers() {
+  const pending = new Map();
+  let next = 1;
+  return {
+    setTimeout: (fn, ms) => { pending.set(next, {fn, ms}); return next++; },
+    clearTimeout: id => pending.delete(id),
+    pending,
+    fire: () => [...pending.entries()].forEach(([id, {fn}]) => { pending.delete(id); fn(); }),
+  };
+}
+
+test("a step waiting on a sent transaction gains a note after 180 seconds, and loses it when it moves on", async () => {
+  const {el} = setup({action: "claim"});
+  const timers = fakeTimers();
+  let onStep;
+  let finish;
+  const {ctl} = controller(el, {
+    timers: {setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout},
+    run: (_s, _c, _a, report) => new Promise(resolve => { onStep = report; finish = resolve; }),
+  });
+  const done = ctl.run();
+  onStep("confirm", "active");
+  assert.equal(timers.pending.size, 0); // no transaction yet
+  onStep("confirm", "done", {hash: HASH});
+  onStep("mined", "active");
+  assert.equal(timers.pending.size, 1);
+  assert.equal([...timers.pending.values()][0].ms, 180_000);
+  assert.doesNotMatch(el.textContent, WAITING);
+
+  timers.fire();
+  const mined = el.querySelector("li[data-step=mined]");
+  assert.match(mined.textContent, WAITING);
+  assert.equal(el.querySelectorAll("ol.steps button").length, 0);
+  assert.equal(el.querySelectorAll("ol.steps li").length, 2);
+
+  onStep("mined", "done");
+  assert.doesNotMatch(el.textContent, WAITING);
+  finish({hash: HASH});
+  await done;
+});
+
+test("the waiting timer does not outlive a failure", async () => {
+  const {el} = setup({action: "claim"});
+  const timers = fakeTimers();
+  const {ctl} = controller(el, {
+    timers: {setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout},
+    run: async (_s, _c, _a, onStep) => {
+      onStep("confirm", "done", {hash: HASH});
+      onStep("mined", "active");
+      throw new Error("boom");
+    },
+  });
+  await ctl.run();
+  assert.equal(timers.pending.size, 0);
+  assert.doesNotMatch(el.textContent, WAITING);
 });

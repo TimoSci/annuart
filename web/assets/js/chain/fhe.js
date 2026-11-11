@@ -5,10 +5,10 @@
 // 31337 only) and the relayer SDK (loaded on first use from /vendor/relayer-sdk/).
 // This module imports nothing dev-only.
 import {getAddress, hexlify} from "ethers";
+import {DEV_CHAIN} from "./chains.js";
 
 export const ZERO_HANDLE = "0x" + "00".repeat(32);
 
-const DEV_CHAIN = 31337;
 const DECRYPT_DAYS = 1;
 const DAY = 86400;
 // Re-sign a little before the user-decryption permit expires.

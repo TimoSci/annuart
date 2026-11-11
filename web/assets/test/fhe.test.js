@@ -155,16 +155,19 @@ test("publicDecrypt returns values by handle and the decryption proof", async ()
   assert.equal(proof, "0xfeed");
 });
 
+// The relayer module loads the SDK once per page, so the fake is one object
+// whose recording is reset by each installFakeSdk().
 let fakeSdk;
+let seenNow;
 function installFakeSdk() {
-  const seen = {init: [], create: []};
-  fakeSdk = {
+  seenNow = {init: [], create: []};
+  fakeSdk ??= {
     SepoliaConfig: {chainId: 11155111, relayerUrl: "https://relayer.example"},
     MainnetConfig: {chainId: 1, relayerUrl: "https://relayer.mainnet.example"},
-    async initSDK(opts) { seen.init.push(opts); return true; },
-    async createInstance(config) { seen.create.push(config); return fakeInstance(); },
+    async initSDK(opts) { seenNow.init.push(opts); return true; },
+    async createInstance(config) { seenNow.create.push(config); return fakeInstance(); },
   };
-  return seen;
+  return seenNow;
 }
 
 test("the relayer client loads the vendored bundle once, with explicit WASM URLs", async () => {
@@ -182,6 +185,28 @@ test("the relayer client loads the vendored bundle once, with explicit WASM URLs
   assert.equal(typeof a.encrypt64, "function");
   assert.equal(typeof a.userDecrypt, "function");
   assert.equal(typeof a.publicDecrypt, "function");
+});
+
+test("the relayer reads the chain through the wallet when the server gave no URL", async () => {
+  chain = {chainId: 11155111, rpcUrl: null, contracts: []};
+  const seen = installFakeSdk();
+  const ethereum = {request: async () => null};
+  await createRelayerFhe({address: USER, chainId: 11155111, ethereum});
+  assert.equal(seen.create.length, 1);
+  assert.equal(seen.create[0].network, ethereum);
+});
+
+test("the relayer uses the configured URL when there is one, even with a wallet", async () => {
+  chain = {chainId: 11155111, rpcUrl: "https://rpc.other", contracts: []};
+  const seen = installFakeSdk();
+  await createRelayerFhe({address: USER, chainId: 11155111, ethereum: {}});
+  assert.equal(seen.create[0].network, "https://rpc.other");
+});
+
+test("the relayer needs a wallet when there is no URL either", async () => {
+  chain = {chainId: 11155111, rpcUrl: null, contracts: []};
+  installFakeSdk();
+  await assert.rejects(() => createRelayerFhe({address: USER, chainId: 11155111}), /^Error: Encryption needs a connected wallet\.$/);
 });
 
 test("the relayer client refuses a chain the SDK has no config for", async () => {

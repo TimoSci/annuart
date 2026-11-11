@@ -82,6 +82,12 @@ const click = node => node.dispatchEvent(new node.ownerDocument.defaultView.Even
 const action = (el, name) => el.querySelector(`.tx[data-action=${name}]`);
 const runBtn = (el, name) => action(el, name).querySelector("button[data-role=run]");
 
+test("shows plain 'Authorised' when no expiry is known", async () => {
+  const t = make({reads: {operatorStatus: async () => ({authorised: true, until: null})}});
+  await t.ctl.refresh();
+  assert.equal(q(t.el, "authorisation").textContent, "Authorised");
+});
+
 test("shows 'Authorised until' with the expiry date", async () => {
   const t = make({reads: {operatorStatus: async () => ({authorised: true, until: 1794441600})}});
   await t.ctl.pending;

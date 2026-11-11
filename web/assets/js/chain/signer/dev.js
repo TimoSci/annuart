@@ -2,9 +2,9 @@
 // mnemonic. Never import this from app.js: it must not reach production.
 import {HDNodeWallet, JsonRpcProvider} from "ethers";
 import {chainInfo} from "../signer.js";
+import {DEV_CHAIN} from "../chains.js";
 
 const MNEMONIC = "test test test test test test test test test test test junk";
-const DEV_CHAIN = 31337;
 const refuse = () => new Error(`dev login is only available on chain ${DEV_CHAIN}`);
 
 const wallet = index => HDNodeWallet.fromPhrase(MNEMONIC, undefined, `m/44'/60'/0'/0/${index}`);
