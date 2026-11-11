@@ -1,6 +1,6 @@
 import { ethers, network } from "hardhat";
 import { readDeployments, upsertDeployment, type Deployment } from "../tasks/deployments";
-import { deployRefusal } from "../tasks/deployGuard";
+import { deployRefusal, reusedUnderlying } from "../tasks/deployGuard";
 
 // Deploys an EndowmentNFT with a confidential token and records it in
 // deployments/<network>.json so the task:* commands (and the web app) can find it.
@@ -44,7 +44,7 @@ async function main() {
   if (refusal) throw new Error(refusal);
 
   // mock and wrapped may reuse an already deployed token instead of deploying one.
-  const reuse = kind !== "plain" ? process.env.TOKEN_ADDRESS : undefined;
+  const reuse = process.env.TOKEN_ADDRESS;
   if (reuse && (await ethers.provider.getCode(reuse)) === "0x") {
     throw new Error(`TOKEN_ADDRESS ${reuse} has no contract code on ${network.name}`);
   }
@@ -53,7 +53,14 @@ async function main() {
   let underlying: string | null = null;
   if (reuse) {
     tokenAddr = reuse;
-    underlying = kind === "wrapped" ? process.env.WETH_ADDRESS || null : null;
+    if (kind === "wrapped") {
+      const reported = await new ethers.Contract(reuse, ["function underlying() view returns (address)"], ethers.provider)
+        .underlying()
+        .then(String, () => null);
+      const r = reusedUnderlying({ reported, wethAddress: process.env.WETH_ADDRESS });
+      if ("refusal" in r) throw new Error(r.refusal);
+      underlying = r.underlying;
+    }
     console.log("Using existing token:", tokenAddr);
   } else if (kind === "mock") {
     const token = await (await ethers.getContractFactory("MockConfidentialToken")).deploy();
