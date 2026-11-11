@@ -8,7 +8,8 @@ defmodule Annuart.Indexer do
   database; the GenServer only calls it on a timer (and on `sync_now/0`).
   After a pass it broadcasts `{:enft_changed, label, token_id}` on the
   `"enfts"` topic of `Annuart.PubSub` for every ENFT touched, and
-  `:enfts_reset` when a contract was rebuilt from scratch.
+  `:enfts_reset` when a contract was rebuilt from scratch or the rows of a
+  contract no longer configured were removed.
   """
   use GenServer
   require Logger
@@ -29,7 +30,21 @@ defmodule Annuart.Indexer do
   @doc "One pass over every configured contract. Never raises."
   @spec sync_once() :: :ok
   def sync_once do
-    Enum.each(Config.contracts(), &sync_contract/1)
+    contracts = Config.contracts()
+    removed = delete_unconfigured(contracts)
+    Enum.each(contracts, &sync_contract/1)
+    if removed, do: broadcast(:enfts_reset)
+    :ok
+  end
+
+  # A redeploy can leave rows of an address that is no longer in the
+  # deployment file; they would show a dead contract's ENFTs.
+  defp delete_unconfigured(contracts) do
+    Enfts.delete_unconfigured(Enum.map(contracts, & &1.nft))
+  rescue
+    e ->
+      Logger.warning("indexer: removing unconfigured contracts failed: #{Exception.message(e)}")
+      false
   end
 
   ## GenServer

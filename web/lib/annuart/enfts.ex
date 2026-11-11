@@ -2,6 +2,7 @@ defmodule Annuart.Enfts do
   @moduledoc "Store of indexed ENFTs, their transfers and per-contract indexer cursors."
   import Ecto.Query
 
+  alias Annuart.Chain.Config
   alias Annuart.Enfts.{Cursor, Enft, Transfer}
   alias Annuart.Repo
 
@@ -30,7 +31,17 @@ defmodule Annuart.Enfts do
   defp order(query, :newest), do: order_by(query, [e], desc: e.created_at, desc: e.id)
   defp order(query, :oldest), do: order_by(query, [e], asc: e.created_at, asc: e.id)
 
-  def get_enft(label, token_id), do: Repo.get_by(Enft, label: label, token_id: token_id)
+  @doc """
+  The ENFT `token_id` of the contract configured under `label`, or `nil` when no
+  contract has that label. Looked up by the contract's address: rows another
+  deployment left under the same label are never found.
+  """
+  def get_enft(label, token_id) do
+    case Config.contract(label) do
+      %Config.Contract{nft: nft} -> Repo.get_by(Enft, nft: nft, token_id: token_id)
+      nil -> nil
+    end
+  end
 
   def list_owned(address) do
     address = String.downcase(address)
@@ -109,6 +120,23 @@ defmodule Annuart.Enfts do
     end)
 
     :ok
+  end
+
+  @doc """
+  Removes the ENFTs (with their transfers) and cursors of every contract whose
+  address is not in `nfts`. Returns whether anything was removed.
+  """
+  def delete_unconfigured(nfts) do
+    nfts = Enum.map(nfts, &String.downcase/1)
+
+    {:ok, removed} =
+      Repo.transaction(fn ->
+        {enfts, _} = Repo.delete_all(from e in Enft, where: e.nft not in ^nfts)
+        {cursors, _} = Repo.delete_all(from c in Cursor, where: c.nft not in ^nfts)
+        enfts + cursors
+      end)
+
+    removed > 0
   end
 
   def cursor(nft), do: Repo.get_by(Cursor, nft: String.downcase(nft))

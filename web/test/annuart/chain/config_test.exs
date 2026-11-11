@@ -53,6 +53,15 @@ defmodule Annuart.Chain.ConfigTest do
     assert {:error, :invalid} = Config.load(write_tmp!(dir, deployment("weird")))
   end
 
+  test "two contracts with the same label are invalid", %{dir: dir} do
+    entry = fn nft ->
+      ~s({"label":"mock","nft":"#{nft}","token":"0x02","tokenKind":"mock","underlying":null,"deployBlock":1})
+    end
+
+    path = write_tmp!(dir, ~s({"chainId":1,"contracts":[#{entry.("0x01")},#{entry.("0x03")}]}))
+    assert {:error, :invalid} = Config.load(path)
+  end
+
   test "a contract missing a field is invalid", %{dir: dir} do
     path = write_tmp!(dir, ~s({"chainId":1,"contracts":[{"label":"x"}]}))
     assert {:error, :invalid} = Config.load(path)

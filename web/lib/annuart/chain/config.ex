@@ -63,12 +63,18 @@ defmodule Annuart.Chain.Config do
       end
     end)
     |> case do
-      {:ok, acc} -> {:ok, %{chain_id: chain_id, contracts: Enum.reverse(acc)}}
+      {:ok, acc} -> unique_labels(%{chain_id: chain_id, contracts: Enum.reverse(acc)})
       error -> error
     end
   end
 
   defp parse(_), do: {:error, :invalid}
+
+  # An ENFT is named by (label, token id), so a label names one contract.
+  defp unique_labels(%{contracts: contracts} = parsed) do
+    labels = Enum.map(contracts, & &1.label)
+    if Enum.uniq(labels) == labels, do: {:ok, parsed}, else: {:error, :invalid}
+  end
 
   defp parse_contract(
          %{

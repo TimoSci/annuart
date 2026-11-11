@@ -1,14 +1,37 @@
 defmodule Annuart.EnftsTest do
-  use Annuart.DataCase, async: true
+  # get_enft resolves a label through the chain config, which is application
+  # env: not async.
+  use Annuart.DataCase, async: false
 
+  alias Annuart.Chain.Config
   alias Annuart.Enfts
   alias Annuart.Enfts.{Cursor, Enft, Transfer}
 
   @nft_a "0x" <> String.duplicate("a1", 20)
   @nft_b "0x" <> String.duplicate("b2", 20)
+  # A contract that is no longer in the deployment file.
+  @nft_gone "0x" <> String.duplicate("dd", 20)
+
   @alice "0x" <> String.duplicate("ab", 20)
   @bob "0x" <> String.duplicate("cd", 20)
   @max 18_446_744_073_709_551_615
+
+  setup do
+    previous = Application.fetch_env!(:annuart, :chain)
+    on_exit(fn -> Application.put_env(:annuart, :chain, previous) end)
+
+    contract = fn label, nft ->
+      %Config.Contract{label: label, nft: nft, token: nft, token_kind: :mock, deploy_block: 0}
+    end
+
+    Application.put_env(
+      :annuart,
+      :chain,
+      Keyword.put(previous, :contracts, [contract.("Alpha", @nft_a), contract.("Beta", @nft_b)])
+    )
+
+    :ok
+  end
 
   defp mint_attrs(overrides) do
     Map.merge(
@@ -118,6 +141,48 @@ defmodule Annuart.EnftsTest do
     assert id == a.id
     assert Enfts.get_enft("Alpha", 2) == nil
     assert Enfts.get_enft("Nope", 1) == nil
+  end
+
+  test "get_enft looks up the configured contract's address, so a stale row under the same label is not found" do
+    # Left by an earlier deployment that used the label "Alpha" at another address.
+    {:ok, _} = Enfts.record_mint(mint_attrs(nft: @nft_gone, token_id: 1, owner: @bob))
+    {:ok, current} = Enfts.record_mint(mint_attrs(token_id: 1))
+
+    assert %Enft{id: id, nft: @nft_a} = Enfts.get_enft("Alpha", 1)
+    assert id == current.id
+  end
+
+  test "get_enft is nil for a label that is not configured, even with rows under it" do
+    {:ok, _} = Enfts.record_mint(mint_attrs(label: "Gamma", nft: @nft_gone, token_id: 1))
+    assert Enfts.get_enft("Gamma", 1) == nil
+  end
+
+  test "delete_unconfigured removes the enfts, transfers and cursors of other contracts only" do
+    {:ok, _} = Enfts.record_mint(mint_attrs(token_id: 1))
+    {:ok, gone} = Enfts.record_mint(mint_attrs(nft: @nft_gone, token_id: 1))
+    :ok = Enfts.record_transfer(transfer_attrs([]))
+
+    :ok =
+      Enfts.record_transfer(
+        transfer_attrs(nft: @nft_gone, tx_hash: "0x" <> String.duplicate("09", 32))
+      )
+
+    :ok = Enfts.put_cursor(@nft_a, 50, "0xhashA")
+    :ok = Enfts.put_cursor(@nft_gone, 70, "0xhashGone")
+
+    assert Enfts.delete_unconfigured([@nft_a, @nft_b]) == true
+
+    assert Repo.get(Enft, gone.id) == nil
+    assert [%Enft{nft: @nft_a}] = Repo.all(Enft)
+    assert [%Transfer{}] = Repo.all(Transfer)
+    assert Enfts.cursor(@nft_gone) == nil
+    assert %Cursor{last_block: 50} = Enfts.cursor(@nft_a)
+
+    # Nothing left to remove.
+    assert Enfts.delete_unconfigured([@nft_a, @nft_b]) == false
+    # Addresses compare case-insensitively.
+    assert Enfts.delete_unconfigured([String.upcase(@nft_a)]) == false
+    assert [%Enft{}] = Repo.all(Enft)
   end
 
   test "list_owned is case-insensitive on the address" do

@@ -232,6 +232,28 @@ defmodule Annuart.IndexerTest do
     assert drain_enft_messages() == []
   end
 
+  test "rows of a contract no longer configured are removed, and the removal announced once" do
+    seed_basic()
+    Indexer.sync_once()
+    assert %{nft: @nft} = Enfts.get_enft("mock", 1)
+
+    # Redeployed under the same label at a new address, without a node restart.
+    put_contracts([contract("mock", @nft2, 5)])
+    put_schedule(@nft2, 1, [{7, 7}])
+    RpcStub.put_logs([mint_log(@nft2, 1, @bob, 12, 0)])
+    Phoenix.PubSub.subscribe(Annuart.PubSub, "enfts")
+    Indexer.sync_once()
+
+    assert [%{nft: @nft2, owner: @bob}] = Repo.all(Annuart.Enfts.Enft)
+    assert Repo.all(Annuart.Enfts.Transfer) == []
+    assert Enfts.cursor(@nft) == nil
+    assert %{nft: @nft2} = Enfts.get_enft("mock", 1)
+    assert [{:enft_changed, "mock", 1}, :enfts_reset] = drain_enft_messages()
+
+    Indexer.sync_once()
+    assert drain_enft_messages() == []
+  end
+
   test "head below cursor triggers a rebuild" do
     seed_basic()
     Indexer.sync_once()
