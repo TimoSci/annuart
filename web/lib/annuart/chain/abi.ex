@@ -6,7 +6,7 @@ defmodule Annuart.Chain.Abi do
   """
 
   @topics %{
-    endowment_minted: "0xd8a9f6d0a9cfd3d40de7bcf9e2ae29a4aafc952ea9b81a96fdab2c63f9c1f205",
+    endowment_minted: "0x25a622b3341f11db07752ec3231ebbf16da534e766579285f53d6b44d736ac3b",
     transfer: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
   }
 
@@ -31,7 +31,7 @@ defmodule Annuart.Chain.Abi do
     cond do
       t0 == topic(:endowment_minted) and length(indexed) == 3 ->
         [id, creator, to] = indexed
-        [start, top_ups] = ABI.decode("f(uint64,bool)", from_hex(data))
+        [start, top_ups, name] = ABI.decode("f(uint64,bool,bytes32)", from_hex(data))
 
         {:minted,
          %{
@@ -39,7 +39,9 @@ defmodule Annuart.Chain.Abi do
            creator: topic_address(creator),
            to: topic_address(to),
            schedule_start: start,
-           top_ups_allowed: top_ups
+           top_ups_allowed: top_ups,
+           # nil when unnamed, and when the bytes are not a name the contract accepts.
+           name: Annuart.Enfts.Name.from_bytes32(name)
          }}
 
       t0 == topic(:transfer) and length(indexed) == 3 ->

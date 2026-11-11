@@ -1,11 +1,88 @@
 defmodule AnnuartWeb.EnftComponents do
-  @moduledoc "Display components for ENFTs: schedule chart and table, addresses and dates."
+  @moduledoc """
+  Display components for ENFTs: identity (name, number and creator picture),
+  schedule chart and table, addresses and dates.
+  """
   use Phoenix.Component
 
-  alias Annuart.Schedule
+  alias Annuart.{Randomart, Schedule}
 
   @indefinite_share 30
   @min_bar_height 4
+
+  @doc """
+  How an ENFT is named everywhere: its creator's picture, its name when it has
+  one, and its number. Names are not unique and anyone can pick any name, so a
+  name is never shown without the two things that cannot be copied: the token
+  number and the creator. `unnamed` is the text shown in place of a missing name.
+  """
+  attr :enft, :map, required: true
+  attr :unnamed, :string, default: nil
+  attr :size, :atom, default: :small, values: [:small, :large]
+
+  def identity(assigns) do
+    ~H"""
+    <span class="enft-identity" data-role="enft-identity">
+      <%!-- The tooltip is a title attribute, not an SVG <title>, so the address
+           never becomes part of the surrounding text (a heading, a link). --%>
+      <span class="randomart-box" title={"Creator #{@enft.creator}"}>
+        <.randomart address={@enft.creator} size={@size} />
+      </span>
+      <span :if={@enft.name} class="enft-name" data-role="enft-name">{@enft.name}</span>
+      <span :if={!@enft.name && @unnamed} class="enft-name">{@unnamed}</span>
+      <span class="enft-number" data-role="enft-number">#{@enft.token_id}</span>
+    </span>
+    """
+  end
+
+  @doc """
+  The creator's address as a small picture (see `Annuart.Randomart`): squares
+  darken with visits, a ring marks where the walk started and a dot where it
+  ended. Hovering shows the address. Renders nothing for a malformed address.
+  """
+  attr :address, :string, required: true
+  attr :size, :atom, default: :small, values: [:small, :large]
+
+  def randomart(assigns) do
+    assigns = assign(assigns, :cells, Randomart.cells(assigns.address))
+
+    ~H"""
+    <svg
+      :if={@cells}
+      class={["randomart", @size == :large && "large"]}
+      viewBox={"0 0 #{Randomart.width()} #{Randomart.height()}"}
+      role="img"
+      aria-label={"Creator #{@address}"}
+      data-role="randomart"
+      data-creator={@address}
+    >
+      <rect
+        :for={c <- @cells}
+        :if={c.visits > 0}
+        x={c.x}
+        y={c.y}
+        width="1"
+        height="1"
+        fill="currentColor"
+        opacity={visit_opacity(c.visits)}
+      />
+      <%= for c <- @cells, c.mark do %>
+        <circle
+          :if={c.mark == :start}
+          cx={c.x + 0.5}
+          cy={c.y + 0.5}
+          r="0.32"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="0.2"
+        />
+        <circle :if={c.mark == :end} cx={c.x + 0.5} cy={c.y + 0.5} r="0.42" fill="currentColor" />
+      <% end %>
+    </svg>
+    """
+  end
+
+  defp visit_opacity(visits), do: 0.1 + 0.15 * min(visits, 5)
 
   @doc "Bar chart of a schedule: width by duration, height by rate, indefinite period striped."
   attr :periods, :list, required: true

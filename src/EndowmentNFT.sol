@@ -18,6 +18,7 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
         uint64 scheduleStart;
         bool topUpsAllowed;
         bool settled;               // fixed-end schedule is over and the leftover was released
+        bytes32 name;               // public, set once at mint; zero when unnamed
         Segment[] schedule;
     }
 
@@ -31,7 +32,8 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
         address indexed creator,
         address indexed to,
         uint64 scheduleStart,
-        bool topUpsAllowed
+        bool topUpsAllowed,
+        bytes32 name
     );
 
     error EmptySchedule();
@@ -43,6 +45,7 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
     error NotOwner();
     error ScheduleEnded();
     error ScheduleTooLong();
+    error InvalidName();
 
     constructor(IERC7984 token_) ERC721("Endowment NFT", "ENDOW") {
         token = token_;
@@ -54,9 +57,11 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
         bytes calldata inputProof,
         Segment[] calldata segments,
         uint64 scheduleStart,
-        bool topUpsAllowed
+        bool topUpsAllowed,
+        bytes32 name_
     ) external nonReentrant returns (uint256 tokenId) {
         if (segments.length == 0) revert EmptySchedule();
+        if (!_validName(name_)) revert InvalidName();
 
         uint64 start = scheduleStart == 0 ? uint64(block.timestamp) : scheduleStart;
 
@@ -72,6 +77,20 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
         e.lastAccrualAt = start;
         e.scheduleStart = start;
         e.topUpsAllowed = topUpsAllowed;
+        e.name = name_;
+        _storeSchedule(e, segments, start);
+
+        FHE.allowThis(e.endowmentRemaining);
+        FHE.allowThis(e.distribution);
+        FHE.allow(e.distribution, to);
+
+        // Emit before _safeMint so the event precedes anything the receiver callback does.
+        emit EndowmentMinted(tokenId, msg.sender, to, start, topUpsAllowed, name_);
+        _safeMint(to, tokenId);
+    }
+
+    /// @dev Validates the segments and copies them into storage.
+    function _storeSchedule(Endowment storage e, Segment[] calldata segments, uint64 start) internal {
         // start + every fixed duration must stay below type(uint64).max, so that
         // scheduleEnd == type(uint64).max means "indefinite" and nothing else.
         uint256 fixedEnd = start;
@@ -86,14 +105,34 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
             e.schedule.push(segments[i]);
         }
         if (fixedEnd >= type(uint64).max) revert ScheduleTooLong();
+    }
 
-        FHE.allowThis(e.endowmentRemaining);
-        FHE.allowThis(e.distribution);
-        FHE.allow(e.distribution, to);
+    /// @dev A name is optional (zero), public, and can never be changed. It is up to
+    ///      31 ASCII characters, zero-padded on the right (so the last byte is always
+    ///      zero, the usual bytes32-string convention): letters, digits, space and
+    ///      - _ . ' only, with no space at either end. Names are not unique; a token
+    ///      is identified by its id and creator, never by its name.
+    function _validName(bytes32 n) internal pure returns (bool) {
+        if (n == bytes32(0)) return true;
+        if (n[31] != 0) return false;
+        uint256 len = 31;
+        while (n[len - 1] == 0) len--;
+        if (n[0] == 0x20 || n[len - 1] == 0x20) return false;
+        for (uint256 i = 0; i < len; i++) {
+            bytes1 c = n[i];
+            bool ok = (c >= 0x30 && c <= 0x39) // 0-9
+                || (c >= 0x41 && c <= 0x5A) // A-Z
+                || (c >= 0x61 && c <= 0x7A) // a-z
+                || c == 0x20 || c == 0x2D || c == 0x5F || c == 0x2E || c == 0x27; // space - _ . '
+            if (!ok) return false;
+        }
+        return true;
+    }
 
-        // Emit before _safeMint so the event precedes anything the receiver callback does.
-        emit EndowmentMinted(tokenId, msg.sender, to, start, topUpsAllowed);
-        _safeMint(to, tokenId);
+    /// @return the token's name as zero-padded ASCII, or zero when it has none.
+    function nameOf(uint256 tokenId) external view returns (bytes32) {
+        _requireMinted(tokenId);
+        return _endowments[tokenId].name;
     }
 
     function scheduleOf(uint256 tokenId) external view returns (Segment[] memory) {

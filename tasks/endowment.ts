@@ -20,6 +20,7 @@ const LABEL_DESC = "Deployment label in deployments/<network>.json (defaults to 
 task("task:mint", "Mint an endowment NFT funded with a secret endowment")
   .addParam("amount", "Endowment amount in base units")
   .addOptionalParam("topups", "Allow top-ups: true/false", "false")
+  .addOptionalParam("name", "Public name, up to 31 characters: letters, digits, space and - _ . '", "")
   .addOptionalParam("label", LABEL_DESC)
   .addOptionalParam("nft", "EndowmentNFT address (defaults to the deployment file)")
   .addOptionalParam("token", "Confidential token address (defaults to the deployment file)")
@@ -37,6 +38,7 @@ task("task:mint", "Mint an endowment NFT funded with a secret endowment")
     const [signer] = await ethers.getSigners();
     const amount = BigInt(args.amount);
     const topups = String(args.topups) === "true";
+    const name = args.name ? ethers.encodeBytes32String(String(args.name)) : ethers.ZeroHash;
 
     const token = await ethers.getContractAt("MockConfidentialToken", tokenAddr, signer);
     await (await token.mint(signer.address, amount)).wait();
@@ -51,7 +53,7 @@ task("task:mint", "Mint an endowment NFT funded with a secret endowment")
     const nft = await ethers.getContractAt("EndowmentNFT", nftAddr, signer);
     const segments = [{ duration: 3600, ratePerSec: 1 }]; // 1 unit/sec for 1 hour
     const receipt = await (
-      await nft.mint(signer.address, enc.handles[0], enc.inputProof, segments, 0, topups)
+      await nft.mint(signer.address, enc.handles[0], enc.inputProof, segments, 0, topups, name)
     ).wait();
 
     let tokenId = "?";
@@ -118,6 +120,8 @@ task("task:info", "Print public info for a token")
     const id = BigInt(args.id);
     console.log(`owner      = ${await nft.ownerOf(id)}`);
     console.log(`topUps     = ${await nft.topUpsAllowedOf(id)}`);
+    const name = ethers.decodeBytes32String(await nft.nameOf(id));
+    console.log(`name       = ${name === "" ? "(none)" : name}`);
     const schedule = await nft.scheduleOf(id);
     console.log("schedule   =");
     schedule.forEach((seg: { duration: bigint; ratePerSec: bigint }, i: number) => {

@@ -24,6 +24,19 @@ Each `EndowmentNFT` token holds an encrypted endowment of a confidential ERC-20 
 - The current owner can decrypt their **distribution** balance off-chain via the relayer SDK (`FHE.allow`-ed to `ownerOf`).
 - In **immutable mode**, the original creator knows the initial endowment amount they funded. In **top-ups-allowed mode**, third-party top-ups can obscure even that.
 
+### Names
+
+An ENFT can be given a name at mint (`mint`'s last argument, a `bytes32`; zero for none). A name
+is **public**, is carried in `EndowmentMinted`, is readable with `nameOf(tokenId)`, and can never
+be changed or added later. It is up to 31 ASCII characters, zero-padded on the right: letters,
+digits, space and `- _ . '`, with no space at either end; anything else reverts `InvalidName`.
+
+Names are **not unique** and anyone can pick any name, so a name identifies nothing. The token id
+and the creator do. The web app therefore never shows a name alone: it is always next to the
+token number and a small picture of the creator's address (the "randomart" OpenSSH draws for key
+fingerprints, see `web/lib/annuart/randomart.ex`). The picture is a recognition aid, not a proof;
+the creator's full address is on the ENFT's page.
+
 ### FHE cost model
 
 FHE operations are metered in **HCU (Homomorphic Complexity Units)** — far heavier than native EVM ops — plus small `$ZAMA` protocol fees. The lazy-accrual design mitigates this: distribution accrues passively, so owners can call `accrue` + `claim` infrequently.
@@ -264,6 +277,7 @@ Addresses are read from `deployments/<network>.json` (the first entry, or the on
 
 ```bash
 npx hardhat task:mint --amount 1000000 --topups true   # mint a new endowment NFT
+npx hardhat task:mint --amount 1000000 --name "Rainy day fund"   # the same, with a public name
 npx hardhat task:accrue --id 1                          # advance accrual (anyone)
 npx hardhat task:distribution --id 1                    # decrypt your claimable balance
 npx hardhat task:claim --id 1                           # claim (owner only)
@@ -302,6 +316,9 @@ inputs have no `name`, sit in `phx-update="ignore"` regions, and are never sent 
 event, form or URL; the server only hears `tx:confirmed` with an action, a contract label, a token
 id and a transaction hash. The server never holds a private key and never signs, encrypts or
 decrypts. `web/e2e` checks this in a real browser.
+
+An ENFT's name is not an amount and is not private: it is public chain data, and the server reads
+it from the `EndowmentMinted` event like the owner and the schedule.
 
 ### Prerequisites
 

@@ -1,8 +1,8 @@
-import { Contract } from "ethers";
+import { Contract, ZeroHash, encodeBytes32String } from "ethers";
 import { setup } from "./instance.js";
 
 const ABI = [
-  "function mint(address to, bytes32 encEndowment, bytes inputProof, (uint64 duration, uint64 ratePerSec)[] segments, uint64 scheduleStart, bool topUpsAllowed) returns (uint256)"
+  "function mint(address to, bytes32 encEndowment, bytes inputProof, (uint64 duration, uint64 ratePerSec)[] segments, uint64 scheduleStart, bool topUpsAllowed, bytes32 name) returns (uint256)"
 ];
 const TOKEN_ABI = ["function setOperator(address operator, uint48 until)"];
 
@@ -24,9 +24,11 @@ async function main() {
 
   // 3) mint: 1 unit/sec for 1 hour
   const segments = [{ duration: 3600n, ratePerSec: 1n }];
+  // Optional public name (ENFT_NAME): up to 31 of letters, digits, space and - _ . '
+  const name = process.env.ENFT_NAME ? encodeBytes32String(process.env.ENFT_NAME) : ZeroHash;
   const c = new Contract(nft, ABI, wallet);
   const tx = await c.mint(
-    wallet.address, enc.handles[0], enc.inputProof, segments, 0n, true
+    wallet.address, enc.handles[0], enc.inputProof, segments, 0n, true, name
   );
   console.log("mint tx:", (await tx.wait())?.hash);
 }

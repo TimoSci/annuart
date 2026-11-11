@@ -3,7 +3,9 @@ defmodule AnnuartWeb.CreateLive do
   The form for creating an ENFT. The whole form is one `phx-update="ignore"`
   region driven by the `CreateForm` hook (`assets/js/hooks/create_form.js`):
   the amount, schedule and options are read, validated, encrypted and sent to
-  the chain in the browser, and nothing typed here reaches the server. After
+  the chain in the browser, and nothing typed here reaches the server. (The
+  name is public: it goes to the chain in the clear and comes back through
+  the indexer like any other ENFT's.) After
   the transaction is mined the hook reports `tx:confirmed` with the new ENFT's
   label, token id and transaction hash, and this view navigates to it.
 
@@ -191,6 +193,21 @@ defmodule AnnuartWeb.CreateLive do
 
         <div class="area panel" data-activity-id="panel:create:options">
           <h2>3. Options</h2>
+          <div class="field">
+            <label>Name</label>
+            <input
+              type="text"
+              data-role="name"
+              maxlength={Annuart.Enfts.Name.max()}
+              placeholder="Optional"
+              autocomplete="off"
+            />
+            <span class="note">
+              Public. Up to {Annuart.Enfts.Name.max()} letters, digits, spaces and - _ . '
+              Cannot be changed later.
+            </span>
+            <span data-role="name-hint" class="amount-echo"></span>
+          </div>
           <div class="field">
             <label>Payouts start</label>
             <select data-role="start-mode">

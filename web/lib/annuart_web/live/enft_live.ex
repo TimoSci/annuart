@@ -22,13 +22,13 @@ defmodule AnnuartWeb.EnftLive do
   def mount(%{"label" => label, "id" => id}, _session, socket) do
     with {token_id, ""} <- Integer.parse(id),
          %Config.Contract{} = contract <- Config.contract(label),
-         %Enfts.Enft{} <- Enfts.get_enft(label, token_id) do
+         %Enfts.Enft{} = enft <- Enfts.get_enft(label, token_id) do
       if connected?(socket), do: Phoenix.PubSub.subscribe(Annuart.PubSub, "enfts")
 
       {:ok,
        socket
        |> assign(
-         page_title: "ENFT ##{token_id}",
+         page_title: if(enft.name, do: "#{enft.name} · ", else: "") <> "ENFT ##{token_id}",
          contract: contract,
          label: label,
          token_id: token_id
@@ -117,7 +117,7 @@ defmodule AnnuartWeb.EnftLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <h1>ENFT #{@token_id}</h1>
+      <h1><EnftComponents.identity enft={@enft} unnamed="ENFT" size={:large} /></h1>
       <p class="sub">
         {@label} · created <EnftComponents.datetime value={@enft.created_at} format={:date} />
       </p>
@@ -130,7 +130,10 @@ defmodule AnnuartWeb.EnftLive do
               <span class="k">Owner</span>
               <span><EnftComponents.address value={@enft.owner} /></span>
               <span class="k">Creator</span>
-              <span><EnftComponents.address value={@enft.creator} /></span>
+              <span class="creator" title={"Creator #{@enft.creator}"}>
+                <EnftComponents.randomart address={@enft.creator} />
+                <EnftComponents.address value={@enft.creator} />
+              </span>
               <span class="k">Created</span>
               <span><EnftComponents.datetime value={@enft.created_at} /></span>
               <span class="k">Payouts start</span>

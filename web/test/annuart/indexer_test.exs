@@ -58,11 +58,13 @@ defmodule Annuart.IndexerTest do
   defp mint_log(nft, id, to, block, index, opts \\ []) do
     start = Keyword.get(opts, :start, 1_700_000_000)
     top_ups = Keyword.get(opts, :top_ups, true)
+    name = Keyword.get(opts, :name, "")
 
     data =
       "0x" <>
         String.pad_leading(Integer.to_string(start, 16), 64, "0") <>
-        String.pad_leading(if(top_ups, do: "1", else: "0"), 64, "0")
+        String.pad_leading(if(top_ups, do: "1", else: "0"), 64, "0") <>
+        String.pad_trailing(Base.encode16(name, case: :lower), 64, "0")
 
     %{
       "address" => nft,
@@ -150,6 +152,25 @@ defmodule Annuart.IndexerTest do
     assert [%{from: @alice, to: @bob, block_number: 15}] = Enfts.history(e)
     assert Enfts.cursor(@nft).last_block == 20
     assert Enfts.cursor(@nft).last_block_hash == "0xh20"
+  end
+
+  test "stores the name from the mint, nil when unnamed or not a valid name" do
+    put_blocks(0..20)
+    RpcStub.put_head(20)
+    for id <- 1..3, do: put_schedule(@nft, id, [{1000, 1}])
+
+    RpcStub.put_logs([
+      mint_log(@nft, 1, @alice, 10, 0, name: "Rainy day fund"),
+      mint_log(@nft, 2, @alice, 11, 0),
+      mint_log(@nft, 3, @alice, 12, 0, name: "<b>bold</b>")
+    ])
+
+    Indexer.sync_once()
+
+    assert Enfts.get_enft("mock", 1).name == "Rainy day fund"
+    assert Enfts.get_enft("mock", 2).name == nil
+    # Still indexed: only the name is dropped.
+    assert Enfts.get_enft("mock", 3).name == nil
   end
 
   test "a second pass with no new logs changes nothing and is idempotent" do

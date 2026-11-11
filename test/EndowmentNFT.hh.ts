@@ -37,8 +37,9 @@ describe("EndowmentNFT (Hardhat + fhevm mock)", function () {
       .add64(Number(endowment))
       .encrypt();
     const segments = [{ duration: 1000, ratePerSec: Number(rate) }]; // 1 unit/sec for 1000s
+    const name = ethers.encodeBytes32String("Rainy day fund");
     const mintRcpt = await (
-      await nft.mint(deployer.address, enc.handles[0], enc.inputProof, segments, 0, false)
+      await nft.mint(deployer.address, enc.handles[0], enc.inputProof, segments, 0, false, name)
     ).wait();
     const scheduleStart = BigInt((await ethers.provider.getBlock(mintRcpt!.blockNumber))!.timestamp);
     const tokenId = 1n;
@@ -57,6 +58,8 @@ describe("EndowmentNFT (Hardhat + fhevm mock)", function () {
     expect(minted!.args.creator).to.equal(deployer.address);
     expect(minted!.args.to).to.equal(deployer.address);
     expect(minted!.args.topUpsAllowed).to.equal(false);
+    expect(minted!.args.name).to.equal(name);
+    expect(ethers.decodeBytes32String(await nft.nameOf(tokenId))).to.equal("Rainy day fund");
 
     // Advance ~100s, accrue, and confirm the owner can decrypt the scheduled amount
     // (capped by the endowment), computed from the accrual block's timestamp.
@@ -93,7 +96,7 @@ describe("EndowmentNFT (Hardhat + fhevm mock)", function () {
 
     const enc = await fhevm.createEncryptedInput(nftAddr, deployer.address).add64(2000).encrypt();
     const segments = [{ duration: 1000, ratePerSec: 1 }]; // schedules 1000 of the 2000
-    await (await nft.mint(deployer.address, enc.handles[0], enc.inputProof, segments, 0, false)).wait();
+    await (await nft.mint(deployer.address, enc.handles[0], enc.inputProof, segments, 0, false, ethers.ZeroHash)).wait();
 
     await time.increase(1001);
     await (await nft.claim(1n)).wait();
@@ -102,5 +105,48 @@ describe("EndowmentNFT (Hardhat + fhevm mock)", function () {
     const bal = await fhevm.userDecryptEuint(FhevmType.euint64, balHandle, tokenAddr, deployer);
     expect(bal).to.equal(2000n);
     expect(await nft.settledOf(1n)).to.equal(true);
+  });
+
+  it("names: accepts plain ASCII up to 31 characters, rejects everything else", async function () {
+    const [deployer] = await ethers.getSigners();
+    const token = await (await ethers.getContractFactory("MockConfidentialToken")).deploy();
+    await token.waitForDeployment();
+    const tokenAddr = await token.getAddress();
+    const nft = await (await ethers.getContractFactory("EndowmentNFT")).deploy(tokenAddr);
+    await nft.waitForDeployment();
+    const nftAddr = await nft.getAddress();
+    await (await token.mint(deployer.address, 1000)).wait();
+    await (await token.setOperator(nftAddr, (await time.latest()) + 365 * 24 * 3600)).wait();
+
+    const segments = [{ duration: 1000, ratePerSec: 1 }];
+    const mintNamed = async (name: string) => {
+      const enc = await fhevm.createEncryptedInput(nftAddr, deployer.address).add64(10).encrypt();
+      return nft.mint(deployer.address, enc.handles[0], enc.inputProof, segments, 0, false, name);
+    };
+    // Raw bytes, zero-padded on the right, for names ethers would refuse to encode.
+    const raw = (hex: string) => "0x" + hex.padEnd(64, "0");
+    const text = (s: string) => raw(Buffer.from(s, "utf8").toString("hex"));
+
+    const good = ["Ada's fund_no.2 - A", "abcdefghijklmnopqrstuvwxyz01234", "x"];
+    for (const [i, name] of good.entries()) {
+      await (await mintNamed(text(name))).wait();
+      expect(ethers.decodeBytes32String(await nft.nameOf(i + 1))).to.equal(name);
+    }
+    // Unnamed, and a name another token already has, are both fine.
+    await (await mintNamed(ethers.ZeroHash)).wait();
+    expect(await nft.nameOf(good.length + 1)).to.equal(ethers.ZeroHash);
+    await (await mintNamed(text("x"))).wait();
+
+    const bad = [
+      text("abcdefghijklmnopqrstuvwxyz012345"), // 32 characters
+      text(" lead"), text("trail "), text(" "),
+      text("<b>"), text("a/b"), text("a\nb"), text("café"), text("a\u202eb"),
+      raw("610062"), // "a", zero byte, "b"
+      raw("0061"), // zero byte, "a"
+    ];
+    for (const name of bad) {
+      await expect(mintNamed(name), name).to.be.revertedWithCustomError(nft, "InvalidName");
+    }
+    await expect(nft.nameOf(99)).to.be.revertedWithCustomError(nft, "NonexistentToken");
   });
 });

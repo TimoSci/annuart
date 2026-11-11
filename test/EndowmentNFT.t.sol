@@ -57,7 +57,7 @@ contract EndowmentNFTTest is FhevmTest {
         token.setOperator(address(nft), uint48(block.timestamp + 365 days));
         (externalEuint64 handle, bytes memory proof) = encryptUint64(amount, creator, address(nft));
         vm.prank(creator);
-        id = nft.mint(to, handle, proof, segs, start, topUps);
+        id = nft.mint(to, handle, proof, segs, start, topUps, bytes32(0));
     }
 
     function _mintEndowment(address to, uint64 amount, bool topUps) internal returns (uint256 id) {
@@ -80,7 +80,7 @@ contract EndowmentNFTTest is FhevmTest {
         (externalEuint64 h, bytes memory p) = encryptUint64(10, creator, address(nft));
         vm.expectRevert(EndowmentNFT.IndefiniteSegmentNotLast.selector);
         vm.prank(creator);
-        nft.mint(alice, h, p, s, uint64(block.timestamp), false);
+        nft.mint(alice, h, p, s, uint64(block.timestamp), false, bytes32(0));
     }
 
     function test_mint_revertsWhenIndefiniteRateZero() public {
@@ -91,7 +91,7 @@ contract EndowmentNFTTest is FhevmTest {
         (externalEuint64 h, bytes memory p) = encryptUint64(10, creator, address(nft));
         vm.expectRevert(EndowmentNFT.ZeroRateIndefiniteSegment.selector);
         vm.prank(creator);
-        nft.mint(alice, h, p, s, uint64(block.timestamp), false);
+        nft.mint(alice, h, p, s, uint64(block.timestamp), false, bytes32(0));
     }
 
     function test_indefinite_paysUntilEndowmentRunsOut() public {
@@ -323,9 +323,76 @@ contract EndowmentNFTTest is FhevmTest {
         token.setOperator(address(nft), uint48(block.timestamp + 365 days));
         (externalEuint64 h, bytes memory p) = encryptUint64(500, creator, address(nft));
         vm.expectEmit(true, true, true, true, address(nft));
-        emit EndowmentNFT.EndowmentMinted(1, creator, alice, uint64(block.timestamp), true);
+        emit EndowmentNFT.EndowmentMinted(1, creator, alice, uint64(block.timestamp), true, bytes32("Rainy day fund"));
         vm.prank(creator);
-        nft.mint(alice, h, p, _segments(), 0, true); // 0 resolves to block.timestamp
+        nft.mint(alice, h, p, _segments(), 0, true, bytes32("Rainy day fund")); // 0 resolves to block.timestamp
+        assertEq(nft.nameOf(1), bytes32("Rainy day fund"));
+    }
+
+    // --- Names: optional, public, fixed at mint, plain ASCII only ---
+
+    function _mintNamed(bytes32 name_) internal returns (uint256 id) {
+        token.mint(creator, 10);
+        vm.prank(creator);
+        token.setOperator(address(nft), uint48(block.timestamp + 365 days));
+        (externalEuint64 h, bytes memory p) = encryptUint64(10, creator, address(nft));
+        vm.prank(creator);
+        id = nft.mint(alice, h, p, _segments(), 0, false, name_);
+    }
+
+    function test_name_unnamedIsZero() public {
+        uint256 id = _mintNamed(bytes32(0));
+        assertEq(nft.nameOf(id), bytes32(0));
+    }
+
+    function test_name_acceptsAllowedCharactersAndFullLength() public {
+        assertEq(nft.nameOf(_mintNamed(bytes32("Ada's fund_no.2 - A"))), bytes32("Ada's fund_no.2 - A"));
+        bytes32 full = bytes32("abcdefghijklmnopqrstuvwxyz01234"); // 31 characters, the longest
+        assertEq(nft.nameOf(_mintNamed(full)), full);
+    }
+
+    function test_name_twoTokensMayShareAName() public {
+        uint256 a = _mintNamed(bytes32("Same"));
+        uint256 b = _mintNamed(bytes32("Same"));
+        assertEq(nft.nameOf(a), nft.nameOf(b));
+    }
+
+    function test_name_ofNonexistentTokenReverts() public {
+        vm.expectRevert(EndowmentNFT.NonexistentToken.selector);
+        nft.nameOf(99);
+    }
+
+    function _expectInvalidName(bytes32 name_) internal {
+        token.mint(creator, 10);
+        vm.prank(creator);
+        token.setOperator(address(nft), uint48(block.timestamp + 365 days));
+        (externalEuint64 h, bytes memory p) = encryptUint64(10, creator, address(nft));
+        vm.expectRevert(EndowmentNFT.InvalidName.selector);
+        vm.prank(creator);
+        nft.mint(alice, h, p, _segments(), 0, false, name_);
+    }
+
+    function test_name_rejects32Characters() public {
+        _expectInvalidName(bytes32("abcdefghijklmnopqrstuvwxyz012345"));
+    }
+
+    function test_name_rejectsSpaceAtEitherEnd() public {
+        _expectInvalidName(bytes32(" lead"));
+        _expectInvalidName(bytes32("trail "));
+        _expectInvalidName(bytes32(" "));
+    }
+
+    function test_name_rejectsCharactersOutsideTheSet() public {
+        _expectInvalidName(bytes32("<b>bold</b>"));
+        _expectInvalidName(bytes32("a/b"));
+        _expectInvalidName(bytes32("new\nline"));
+        _expectInvalidName(bytes32(hex"636166c3a9")); // "café" in UTF-8
+        _expectInvalidName(bytes32(hex"61e280ae62")); // "a", right-to-left override, "b"
+    }
+
+    function test_name_rejectsZeroByteBeforeTheEnd() public {
+        _expectInvalidName(bytes32(hex"6100620000000000000000000000000000000000000000000000000000000000")); // "a\0b"
+        _expectInvalidName(bytes32(hex"0061000000000000000000000000000000000000000000000000000000000000")); // "\0a"
     }
 
     function test_sweep_releasesLeftoverAtEnd() public {
@@ -440,7 +507,7 @@ contract EndowmentNFTTest is FhevmTest {
         (externalEuint64 h, bytes memory p) = encryptUint64(10, creator, address(nft));
         vm.expectRevert(selector);
         vm.prank(creator);
-        nft.mint(alice, h, p, s, start, false);
+        nft.mint(alice, h, p, s, start, false, bytes32(0));
     }
 
     function test_mint_revertsWhenFixedScheduleSaturates() public {

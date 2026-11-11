@@ -1,14 +1,14 @@
 // Human-readable ABI fragments for the contracts the browser talks to.
 
 export const NFT_ABI = [
-  "function mint(address to, bytes32 encEndowment, bytes inputProof, (uint64 duration, uint64 ratePerSec)[] segments, uint64 scheduleStart, bool topUpsAllowed) returns (uint256)",
+  "function mint(address to, bytes32 encEndowment, bytes inputProof, (uint64 duration, uint64 ratePerSec)[] segments, uint64 scheduleStart, bool topUpsAllowed, bytes32 name) returns (uint256)",
   "function topUp(uint256 tokenId, bytes32 encAmount, bytes inputProof)",
   "function claim(uint256 tokenId)",
   "function accrue(uint256 tokenId)",
   "function safeTransferFrom(address from, address to, uint256 tokenId)",
   "function ownerOf(uint256 tokenId) view returns (address)",
   "function distributionHandle(uint256 tokenId) view returns (bytes32)",
-  "event EndowmentMinted(uint256 indexed tokenId, address indexed creator, address indexed to, uint64 scheduleStart, bool topUpsAllowed)",
+  "event EndowmentMinted(uint256 indexed tokenId, address indexed creator, address indexed to, uint64 scheduleStart, bool topUpsAllowed, bytes32 name)",
   "error EmptySchedule()",
   "error ZeroDurationSegment()",
   "error IndefiniteSegmentNotLast()",
@@ -18,6 +18,7 @@ export const NFT_ABI = [
   "error NotOwner()",
   "error ScheduleEnded()",
   "error ScheduleTooLong()",
+  "error InvalidName()",
 ];
 
 // ERC-7984, plus the mock token's faucet mint and the ERC-20 wrapper's functions.

@@ -42,6 +42,25 @@ defmodule AnnuartWeb.MyEnftsLiveTest do
            )
   end
 
+  test "each row shows the creator picture, the name when there is one, and the number",
+       %{conn: conn} do
+    mint(token_id: 4, owner: String.downcase(@alice), name: "Rainy day fund")
+    {:ok, view, _} = live(conn, ~p"/mine")
+    render_hook(view, "wallet:changed", %{"address" => @alice})
+
+    assert has_element?(view, "#mine-mock-4 [data-role=enft-name]", "Rainy day fund")
+    assert has_element?(view, "#mine-mock-4 [data-role=enft-number]", "#4")
+
+    assert has_element?(
+             view,
+             ~s(#mine-mock-4 svg[data-role=randomart][data-creator="#{creator()}"])
+           )
+
+    refute has_element?(view, "#mine-mock-1 [data-role=enft-name]")
+    assert has_element?(view, "#mine-mock-1 [data-role=enft-number]", "#1")
+    assert has_element?(view, "#mine-mock-1 svg[data-role=randomart]")
+  end
+
   test "each row has a Claim action for that ENFT", %{conn: conn} do
     {:ok, view, _} = live(conn, ~p"/mine")
     render_hook(view, "wallet:changed", %{"address" => @alice})

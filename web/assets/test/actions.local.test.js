@@ -199,6 +199,25 @@ test("create -> accrue -> reveal -> claim on the mock token", {skip}, async () =
   assert.equal(await actions.revealDistribution(alice, mock, tokenId), 0n);
 });
 
+test("a create with a name stores it on chain; without one the name is zero", {skip}, async () => {
+  const {Contract, decodeBytes32String, ZeroHash} = await import("ethers");
+  const nft = new Contract(mock.nft, ["function nameOf(uint256) view returns (bytes32)"], provider);
+  await fund(alice, 4_000n);
+  const named = await actions.createEnft(alice, mock, createArgs(alice.address, {name: "Rainy day fund"}), steps());
+  assert.equal(decodeBytes32String(await nft.nameOf(named.tokenId)), "Rainy day fund");
+  const unnamed = await actions.createEnft(alice, mock, createArgs(alice.address), steps());
+  assert.equal(await nft.nameOf(unnamed.tokenId), ZeroHash);
+});
+
+test("a name the contract would refuse stops the create before anything is sent", {skip}, async () => {
+  await fund(alice);
+  const before = await provider.getTransactionCount(alice.address);
+  const st = steps();
+  await assert.rejects(() => actions.createEnft(alice, mock, createArgs(alice.address, {name: "<b>bold</b>"}), st));
+  assert.equal(await provider.getTransactionCount(alice.address), before);
+  assert.deepEqual(st.sentLog, []);
+});
+
 test("second create skips the authorise step", {skip}, async () => {
   await fund(alice);
   const st = steps();

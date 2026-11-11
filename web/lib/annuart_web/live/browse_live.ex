@@ -133,7 +133,7 @@ defmodule AnnuartWeb.BrowseLive do
           class="area row"
           data-activity-id={"enft:#{e.label}:#{e.token_id}"}
         >
-          <span>#{e.token_id}</span>
+          <EnftComponents.identity enft={e} />
           <span>{e.label}</span>
           <span>{symbol(@metas[e.label])}</span>
           <span><EnftComponents.datetime value={e.created_at} format={:date} /></span>

@@ -266,12 +266,18 @@ test("dev login: get test tokens, create an ENFT, land on its page", async ({pag
   // 1,000 a day is stored per second, rounded down, so a day pays slightly less.
   await expect(form.locator("[data-role=total]")).toHaveText("Schedule pays up to 999.9936 MOCK in total over 1 day.");
   await expect(form.locator("[data-role=donations]")).toBeChecked();
+  // A name the contract would refuse is explained as it is typed.
+  await form.locator("[data-role=name]").fill("Rainy/day");
+  await expect(form.locator("[data-role=name-hint]")).toHaveText("A name can only use letters, digits, spaces and - _ . '");
+  await form.locator("[data-role=name]").fill("Rainy day fund");
+  await expect(form.locator("[data-role=name-hint]")).toHaveText("");
 
   // A summary first; nothing is sent until it is confirmed.
   await form.locator("button[data-role=run]").click();
   const summary = form.locator("[data-role=summary]");
   await expect(summary).toBeVisible();
   await expect(summary).toContainText("You are about to lock 2000 MOCK in a new ENFT.");
+  await expect(summary).toContainText('It will be named "Rainy day fund".');
   await expect(form.locator("ol.steps li")).toHaveCount(0);
   // The steps can finish and the page move on between two polls, so the last
   // state each step showed is recorded in the page (live navigation keeps it).
@@ -287,7 +293,9 @@ test("dev login: get test tokens, create an ENFT, land on its page", async ({pag
   expect(await page.evaluate(() => window.__steps)).toMatchObject({balance: "done", encrypt: "done", confirm: "done", mined: "done"});
   // Account 0 may have authorised the contract in an earlier flow.
   expect(await page.evaluate(() => window.__steps.authorise)).toMatch(/^(done|skipped)$/);
-  await expect(page.locator("h1")).toHaveText(/ENFT #\d+/);
+  // The heading is the name and the number, next to the creator's picture.
+  await expect(page.locator("h1")).toHaveText(/^Rainy day fund #\d+$/);
+  await expect(page.locator(`h1 svg[data-role=randomart][data-creator="${ACCOUNTS[0].toLowerCase()}"]`)).toBeVisible();
   await expect(page.locator("#panel-yours")).toBeVisible();
   await expect(panel(page, "details")).toContainText("Donations");
   await expect(panel(page, "details").locator(".kv")).toContainText("On");

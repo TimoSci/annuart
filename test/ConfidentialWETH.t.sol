@@ -66,7 +66,7 @@ contract ConfidentialWETHTest is FhevmTest {
         segs[0] = Segment({duration: 1000, ratePerSec: 1e6});
         (externalEuint64 handle, bytes memory proof) = encryptUint64(1e9, alice, address(nft));
         vm.prank(alice);
-        uint256 id = nft.mint(alice, handle, proof, segs, uint64(block.timestamp), false);
+        uint256 id = nft.mint(alice, handle, proof, segs, uint64(block.timestamp), false, bytes32(0));
 
         assertEq(decrypt(cweth.confidentialBalanceOf(alice)), 0);
         assertEq(decrypt(cweth.confidentialBalanceOf(address(nft))), 1e9);

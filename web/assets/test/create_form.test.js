@@ -31,6 +31,8 @@ function page({tokens = [["mock", "TKN", 6]]} = {}) {
       <p data-role="total"></p>
       <select data-role="start-mode"><option value="now" selected>Now</option><option value="at">On</option></select>
       <input data-role="start-at" type="datetime-local" hidden>
+      <input data-role="name" type="text">
+      <span data-role="name-hint"></span>
       <input data-role="donations" type="checkbox" checked>
       <select data-role="recipient-mode"><option value="me" selected>Me</option><option value="other">Another address</option></select>
       <input data-role="recipient" type="text" hidden>
@@ -313,6 +315,60 @@ test("the amount echo shows the parsed value, or the reason it is invalid", () =
   assert.equal(t.el.querySelector(".amount-echo").textContent, "Use at most 6 decimal places.");
   type(q(t.el, "amount"), "");
   assert.equal(t.el.querySelector(".amount-echo").textContent, "");
+});
+
+test("a typed name is trimmed, sent with the create and stated in the summary", async () => {
+  const t = make();
+  fillDefault(t.el);
+  type(q(t.el, "name"), "  Rainy day fund ");
+  click(q(t.el, "run"));
+  const text = q(t.el, "summary").textContent;
+  assert.ok(text.includes('It will be named "Rainy day fund". The name is public and cannot be changed later.'), text);
+  click(q(t.el, "confirm"));
+  await t.ctl.pending;
+  assert.equal(t.calls[0].args.name, "Rainy day fund");
+});
+
+test("no name is sent as the empty string and the summary says so", async () => {
+  const t = make();
+  fillDefault(t.el);
+  click(q(t.el, "run"));
+  assert.ok(q(t.el, "summary").textContent.includes("It will have no name, and one cannot be added later."));
+  click(q(t.el, "confirm"));
+  await t.ctl.pending;
+  assert.equal(t.calls[0].args.name, "");
+});
+
+test("a name the contract would refuse is explained as typed and stops the create", async () => {
+  for (const [name, problem] of [
+    ["<b>bold</b>", "A name can only use letters, digits, spaces and - _ . '"],
+    ["café", "A name can only use letters, digits, spaces and - _ . '"],
+    ["a".repeat(32), "A name can be at most 31 characters."],
+  ]) {
+    const t = make();
+    fillDefault(t.el);
+    type(q(t.el, "name"), name);
+    assert.equal(q(t.el, "name-hint").textContent, problem);
+    await submit(t);
+    assert.equal(message(t.el), problem);
+    assert.equal(q(t.el, "summary").hidden, true);
+    assert.equal(t.calls.length, 0);
+  }
+  const t = make();
+  fillDefault(t.el);
+  type(q(t.el, "name"), "a".repeat(31));
+  assert.equal(q(t.el, "name-hint").textContent, "");
+  await submit(t);
+  assert.equal(t.calls.length, 1);
+});
+
+test("a form without a name field still creates, unnamed", async () => {
+  const t = make();
+  q(t.el, "name").remove();
+  q(t.el, "name-hint").remove();
+  fillDefault(t.el);
+  await submit(t);
+  assert.equal(t.calls[0].args.name, "");
 });
 
 test("a summary precedes the first transaction and states what will be locked", async () => {

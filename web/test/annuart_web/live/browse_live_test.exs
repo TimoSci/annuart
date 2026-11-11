@@ -29,6 +29,42 @@ defmodule AnnuartWeb.BrowseLiveTest do
     assert html =~ ~s(href="/enft/mock/2")
   end
 
+  test "every row shows the creator picture and the number, and the name when there is one",
+       %{conn: conn} do
+    mint(token_id: 1, name: "Rainy day fund")
+    mint(token_id: 2)
+
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    for id <- [1, 2] do
+      row = ~s(a[data-activity-id="enft:mock:#{id}"] [data-role=enft-identity])
+      assert has_element?(view, ~s(#{row} svg[data-role=randomart][data-creator="#{creator()}"]))
+      assert has_element?(view, "#{row} [data-role=enft-number]", "##{id}")
+    end
+
+    named = ~s(a[data-activity-id="enft:mock:1"] [data-role=enft-name])
+    assert has_element?(view, named, "Rainy day fund")
+    refute has_element?(view, ~s(a[data-activity-id="enft:mock:2"] [data-role=enft-name]))
+  end
+
+  test "two ENFTs with the same name from different creators have different pictures",
+       %{conn: conn} do
+    other = "0x" <> String.duplicate("00", 18) <> "beef"
+    mint(token_id: 1, name: "Same")
+    mint(token_id: 2, name: "Same", creator: other)
+
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    art = fn id ->
+      view
+      |> element(~s(a[data-activity-id="enft:mock:#{id}"] svg[data-role=randomart]))
+      |> render()
+      |> String.replace(~r/(aria-label|data-creator)="[^"]*"/, "")
+    end
+
+    assert art.(1) != art.(2)
+  end
+
   test "the page does not carry the server RPC URL off the local chain", %{conn: conn} do
     previous = Application.fetch_env!(:annuart, :chain)
     on_exit(fn -> Application.put_env(:annuart, :chain, previous) end)

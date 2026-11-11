@@ -245,6 +245,7 @@ defmodule Annuart.Indexer do
              created_block: block,
              schedule_start: m.schedule_start,
              top_ups_allowed: m.top_ups_allowed,
+             name: m.name,
              schedule: schedule
            }) do
       {:ok, m.token_id, blocks}

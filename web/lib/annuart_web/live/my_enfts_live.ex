@@ -61,7 +61,10 @@ defmodule AnnuartWeb.MyEnftsLive do
           id={"mine-#{e.label}-#{e.token_id}"}
           data-activity-id={"enft:#{e.label}:#{e.token_id}"}
         >
-          <.link navigate={~p"/enft/#{e.label}/#{e.token_id}"}>#{e.token_id} · {e.label}</.link>
+          <.link navigate={~p"/enft/#{e.label}/#{e.token_id}"} class="enft-link">
+            <EnftComponents.identity enft={e} />
+            <span>· {e.label}</span>
+          </.link>
           <span>
             Created <EnftComponents.datetime value={e.created_at} format={:date} />
           </span>

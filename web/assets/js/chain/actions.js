@@ -14,6 +14,7 @@ import {ensureChain, requireChain} from "./signer.js";
 import {getFhe} from "./fhe.js";
 import {ActionError, explain} from "../errors.js";
 import {formatAmount} from "../units.js";
+import {nameToBytes32} from "../name.js";
 import {recentLogs} from "./logs.js";
 import {NFT_ABI, TOKEN_ABI, WETH_ABI} from "./abi.js";
 
@@ -146,8 +147,11 @@ async function authoriseIfNeeded(steps, s, contract) {
   await steps.sendAndWait("authorise", async () => token.setOperator(contract.nft, await yearFromNow(s)));
 }
 
-export function createEnft(session, contract, {to, amount, segments, start, topUps, symbol, decimals}, onStep) {
+// `name` is the optional public name; the empty string mints an unnamed ENFT.
+export function createEnft(session, contract, {to, amount, segments, start, topUps, name = "", symbol, decimals}, onStep) {
   return withSteps(onStep, "balance", async steps => {
+    // First, so a name the contract would refuse stops before anything is sent.
+    const nameWord = nameToBytes32(name);
     const s = await ensureChain(session);
     await checkBalance(steps, s, contract, {amount, symbol, decimals});
     await authoriseIfNeeded(steps, s, contract);
@@ -155,7 +159,7 @@ export function createEnft(session, contract, {to, amount, segments, start, topU
     const nft = nftOf(contract, s.signer);
     const schedule = segments.map(({duration, ratePerSec}) => ({duration, ratePerSec}));
     return steps.send("confirm", "mined",
-      () => nft.mint(to, enc.handle, enc.inputProof, schedule, start, topUps),
+      () => nft.mint(to, enc.handle, enc.inputProof, schedule, start, topUps, nameWord),
       receipt => ({hash: receipt.hash, tokenId: findEvent(receipt, nft, "EndowmentMinted").args.tokenId}));
   });
 }

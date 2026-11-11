@@ -12,6 +12,34 @@ defmodule AnnuartWeb.EnftLiveTest do
     :ok
   end
 
+  test "the heading shows the creator picture, the name and the number", %{conn: conn} do
+    mint(name: "Rainy day fund")
+    {:ok, view, _html} = live(conn, ~p"/enft/mock/1")
+
+    assert has_element?(view, "h1 [data-role=enft-name]", "Rainy day fund")
+    assert has_element?(view, "h1 [data-role=enft-number]", "#1")
+    assert has_element?(view, ~s(h1 svg[data-role=randomart][data-creator="#{creator()}"]))
+    assert page_title(view) =~ "Rainy day fund · ENFT #1"
+  end
+
+  test "an unnamed ENFT is headed ENFT and its number, still with the picture", %{conn: conn} do
+    mint()
+    {:ok, view, _html} = live(conn, ~p"/enft/mock/1")
+
+    refute has_element?(view, "h1 [data-role=enft-name]")
+    assert has_element?(view, "h1 [data-role=enft-identity]", "ENFT")
+    # The heading's text is the name (or ENFT) and the number, nothing else.
+    assert view
+           |> element("h1")
+           |> render()
+           |> String.replace(~r/<[^>]*>/, " ")
+           |> String.split() == ["ENFT", "#1"]
+
+    assert has_element?(view, "h1 [data-role=enft-number]", "#1")
+    assert has_element?(view, "h1 svg[data-role=randomart]")
+    assert page_title(view) =~ "ENFT #1"
+  end
+
   test "shows the public details", %{conn: conn} do
     enft = mint()
     transfer(enft, creator(), owner(), 5, ~U[2026-11-13 10:00:00Z])

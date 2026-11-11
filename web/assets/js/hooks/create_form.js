@@ -12,6 +12,7 @@ import {
 import {explainAmount} from "../errors.js";
 import {current, onChange, chainInfo} from "../chain/signer.js";
 import {createEnft} from "../chain/actions.js";
+import {nameProblem} from "../name.js";
 import {StepList, START_OVER_QUESTION} from "./tx_action.js";
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
@@ -247,6 +248,10 @@ export class CreateFormController {
     for (const node of this.el.querySelectorAll("[data-role=symbol]")) node.textContent = symbol;
   }
 
+  // The name as it would be sent: trimmed, "" for none. The field is optional
+  // in the markup too, so a page without it creates unnamed ENFTs.
+  typedName() { return (this.role("name")?.value ?? "").trim(); }
+
   // Live display
 
   // An edit invalidates a summary that is waiting for confirmation.
@@ -271,6 +276,9 @@ export class CreateFormController {
         this.echo.textContent = err.message && err instanceof InputError ? err.message : explainAmount(err, symbol);
       }
     }
+
+    const nameHint = this.role("name-hint");
+    if (nameHint) nameHint.textContent = nameProblem(this.typedName()) ?? "";
 
     const valid = [];
     this.periods().forEach((row, i) => {
@@ -368,6 +376,10 @@ export class CreateFormController {
       throw new InputError(explainAmount(err, symbol));
     }
 
+    const name = this.typedName();
+    const problem = nameProblem(name);
+    if (problem) throw new InputError(problem);
+
     const rows = this.periods().map(row => this.readRow(row));
     rows.forEach((row, i) => {
       try { toSegments([row], decimals); } catch (err) { throw new InputError(`Period ${i + 1}: ${explainAmount(err, symbol)}`); }
@@ -396,7 +408,7 @@ export class CreateFormController {
     }
 
     return {
-      args: {to, amount, segments, start: start ?? 0n, topUps: isChecked(this.role("donations")), symbol, decimals},
+      args: {to, amount, segments, start: start ?? 0n, topUps: isChecked(this.role("donations")), name, symbol, decimals},
       label, symbol, decimals, contract, rows, other, now,
     };
   }
@@ -420,6 +432,9 @@ export class CreateFormController {
     const warning = warningText(amountWarning(args.segments, args.start === 0n ? now : args.start, args.amount), {symbol, decimals}, TYPED);
     return [
       `You are about to lock ${formatAmount(args.amount, decimals, TYPED)} ${symbol} in a new ENFT.`,
+      args.name
+        ? `It will be named "${args.name}". The name is public and cannot be changed later.`
+        : "It will have no name, and one cannot be added later.",
       `The ENFT will belong to ${me}.`,
       startText,
       farStart,

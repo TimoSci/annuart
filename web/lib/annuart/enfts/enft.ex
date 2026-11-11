@@ -13,13 +13,15 @@ defmodule Annuart.Enfts.Enft do
     field :created_block, :integer
     field :schedule_start, Annuart.Enfts.Uint64
     field :top_ups_allowed, :boolean, default: false
+    # The public name set at mint, or nil. Not unique: see Annuart.Enfts.Name.
+    field :name, :string
     # List of %{"duration" => int, "rate_per_sec" => int}, or nil when hidden.
     field :schedule, {:array, :map}
     has_many :transfers, Annuart.Enfts.Transfer
   end
 
-  @fields ~w(label nft token_id creator owner created_at created_block schedule_start top_ups_allowed schedule)a
-  @required @fields -- [:schedule]
+  @fields ~w(label nft token_id creator owner created_at created_block schedule_start top_ups_allowed schedule name)a
+  @required @fields -- [:schedule, :name]
   @addresses ~w(nft creator owner)a
 
   def changeset(enft, attrs) do
@@ -27,6 +29,9 @@ defmodule Annuart.Enfts.Enft do
     |> cast(attrs, @fields)
     |> update_change(:schedule, &normalize_schedule/1)
     |> validate_required(@required)
+    |> validate_change(:name, fn :name, name ->
+      if Annuart.Enfts.Name.valid?(name), do: [], else: [name: "is not a valid name"]
+    end)
     |> downcase(@addresses)
     |> unique_constraint([:nft, :token_id])
   end
