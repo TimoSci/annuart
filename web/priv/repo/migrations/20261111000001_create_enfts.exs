@@ -10,7 +10,8 @@ defmodule Annuart.Repo.Migrations.CreateEnfts do
       add :owner, :string, null: false
       add :created_at, :utc_datetime, null: false
       add :created_block, :integer, null: false
-      add :schedule_start, :integer, null: false
+      # uint64, stored as text (SQLite integers are signed); see Annuart.Enfts.Uint64.
+      add :schedule_start, :string, null: false
       add :top_ups_allowed, :boolean, null: false, default: false
       # JSON list of %{"duration", "rate_per_sec"}; NULL when the schedule is hidden.
       add :schedule, :text

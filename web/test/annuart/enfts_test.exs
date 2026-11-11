@@ -178,6 +178,16 @@ defmodule Annuart.EnftsTest do
     assert Annuart.Schedule.indefinite?(Enfts.get_enft("Alpha", 1).schedule)
   end
 
+  test "a schedule_start above the signed 64-bit range is stored exactly" do
+    start = 18_446_744_073_709_551_614
+
+    assert {:ok, %Enft{schedule_start: ^start}} =
+             Enfts.record_mint(mint_attrs(schedule_start: start))
+
+    assert %Enft{schedule_start: ^start} = Enfts.get_enft("Alpha", 1)
+    assert [%Enft{schedule_start: ^start}] = Enfts.list_enfts([])
+  end
+
   test "record_mint lowercases addresses and accepts atom-keyed segments" do
     upper = "0x" <> String.upcase(String.trim_leading(@alice, "0x"))
 

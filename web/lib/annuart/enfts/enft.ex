@@ -11,7 +11,7 @@ defmodule Annuart.Enfts.Enft do
     field :owner, :string
     field :created_at, :utc_datetime
     field :created_block, :integer
-    field :schedule_start, :integer
+    field :schedule_start, Annuart.Enfts.Uint64
     field :top_ups_allowed, :boolean, default: false
     # List of %{"duration" => int, "rate_per_sec" => int}, or nil when hidden.
     field :schedule, {:array, :map}

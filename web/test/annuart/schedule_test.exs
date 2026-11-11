@@ -86,6 +86,17 @@ defmodule Annuart.ScheduleTest do
              "0.432 / day, indefinitely"
   end
 
+  test "a uint64 schedule start with an indefinite-only schedule" do
+    start = 18_446_744_073_709_551_614
+    segs = [%{duration: @max, rate_per_sec: 3}]
+
+    assert [%{starts_at: ^start, duration: :indefinite, max_payable: :until_empty}] =
+             Schedule.periods(segs, start)
+
+    assert Schedule.ends_at(segs, start) == :never
+    assert Schedule.total(segs) == :unbounded
+  end
+
   test "an indefinite sentinel is detected only when it is the stored value" do
     refute Schedule.indefinite?([%{duration: @max - 1, rate_per_sec: 1}])
   end
