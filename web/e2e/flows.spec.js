@@ -27,6 +27,22 @@ function watch(page) {
 test.beforeEach(({page}) => { problems.length = 0; watch(page); });
 test.afterEach(() => { expect(problems, problems.join("\n")).toEqual([]); });
 
+// Whether a request body or frame carries one of the privacy flow's amounts,
+// 31337.42 or 271.83 MOCK (6 decimals): as typed or displayed, with any single
+// separator between digit groups (comma, period, space, no-break or thin
+// space, apostrophe, underscore, or such a character escaped as \uXXXX); in
+// base units as decimal; or in base units as hex, which also matches inside a
+// 32-byte ABI word. "31337" alone is also enough.
+const SEP = "(?:[,.\\s\\u00a0\\u2009\\u202f'\\u2019_]|\\\\u[0-9a-fA-F]{4})";
+const AMOUNT_PATTERNS = [
+  /31337/,
+  new RegExp(`31${SEP}337`),
+  new RegExp(`271${SEP}83`),
+  /31337420000/, /271830000/,
+  new RegExp((31337420000n).toString(16), "i"), new RegExp((271830000n).toString(16), "i"),
+];
+const carriesAmount = text => AMOUNT_PATTERNS.some(re => re.test(text));
+
 // Chain helpers (Node side, straight to the node).
 
 async function advanceTime(seconds) {
@@ -445,8 +461,18 @@ test("a failed action shows its reason and can be retried", async ({page}) => {
   const retry = failed.getByRole("button", {name: "Try again"});
   await expect(retry).toBeVisible();
 
-  // Trying again runs the action again, and it fails the same way.
+  // Trying again runs the action again, and it fails the same way. The first
+  // failure is still on screen until the retry rebuilds the list, so the page
+  // records whether the list ever stopped showing a failure after the click:
+  // only a retry that really ran does that.
+  await donate.locator("ol.steps").evaluate(list => {
+    window.__retryRan = false;
+    new MutationObserver(() => {
+      if (list.children.length > 0 && !list.querySelector("li[data-state=failed]")) window.__retryRan = true;
+    }).observe(list, {subtree: true, childList: true, attributes: true});
+  });
   await retry.click();
+  await expect.poll(() => page.evaluate(() => window.__retryRan), {timeout: 30_000}).toBe(true);
   await expect(donate.locator("ol.steps li[data-state=failed]"))
     .toContainText("failed: This ENFT's schedule has ended, so it no longer accepts donations.", {timeout: 60_000});
   await expect(runButton(donate)).toBeEnabled();
@@ -582,14 +608,21 @@ test("no request body or websocket frame contains the entered amount", async ({p
   await runTx(donate);
   await expect(page).toHaveURL(new RegExp(`/enft/mock/${id}$`));
 
-  // The amounts as typed, and in base units (MOCK has 6 decimals) as decimal
-  // and as hex (which also matches inside a 32-byte ABI word).
+  // The matcher is checked before it is trusted: it must flag every form an
+  // amount could leak in, and must not flag an ordinary frame.
   const baseUnits = [31337420000n, 271830000n];
-  const forbidden = [
-    /31337/, /271\.83/, /271,83/,
-    ...baseUnits.map(n => new RegExp(String(n))),
-    ...baseUnits.map(n => new RegExp(n.toString(16), "i")),
-  ];
+  for (const leak of [
+    "31337.42", "31,337.42", "31 337,42", "31\u00a0337.42", "31\u2009337.42", "31'337.42", "31_337.42",
+    "271.83", "271,83", "271 83", '{"amount":31337.42}', '{"amount":271.83}',
+    "31337420000", "271830000",
+    "0x" + 31337420000n.toString(16).padStart(64, "0"), (271830000n).toString(16).padStart(64, "0"),
+    '["4","7","lv:phx-F1","event",{"type":"hook","event":"tx:confirmed","value":{"note":"= 31,337.42 MOCK"}}]',
+    '["4","8","lv:phx-F1","event",{"type":"click","event":"x","value":{"value":"271\\u00a083"}}]',
+  ]) expect(carriesAmount(leak), `matcher misses ${leak}`).toBe(true);
+  for (const clean of [
+    '["4","7","lv:phx-F1","event",{"type":"hook","event":"tx:confirmed","value":{"action":"donate","label":"mock","tokenId":"3","hash":"0x5e0c7a9d4b2f81c6aa03e4d7f9b1c2a8e6d5f40b3c2a1908f7e6d5c4b3a29180"}}]',
+    '["4","9","lv:phx-F1","event",{"type":"hook","event":"wallet:changed","value":{"address":"0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"}}]',
+  ]) expect(carriesAmount(clean), `matcher flags a clean frame: ${clean}`).toBe(false);
   // The recording works: the server did get traffic of both kinds.
   expect(sent.filter(s => s.kind === "ws").length).toBeGreaterThan(0);
   expect(sent.filter(s => s.kind === "http").length).toBeGreaterThan(0);
@@ -597,7 +630,7 @@ test("no request body or websocket frame contains the entered amount", async ({p
   // hex, to the node (excluded above, as it is not the server).
   for (const n of baseUnits) expect(toNode.some(d => d.toLowerCase().includes(n.toString(16)))).toBe(true);
 
-  const leaks = sent.filter(s => forbidden.some(re => re.test(s.data)));
+  const leaks = sent.filter(s => carriesAmount(s.data));
   expect(leaks, JSON.stringify(leaks.slice(0, 3))).toEqual([]);
 });
 
