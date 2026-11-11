@@ -6,7 +6,7 @@ defmodule Annuart.RpcStub do
   """
   use Agent
 
-  @empty %{logs: [], calls: %{}, blocks: %{}, head: 0, code: %{}}
+  @empty %{logs: [], calls: %{}, blocks: %{}, head: 0, code: %{}, errors: %{}, log_queries: []}
 
   def start_link(_ \\ []), do: Agent.start_link(fn -> @empty end, name: __MODULE__)
 
@@ -29,19 +29,39 @@ defmodule Annuart.RpcStub do
   def put_block(number, %{hash: _, timestamp: _} = block),
     do: update(&put_in(&1.blocks[number], block))
 
+  @doc "Makes the named stub function (`:block_number`, `:block`, `:get_logs`, `:get_code`) return `{:error, reason}`."
+  def put_error(fun, reason), do: update(&put_in(&1.errors[fun], reason))
+
+  @doc "`{from_block, to_block}` of every `get_logs/1` call, oldest first."
+  def log_queries, do: get(&Enum.reverse(&1.log_queries))
+
   def put_head(number), do: update(&Map.put(&1, :head, number))
   def put_code(address, code), do: update(&put_in(&1.code[String.downcase(address)], code))
 
-  def block_number, do: {:ok, get(& &1.head)}
-
-  def block(number) do
-    case get(&Map.get(&1.blocks, number)) do
-      nil -> {:error, :not_found}
-      block -> {:ok, block}
+  defp failing(fun, ok) do
+    case get(&Map.get(&1.errors, fun)) do
+      nil -> ok.()
+      reason -> {:error, reason}
     end
   end
 
+  def block_number, do: failing(:block_number, fn -> {:ok, get(& &1.head)} end)
+
+  def block(number) do
+    failing(:block, fn ->
+      case get(&Map.get(&1.blocks, number)) do
+        nil -> {:error, :not_found}
+        block -> {:ok, block}
+      end
+    end)
+  end
+
   def get_logs(%{from_block: from, to_block: to} = filter) do
+    update(&Map.update!(&1, :log_queries, fn q -> [{from, to} | q] end))
+    failing(:get_logs, fn -> do_get_logs(filter) end)
+  end
+
+  defp do_get_logs(%{from_block: from, to_block: to} = filter) do
     address = filter |> Map.get(:address) |> List.wrap() |> Enum.map(&String.downcase/1)
 
     logs =
@@ -64,7 +84,9 @@ defmodule Annuart.RpcStub do
     end
   end
 
-  def get_code(address), do: {:ok, get(&Map.get(&1.code, String.downcase(address), "0x"))}
+  def get_code(address),
+    do:
+      failing(:get_code, fn -> {:ok, get(&Map.get(&1.code, String.downcase(address), "0x"))} end)
 
   defp block_of(%{"blockNumber" => "0x" <> hex}), do: String.to_integer(hex, 16)
   defp block_of(%{"blockNumber" => n}) when is_integer(n), do: n

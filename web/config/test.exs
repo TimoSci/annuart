@@ -21,6 +21,9 @@ config :annuart, AnnuartWeb.Endpoint,
 # Dev-only wallet bundle. Never enable outside dev and test.
 config :annuart, dev_wallet: true
 
+# Tests drive the indexer with Annuart.Indexer.sync_once/0.
+config :annuart, indexer: false
+
 # Preset so the app does not read a deployment file during tests.
 config :annuart, :chain, chain_id: 31337, rpc_url: "http://127.0.0.1:8545", contracts: []
 

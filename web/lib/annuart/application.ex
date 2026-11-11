@@ -16,11 +16,14 @@ defmodule Annuart.Application do
        repos: Application.fetch_env!(:annuart, :ecto_repos), skip: skip_migrations?()},
       {DNSCluster, query: Application.get_env(:annuart, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Annuart.PubSub},
-      # Start a worker by calling: Annuart.Worker.start_link(arg)
-      # {Annuart.Worker, arg},
       # Start to serve requests, typically the last entry
       AnnuartWeb.Endpoint
     ]
+
+    children =
+      if Application.get_env(:annuart, :indexer, true),
+        do: List.insert_at(children, -2, Annuart.Indexer),
+        else: children
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
