@@ -132,8 +132,8 @@ differs from it.
   out `CONFIRM_DEPLOY=sepolia`. Add it; it is deliberate.
 - **"PRIVATE_KEY is not set".** Export the key as in step 2, in the same terminal.
 - **"Error in plugin @fhevm/hardhat-plugin: Missing network url".** `SEPOLIA_RPC_URL` is
-  not set (or empty) in this terminal, so Hardhat stopped before the script ran. Export
-  it as in step 2.
+  not set (or empty) in this terminal, so Hardhat stopped before the script ran. This
+  can happen at the pre-flight check as well as at a deploy. Export it as in step 2.
 - **"insufficient funds".** Top the deployer account up from a faucet and re-run.
 - **A transaction seems stuck.** Sepolia can be slow. Wait a few minutes before
   re-running; check the deployer address on Etherscan to see whether it was mined.
@@ -174,8 +174,8 @@ Things that differ from the local chain:
 ## 9. Tell Claude, then do the wallet pass
 
 Once both deployments are recorded and the app starts, say so. Claude then runs the
-read-only checks in task 5 of the plan (the server indexes the contracts; the browser's
-encryption library works against the live network).
+read-only checks: that the server indexes the contracts, and that the browser's
+encryption library works against the live network.
 
 After that, the remaining step is yours: `web/docs/manual-checklist.md`, with MetaMask
 (or another browser wallet) and two accounts that each hold a little Sepolia ETH. The

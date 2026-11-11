@@ -10,7 +10,7 @@
 // deployed and that the Phoenix server is serving them, so a broken set-up
 // fails once, here, instead of in every flow.
 import {execFileSync} from "node:child_process";
-import {readFileSync, readdirSync, statSync} from "node:fs";
+import {readFileSync, readdirSync, rmSync, statSync} from "node:fs";
 import {fileURLToPath, pathToFileURL} from "node:url";
 import path from "node:path";
 
@@ -21,6 +21,9 @@ export const RPC_URL = "http://127.0.0.1:8545";
 export const KINDS = ["mock", "wrapped"];
 
 export function deploy() {
+  // Start from an empty file: a label left over from other local work would point
+  // at an address that does not exist on this fresh chain.
+  rmSync(DEPLOYMENTS, {force: true});
   for (const kind of KINDS) {
     execFileSync("npx", ["hardhat", "run", "scripts/deploy.ts", "--network", "localhost"], {
       cwd: REPO_ROOT,

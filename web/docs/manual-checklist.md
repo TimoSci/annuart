@@ -43,7 +43,7 @@ for it to appear…` can last that long. Wait before deciding something failed.
    donations on. Every amount field echoes the parsed value (`= 0.005 cWETH`).
 5. Click Create ENFT. A summary appears and nothing is sent yet. Cancel, change the amount, and
    check the summary is gone and comes back with the new amount.
-6. Confirm. Steps: Authorise the contract (first time only), Encrypt the amount, Confirm in your
+6. Confirm. Steps: Check your balance, Authorise the contract (first time only), Encrypt the amount, Confirm in your
    wallet, Done. The page shows `Created. Waiting for it to appear…` (or moves on at once) and
    lands on `/enft/wrapped/<id>`, with A as owner and the Yours panel present.
 
@@ -70,7 +70,7 @@ for it to appear…` can last that long. Wait before deciding something failed.
 
 ## 4. Unwrap
 
-1. Tokens, wrapped card: unwrap `0.005`. Steps: Encrypt the amount, Request unwrap, Wait for
+1. Tokens, wrapped card: unwrap `0.005`. Steps: Check your balance, Encrypt the amount, Request unwrap, Wait for
    decryption (this takes a while on Sepolia), Finalise unwrap, Convert WETH to ETH, Done. ETH in
    your wallet goes up by about that amount.
 2. Interrupt one: start an unwrap and close the tab once Request unwrap is done. Reopen Tokens: an
@@ -101,7 +101,7 @@ for it to appear…` can last that long. Wait before deciding something failed.
    `Switch your wallet to the right network.`
 2. In a wallet that does not know Sepolia yet (remove it from the wallet's networks first, if you
    can), the first write offers to add the network; approve, and the wallet then switches to it.
-3. A transaction left pending for three minutes after it was broadcast adds a `Still waiting…`
+3. A transaction left pending for three minutes after it was broadcast adds a `Still waiting.`
    note that says to reload and check your balance before trying again.
 
 ## 8. Nothing secret reaches the server
