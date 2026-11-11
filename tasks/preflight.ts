@@ -43,13 +43,33 @@ export function problems(f: Facts): string[] {
     out.push("Zama's relayer did not accept an encrypted value from this library version.");
   }
   if (f.weth) {
-    const hasCode = f.codeAt[f.weth.address.toLowerCase()] === true;
-    if (!hasCode || f.weth.symbol !== "WETH" || f.weth.decimals !== 18) {
-      out.push(
-        `WETH_ADDRESS ${f.weth.address} is not a WETH contract ` +
-          `(code: ${hasCode ? "yes" : "no"}, symbol: ${f.weth.symbol ?? "unreadable"}, decimals: ${f.weth.decimals ?? "unreadable"}).`,
-      );
-    }
+    const problem = wethProblem({ ...f.weth, hasCode: f.codeAt[f.weth.address.toLowerCase()] === true });
+    if (problem) out.push(problem);
+  }
+  return out;
+}
+
+// The WETH rule, shared by the pre-flight and scripts/deploy.ts: there is code at the
+// address, its symbol is WETH and it has 18 decimals. null when it holds.
+export function wethProblem(w: { address: string; hasCode: boolean; symbol: string | null; decimals: number | null }): string | null {
+  if (w.hasCode && w.symbol === "WETH" && w.decimals === 18) return null;
+  return (
+    `WETH_ADDRESS ${w.address} is not a WETH contract ` +
+    `(code: ${w.hasCode ? "yes" : "no"}, symbol: ${w.symbol ?? "unreadable"}, decimals: ${w.decimals ?? "unreadable"}).`
+  );
+}
+
+// The line a run without problems ends with. Plain only when encryption was tested.
+export function passLine(f: Facts): string {
+  return f.relayerEncryptOk === true ? "Pre-flight passed" : "Pre-flight passed (encryption not tested)";
+}
+
+// Replaces every occurrence of each non-empty secret (the keyed RPC URL, which ethers
+// copies into HTTP errors) so a printed error can be passed on safely.
+export function redact(message: string, secrets: ReadonlyArray<string | undefined>): string {
+  let out = message;
+  for (const secret of secrets) {
+    if (secret) out = out.split(secret).join("<SEPOLIA_RPC_URL>");
   }
   return out;
 }

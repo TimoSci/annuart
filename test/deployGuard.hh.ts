@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { deployRefusal, reusedUnderlying } from "../tasks/deployGuard";
+import { deployRefusal, reusedUnderlying, sentLine } from "../tasks/deployGuard";
 
 const base = { network: "sepolia", isLocal: false, chainId: 11155111, expectedChainId: 11155111,
                confirm: "sepolia", label: "mock", existingLabels: [] as string[], replace: false };
@@ -42,4 +42,10 @@ describe("reusedUnderlying", () => {
     expect(reusedUnderlying({ reported: "0x" + "0".repeat(40), wethAddress: undefined })).to.have.property("refusal").match(/not a ConfidentialWETH/));
   it("refuses an unreadable underlying", () =>
     expect(reusedUnderlying({ reported: null, wethAddress: w })).to.have.property("refusal").match(/not a ConfidentialWETH/));
+});
+
+describe("sentLine", () => {
+  it("names the contract, its address and the transaction before the wait", () =>
+    expect(sentLine("EndowmentNFT", "0x" + "1".repeat(40), "0x" + "a".repeat(64)))
+      .to.equal(`EndowmentNFT: 0x${"1".repeat(40)} (tx 0x${"a".repeat(64)}, waiting…)`));
 });

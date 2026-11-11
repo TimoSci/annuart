@@ -228,7 +228,8 @@ Environment variables:
   deploying again with a recorded label is refused unless `REPLACE=1` is set; locally it replaces
   the entry.
 - `WETH_ADDRESS`: the WETH to wrap for `wrapped`. Required except on `localhost`/`hardhat`,
-  where a `MockWETH` is deployed when it is unset.
+  where a `MockWETH` is deployed when it is unset. When set, the deploy refuses it unless it has
+  code, the symbol `WETH` and 18 decimals.
 - `TOKEN_ADDRESS`: required for `plain`; for `mock` and `wrapped`, reuses that token instead of
   deploying one (a wrapped token's `underlying` is read from the token itself).
 - `CONFIRM_DEPLOY`: on a public network, must equal the network name. `REPLACE`: `1` overwrites a

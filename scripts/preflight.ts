@@ -1,5 +1,5 @@
 import { ethers, network } from "hardhat";
-import { MIN_BALANCE_WEI, SEPOLIA_FHEVM, problems, warnings, type Facts } from "../tasks/preflight";
+import { MIN_BALANCE_WEI, SEPOLIA_FHEVM, passLine, problems, redact, warnings, type Facts } from "../tasks/preflight";
 
 // Reads facts about a public network and the encryption library, prints one line per
 // check, and exits non-zero if anything would make a deploy unusable. Sends no transaction.
@@ -7,6 +7,9 @@ import { MIN_BALANCE_WEI, SEPOLIA_FHEVM, problems, warnings, type Facts } from "
 //   PREFLIGHT_SKIP_RELAYER=1   skip the relayer encryption check
 //   WETH_ADDRESS               optional; checked to be a WETH contract
 const TIMEOUT_MS = 120_000;
+
+// Every message printed from a caught error: ethers copies the keyed RPC URL into them.
+const errorText = (e: unknown) => redact(e instanceof Error ? e.message : String(e), [process.env.SEPOLIA_RPC_URL]);
 
 async function relayerCheck(sdk: any, rpcUrl: string, target: string, user: string): Promise<boolean> {
   let timer: NodeJS.Timeout | undefined;
@@ -21,7 +24,7 @@ async function relayerCheck(sdk: any, rpcUrl: string, target: string, user: stri
     await Promise.race([run, timeout]);
     return true;
   } catch (e) {
-    console.log(`  relayer error: ${e instanceof Error ? e.message : e}`);
+    console.log(`  relayer error: ${errorText(e)}`);
     return false;
   } finally {
     if (timer) clearTimeout(timer);
@@ -39,7 +42,7 @@ async function main() {
   try {
     chainId = Number((await ethers.provider.getNetwork()).chainId);
   } catch (e) {
-    throw new Error(`Cannot reach the RPC at SEPOLIA_RPC_URL: ${e instanceof Error ? e.message : e}`);
+    throw new Error(`Cannot reach the RPC at SEPOLIA_RPC_URL: ${errorText(e)}`);
   }
   console.log(`Network:   ${network.name} (chain id ${chainId})`);
 
@@ -95,7 +98,7 @@ async function main() {
   for (const w of warnings(facts)) console.log(`Warning: ${w}`);
   const found = problems(facts);
   if (found.length === 0) {
-    console.log("Pre-flight passed");
+    console.log(passLine(facts));
   } else {
     console.error("Pre-flight FAILED:");
     for (const p of found) console.error(`  - ${p}`);
@@ -104,6 +107,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error(e instanceof Error ? e.message : e);
+  console.error(errorText(e));
   process.exitCode = 1;
 });

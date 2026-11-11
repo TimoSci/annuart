@@ -1,16 +1,42 @@
 import { ethers, network } from "hardhat";
 import { readDeployments, upsertDeployment, type Deployment } from "../tasks/deployments";
-import { deployRefusal, reusedUnderlying } from "../tasks/deployGuard";
+import { deployRefusal, reusedUnderlying, sentLine } from "../tasks/deployGuard";
+import { redact, wethProblem } from "../tasks/preflight";
 
 // Deploys an EndowmentNFT with a confidential token and records it in
 // deployments/<network>.json so the task:* commands (and the web app) can find it.
 //
 //   TOKEN_KIND     mock (default) | wrapped | plain
 //   LABEL          name of the entry in the deployment file (default: the token kind)
-//   WETH_ADDRESS   wrapped: the WETH to wrap (a MockWETH is deployed on localhost/hardhat if unset)
+//   WETH_ADDRESS   wrapped: the WETH to wrap, checked to be one (a MockWETH is deployed on localhost/hardhat if unset)
 //   TOKEN_ADDRESS  plain: an existing ERC7984 token; mock/wrapped: reuse this token instead of deploying one
 //   CONFIRM_DEPLOY must equal the network name on a public network (e.g. sepolia)
 //   REPLACE        "1" to overwrite a label already recorded for this network
+// Deploys `name`, printing its address and transaction hash as soon as the transaction
+// is sent, then waits for it to be mined and prints the `<name>: <address>` line.
+async function deployContract(name: string, ...args: unknown[]) {
+  const contract = await (await ethers.getContractFactory(name)).deploy(...args);
+  const address = await contract.getAddress();
+  console.log(sentLine(name, address, contract.deploymentTransaction()!.hash));
+  const receipt = await contract.deploymentTransaction()!.wait();
+  console.log(`${name}:`, address);
+  return { address, receipt: receipt! };
+}
+
+// Refuses a WETH_ADDRESS that is not a WETH contract (the pre-flight's rule).
+async function checkWeth(address: string) {
+  const hasCode = (await ethers.provider.getCode(address)) !== "0x";
+  const c = new ethers.Contract(
+    address,
+    ["function symbol() view returns (string)", "function decimals() view returns (uint8)"],
+    ethers.provider,
+  );
+  const symbol = hasCode ? await c.symbol().then(String, () => null) : null;
+  const decimals = hasCode ? await c.decimals().then(Number, () => null) : null;
+  const problem = wethProblem({ address, hasCode, symbol, decimals });
+  if (problem) throw new Error(problem);
+}
+
 async function main() {
   const kind = (process.env.TOKEN_KIND || "mock") as Deployment["tokenKind"];
   if (!["mock", "wrapped", "plain"].includes(kind)) {
@@ -63,33 +89,23 @@ async function main() {
     }
     console.log("Using existing token:", tokenAddr);
   } else if (kind === "mock") {
-    const token = await (await ethers.getContractFactory("MockConfidentialToken")).deploy();
-    await token.waitForDeployment();
-    tokenAddr = await token.getAddress();
-    console.log("MockConfidentialToken:", tokenAddr);
+    tokenAddr = (await deployContract("MockConfidentialToken")).address;
   } else if (kind === "wrapped") {
     underlying = process.env.WETH_ADDRESS || null;
-    if (!underlying) {
+    if (underlying) {
+      await checkWeth(underlying);
+    } else {
       if (!isLocal) throw new Error("WETH_ADDRESS is required for TOKEN_KIND=wrapped on this network");
-      const weth = await (await ethers.getContractFactory("MockWETH")).deploy();
-      await weth.waitForDeployment();
-      underlying = await weth.getAddress();
-      console.log("MockWETH:", underlying);
+      underlying = (await deployContract("MockWETH")).address;
     }
-    const token = await (await ethers.getContractFactory("ConfidentialWETH")).deploy(underlying);
-    await token.waitForDeployment();
-    tokenAddr = await token.getAddress();
-    console.log("ConfidentialWETH:", tokenAddr);
+    tokenAddr = (await deployContract("ConfidentialWETH", underlying)).address;
   } else {
     if (!process.env.TOKEN_ADDRESS) throw new Error("TOKEN_ADDRESS is required for TOKEN_KIND=plain");
     tokenAddr = process.env.TOKEN_ADDRESS;
     console.log("Using existing token:", tokenAddr);
   }
 
-  const nft = await (await ethers.getContractFactory("EndowmentNFT")).deploy(tokenAddr);
-  const receipt = await nft.deploymentTransaction()!.wait();
-  const nftAddr = await nft.getAddress();
-  console.log("EndowmentNFT:", nftAddr);
+  const { address: nftAddr, receipt } = await deployContract("EndowmentNFT", tokenAddr);
 
   upsertDeployment(network.name, chainId, {
     label,
@@ -97,12 +113,13 @@ async function main() {
     token: tokenAddr,
     tokenKind: kind,
     underlying,
-    deployBlock: receipt!.blockNumber,
+    deployBlock: receipt.blockNumber,
   });
   console.log(`Wrote deployments/${network.name}.json (label "${label}")`);
 }
 
 main().catch((e) => {
-  console.error(e instanceof Error ? e.message : e);
+  // ethers copies the keyed RPC URL into HTTP errors.
+  console.error(redact(e instanceof Error ? e.message : String(e), [process.env.SEPOLIA_RPC_URL]));
   process.exitCode = 1;
 });

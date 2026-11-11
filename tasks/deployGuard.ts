@@ -34,3 +34,9 @@ export function reusedUnderlying(i: { reported: string | null; wethAddress: stri
   }
   return { underlying: i.reported };
 }
+
+// Printed as soon as a deploy transaction is sent, before waiting for it to be mined,
+// so the address and hash are on screen even if the RPC drops during the wait.
+export function sentLine(name: string, address: string, hash: string): string {
+  return `${name}: ${address} (tx ${hash}, waiting…)`;
+}

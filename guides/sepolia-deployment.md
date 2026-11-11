@@ -53,7 +53,8 @@ It checks, and prints one line for each:
 - `WETH_ADDRESS` is a WETH contract (symbol `WETH`, 18 decimals).
 
 It then prints any `Warning:` lines, and ends with `Pre-flight passed`, or with
-`Pre-flight FAILED:` followed by a list of problems (and a non-zero exit code). The
+`Pre-flight FAILED:` followed by a list of problems (and a non-zero exit code). Error
+messages it prints show your RPC URL as `<SEPOLIA_RPC_URL>`, so you can pass them on. The
 relayer check can take up to two minutes. **Do not deploy unless it passed.** If the relayer or address check fails, the encryption library is out of date
 for the live network; stop and tell Claude, because deployed contracts would be unusable
 from the app.
@@ -61,8 +62,9 @@ from the app.
 Check that the deployer address it prints is the throwaway account you intended.
 
 If the relayer check alone is the problem and you want to look at everything else first,
-`PREFLIGHT_SKIP_RELAYER=1` skips it. A passing run with that set did not test
-encryption, so run it again without before you deploy.
+`PREFLIGHT_SKIP_RELAYER=1` skips it. A passing run with that set ends with
+`Pre-flight passed (encryption not tested)`; it did not test encryption, so run it again
+without and get the plain `Pre-flight passed` before you deploy.
 
 ## 4. Deploy the mock-token variant
 
@@ -79,7 +81,10 @@ and then:
 Wrote deployments/sepolia.json (label "mock")
 ```
 
-Each deployment waits for its transaction to be mined, so this takes a minute or so.
+Each deployment waits for its transaction to be mined, so this takes a minute or so. As
+soon as a deployment is sent, its address and transaction hash are printed, as
+`<Name>: <address> (tx <hash>, waiting…)`; the plain `<Name>: <address>` line follows once
+it is mined.
 
 ## 5. Deploy the wrapped-ETH variant
 
@@ -121,10 +126,17 @@ unset PRIVATE_KEY
 ## 7. If something goes wrong
 
 - **The script stopped after deploying the token but before the ENFT contract.** The
-  token address was printed. Re-run the same command with `TOKEN_ADDRESS=<that address>`
-  added; the script reuses the token instead of deploying another. For the wrapped variant
-it reads the WETH address from the token itself, and refuses if your `WETH_ADDRESS`
-differs from it.
+  token's address and transaction hash were printed as soon as it was sent, before the
+  wait (`<Name>: <address> (tx <hash>, waiting…)`); check the transaction on
+  `https://sepolia.etherscan.io` to see that it was mined. If the script died before
+  printing anything, look up your deployer address on `https://sepolia.etherscan.io` to
+  see whether a contract was created, and if so use its address. Re-run the same command
+  with `TOKEN_ADDRESS=<that address>` added; the script reuses the token instead of
+  deploying another. For the wrapped variant it reads the WETH address from the token
+  itself, and refuses if your `WETH_ADDRESS` differs from it.
+- **"WETH_ADDRESS … is not a WETH contract".** Before deploying the wrapper the script
+  checks that `WETH_ADDRESS` has code, the symbol `WETH` and 18 decimals, as the
+  pre-flight does. Fix the address (step 2) and re-run.
 - **"label … is already deployed".** The script will not overwrite an entry in
   `deployments/sepolia.json`, because that would lose the old address. To deploy a
   replacement on purpose, add `REPLACE=1`. To keep both, add `LABEL=<new name>`.
@@ -169,8 +181,13 @@ Things that differ from the local chain:
   wallet, and the page it serves carries no RPC URL. If the wallet does not know Sepolia,
   the app offers to add it and then switches to it. Set `ANNUART_PUBLIC_RPC_URL` only if
   you have a URL you are happy for every visitor to see.
+- **Do not leave the server running unattended against a metered RPC plan.** It polls
+  the chain every 12 seconds (`ANNUART_POLL_MS`), around the clock, and each poll uses
+  your plan's requests.
 - Switching the same checkout back to the local chain makes the server rebuild its
-  index; that is expected.
+  index; that is expected. Before you go back, unset both `ANNUART_RPC_URL` and
+  `ANNUART_DEPLOYMENTS` (or close the terminal), so the server reads the local node and
+  `deployments/localhost.json` again.
 
 ## 9. Tell Claude, then do the wallet pass
 
