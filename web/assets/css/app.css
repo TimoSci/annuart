@@ -50,7 +50,8 @@ a { color: inherit; text-decoration: none; }
 .nav { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
 .nav .brand { color: var(--hot-fg); font-weight: 600; letter-spacing: .04em; margin-right: 18px; }
 .nav .nav-item { padding: 6px 12px; border-radius: 6px; }
-.nav .nav-item:hover, .nav .nav-item.current { background: var(--rest-bg); color: var(--hot-fg); }
+/* The current page is marked by an underline: its colours belong to the activity brightness. */
+.nav .nav-item.current { text-decoration: underline; text-underline-offset: 4px; }
 .nav .spacer { flex: 1; }
 .soon { font-size: 11px; opacity: .7; margin-left: 4px; }
 .clear {
@@ -61,7 +62,14 @@ a { color: inherit; text-decoration: none; }
 h1 { font-size: 26px; font-weight: 500; color: var(--hot-fg); margin: 0 0 4px; letter-spacing: -.01em; }
 .sub { margin: 0 0 22px; font-size: 13px; }
 
-.area { background: var(--rest-bg); color: var(--rest-fg); }
+/* Activity brightness: --lvl runs 1 (just clicked) to 0, set by hooks/activity.js
+   and falling with clicks on other areas, never with time. The transition only
+   animates between two levels. */
+[data-activity-id] {
+  background: color-mix(in srgb, #2b2b2e calc(var(--lvl, 0) * 100%), #141415);
+  color: color-mix(in srgb, #f2f2f3 calc(var(--lvl, 0) * 100%), #86868b);
+  transition: background-color .25s ease, color .25s ease;
+}
 .panel { border-radius: 10px; padding: 18px 20px; }
 .panel h2 {
   font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;

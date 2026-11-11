@@ -29,6 +29,8 @@ import {TxAction} from "./hooks/tx_action.js"
 import {SecretValue} from "./hooks/secret_value.js"
 import {CreateForm} from "./hooks/create_form.js"
 import {Tokens} from "./hooks/tokens.js"
+import {initActivity} from "./hooks/activity.js"
+import * as signer from "./chain/signer.js"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
@@ -41,6 +43,9 @@ const liveSocket = new LiveSocket("/live", Socket, {
 topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
 window.addEventListener("phx:page-loading-start", _info => topbar.show(300))
 window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
+
+// Activity brightness: document-level, because <body> is outside any LiveView.
+initActivity({signer})
 
 // connect if there are any LiveViews on the page
 liveSocket.connect()

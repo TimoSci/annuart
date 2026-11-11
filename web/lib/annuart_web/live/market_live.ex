@@ -10,7 +10,10 @@ defmodule AnnuartWeb.MarketLive do
     ~H"""
     <Layouts.app flash={@flash} current={:market}>
       <h1>Market</h1>
-      <p class="sub">Buying and selling is coming soon.</p>
+      <div class="area panel" data-activity-id="panel:market">
+        <h2>Market</h2>
+        <p>Buying and selling is coming soon.</p>
+      </div>
     </Layouts.app>
     """
   end

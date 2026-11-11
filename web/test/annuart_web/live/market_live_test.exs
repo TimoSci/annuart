@@ -9,4 +9,9 @@ defmodule AnnuartWeb.MarketLiveTest do
     refute has_element?(view, "main button")
     refute has_element?(view, "main input")
   end
+
+  test "the panel takes part in the activity brightness", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/market")
+    assert has_element?(view, ~s(main [data-activity-id="panel:market"]))
+  end
 end
