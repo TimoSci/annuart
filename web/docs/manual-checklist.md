@@ -7,13 +7,17 @@ cannot judge.
 
 ## Before you start
 
-1. Deploy to Sepolia (`scripts/deploy.ts --network sepolia`) a `wrapped` variant and, if wanted, a
-   `plain` one, and start the app with `ANNUART_RPC_URL` set to a Sepolia RPC and
-   `ANNUART_DEPLOYMENTS` set to `../deployments/sepolia.json`.
+1. Follow `guides/sepolia-deployment.md`: it deploys the `mock` and `wrapped` variants and starts
+   the app with `ANNUART_RPC_URL` set to a Sepolia RPC and `ANNUART_DEPLOYMENTS` set to
+   `../deployments/sepolia.json`.
 2. Use two wallet accounts, A and B, each holding some Sepolia ETH.
 3. Start from a browser profile with no site data for the app (or click "Clear my activity
    history" and disconnect).
 4. Keep the browser's developer tools open on the Network tab, with "Preserve log" on, for step 8.
+
+On Sepolia the lists wait on the server: a new ENFT or a transfer shows up after about half a
+minute (two confirmations of about 12 seconds, plus the server's polling), and `Created. Waiting
+for it to appear…` can last that long. Wait before deciding something failed.
 
 ## 1. Anonymous visitor
 
@@ -55,6 +59,15 @@ cannot judge.
    balance goes with the ENFT. After it is mined, the owner shown becomes B, the Yours panel goes,
    and History reads `Transferred to …`.
 
+## 3b. The mock token
+
+1. Tokens, mock card: click `Get test tokens`. Reveal the balance (the wallet asks to sign once): a
+   positive amount of the mock token.
+2. Create: pick the mock token, an amount you can see in the balance, one period, donations off. Create
+   it as in section 2 and wait for it to appear.
+3. After a short while, click Update accrual on the new ENFT. Reveal Claimable: a positive amount.
+   Claim; after Done the value is hidden again. Reveal Claimable: `0`.
+
 ## 4. Unwrap
 
 1. Tokens, wrapped card: unwrap `0.005`. Steps: Encrypt the amount, Request unwrap, Wait for
@@ -86,13 +99,19 @@ cannot judge.
 
 1. With the wallet on a network other than Sepolia, a write asks to switch; refusing gives
    `Switch your wallet to the right network.`
+2. In a wallet that does not know Sepolia yet (remove it from the wallet's networks first, if you
+   can), the first write offers to add the network; approve, and the wallet then switches to it.
+3. A transaction left pending for three minutes after it was broadcast adds a `Still waiting…`
+   note that says to reload and check your balance before trying again.
 
 ## 8. Nothing secret reaches the server
 
 1. During a create with amount `0.00731337` and a donation of `0.00027183`, check in the Network
    tab every request and websocket frame sent to the app's own host: none contains the amounts
    (as typed, or in base units). Requests to the relayer and the RPC are not the app's server.
-2. The server log shows only `tx:confirmed` with action, label, token id and hash.
+2. View the page source: the `annuart-chain` meta tag has `"rpcUrl":null`, and the server's RPC URL
+   (the one in `ANNUART_RPC_URL`) appears nowhere in the Network tab or the page source.
+3. The server log shows only `tx:confirmed` with action, label, token id and hash.
 
 ## What the automated run cannot judge
 

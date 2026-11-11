@@ -89,6 +89,8 @@ forge script script/Deploy.s.sol \
 ```
 
 Note: `SEPOLIA_RPC_URL` must be set in your environment or `.env` before running.
+This deploys the contracts only; to deploy what the web app needs, use
+[`guides/sepolia-deployment.md`](guides/sepolia-deployment.md).
 
 ---
 
@@ -212,23 +214,27 @@ npx hardhat node                                        # terminal 1
 npx hardhat run scripts/deploy.ts --network localhost   # terminal 2 (mock token)
 TOKEN_KIND=wrapped npx hardhat run scripts/deploy.ts --network localhost
 
-# Sepolia
-export SEPOLIA_RPC_URL=...  PRIVATE_KEY=0x...
-TOKEN_KIND=wrapped WETH_ADDRESS=0x... npx hardhat run scripts/deploy.ts --network sepolia
-TOKEN_KIND=plain TOKEN_ADDRESS=0x... LABEL=mytoken npx hardhat run scripts/deploy.ts --network sepolia
 ```
+
+For Sepolia, follow [`guides/sepolia-deployment.md`](guides/sepolia-deployment.md): a no-cost
+pre-flight check (`scripts/preflight.ts`), then the deploys. A deploy to a public network
+refuses to run unless `CONFIRM_DEPLOY=<network name>` (for example `CONFIRM_DEPLOY=sepolia`) is set.
 
 Environment variables:
 
 - `TOKEN_KIND`: `mock` (default, `MockConfidentialToken`, dev only: its constructor reverts on
   mainnet/BSC/HyperEVM), `wrapped` (`ConfidentialWETH` wrapping a WETH) or `plain` (an existing ERC7984).
-- `LABEL`: the entry name in the deployment file (default: the token kind). Deploying again
-  with the same label replaces that entry.
+- `LABEL`: the entry name in the deployment file (default: the token kind). On a public network,
+  deploying again with a recorded label is refused unless `REPLACE=1` is set; locally it replaces
+  the entry.
 - `WETH_ADDRESS`: the WETH to wrap for `wrapped`. Required except on `localhost`/`hardhat`,
   where a `MockWETH` is deployed when it is unset.
-- `TOKEN_ADDRESS`: required for `plain`.
+- `TOKEN_ADDRESS`: required for `plain`; for `mock` and `wrapped`, reuses that token instead of
+  deploying one (a wrapped token's `underlying` is read from the token itself).
+- `CONFIRM_DEPLOY`: on a public network, must equal the network name. `REPLACE`: `1` overwrites a
+  recorded label.
 
-Each deploy writes `deployments/<network>.json` (git-ignored), keyed by Hardhat's network name:
+Each deploy writes `deployments/<network>.json` (git-ignored, except `deployments/sepolia.json`), keyed by Hardhat's network name:
 
 ```json
 {
@@ -333,7 +339,8 @@ accounts (derived in the browser from Hardhat's public test mnemonic). Picking o
 that account; transactions are signed in the page and the FHEVM mock stands in for the relayer.
 It only works on chain 31337 and is never part of a production build: the dev bundle (`dev.js`)
 is referenced only when `:dev_wallet` is on, which only `config/dev.exs` and `config/test.exs`
-set. In production the control is `Connect wallet`, for a browser wallet.
+set. In production the control is `Connect wallet`, for a browser wallet. The dev login is offered only
+when the chain is 31337, and then beside a `Connect wallet` button.
 
 ### Environment variables
 
@@ -341,6 +348,9 @@ set. In production the control is `Connect wallet`, for a browser wallet.
 |---|---|---|
 | `ANNUART_RPC_URL` | `http://127.0.0.1:8545` | The chain's JSON-RPC endpoint. One running instance talks to one chain. |
 | `ANNUART_DEPLOYMENTS` | `../deployments/localhost.json` (relative to `web/`) | The deployment file written by `scripts/deploy.ts`. |
+| `ANNUART_PUBLIC_RPC_URL` | unset | An RPC URL the browser may see and use. Unset, the page carries no RPC URL off chain 31337 (the server's own URL stays on the server). |
+| `ANNUART_CONFIRMATIONS` | `0` on chain 31337, `2` elsewhere | Blocks the indexer stays behind the chain head. |
+| `ANNUART_LOG_CHUNK` | `2000` | Most blocks asked of the node in one `eth_getLogs` call; lower it on RPC plans that limit the range. |
 | `PORT` | `4000` | HTTP port. |
 | `ANNUART_LIVE_RELOAD` | on | Dev only: `false` turns off browser live reload (the e2e run does). |
 | `DATABASE_PATH`, `SECRET_KEY_BASE`, `PHX_HOST`, `PHX_SERVER` | | Production, as usual for Phoenix. |
