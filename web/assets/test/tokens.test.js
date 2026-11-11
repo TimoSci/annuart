@@ -302,3 +302,54 @@ test("a Finish unwrap that fails keeps its failure on screen when the card refre
   assert.match(failed[0].textContent, /not decryptable yet/);
   assert.equal(q(t.el, "unwraps").querySelectorAll("button[data-role=run]").length, 1);
 });
+
+// A wallet on another chain than the instance's. The real reads and the real
+// signer are used, so a read that asked the wallet to switch would show here.
+test("a wrong-chain wallet: mounting makes no switch request and each card says to switch", async () => {
+  const {EventEmitter} = await import("node:events");
+  const signer = await import("../js/chain/signer.js");
+  const reads = await import("../js/chain/actions.js");
+  const ethereum = new EventEmitter();
+  const switches = [];
+  ethereum.request = async ({method, params}) => {
+    switch (method) {
+      case "eth_requestAccounts":
+      case "eth_accounts": return [ME];
+      case "eth_chainId": return "0xaa36a7";
+      case "net_version": return "11155111";
+      case "wallet_switchEthereumChain": switches.push(params[0].chainId); return null;
+      default: throw new Error(`unexpected ${method}`);
+    }
+  };
+  ethereum.removeListener = ethereum.off.bind(ethereum);
+  const saved = {window: globalThis.window, document: globalThis.document};
+  const meta = {chainId: 31337, rpcUrl: null, contracts: [WRAPPED, MOCK]};
+  globalThis.window = {ethereum};
+  globalThis.document = {querySelector: sel => (sel === "meta[name='annuart-chain']" ? {content: JSON.stringify(meta)} : null)};
+  try {
+    const session = await signer.connect("wallet");
+    assert.equal(session.chainId, 11155111);
+    const line = "Switch your wallet to the right network to see this.";
+    for (const kind of ["wrapped", "mock"]) {
+      const t = make({kind, session, reads: {
+        operatorStatus: reads.operatorStatus, pendingUnwraps: reads.pendingUnwraps,
+        wethBalance: reads.wethBalance, ethBalance: reads.ethBalance,
+      }});
+      await t.ctl.pending;
+      assert.equal(q(t.el, "authorisation").textContent, line);
+      assert.equal(t.el.textContent.split(line).length - 1, 1, `${kind}: the line is shown once`);
+      if (kind === "wrapped") assert.equal(q(t.el, "eth-balance").textContent, "");
+    }
+    assert.deepEqual(switches, []);
+  } finally {
+    signer.disconnect();
+    globalThis.window = saved.window;
+    globalThis.document = saved.document;
+  }
+});
+
+test("a read failing for another reason keeps its text", async () => {
+  const t = make({reads: {operatorStatus: async () => { throw new Error("rpc down"); }}});
+  await t.ctl.pending;
+  assert.equal(q(t.el, "authorisation").textContent, "Authorisation unavailable.");
+});

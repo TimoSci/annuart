@@ -5,6 +5,11 @@ import {addChainParams} from "../chains.js";
 
 const hex = n => "0x" + Number(n).toString(16);
 
+// Wallets report "unknown chain" (4902) at the top level or nested inside the
+// error they wrap it in.
+const unknownChain = err =>
+  err?.code === 4902 || err?.data?.originalError?.code === 4902 || err?.error?.code === 4902;
+
 export function createWalletSigner(ethereum = window.ethereum) {
   if (!ethereum) throw new Error("No wallet found");
   const listeners = new Set();
@@ -56,7 +61,7 @@ export function createWalletSigner(ethereum = window.ethereum) {
         await switchTo();
       } catch (err) {
         const params = addChainParams(id);
-        if (err?.code !== 4902 || !params) throw err;
+        if (!unknownChain(err) || !params) throw err;
         await ethereum.request({method: "wallet_addEthereumChain", params: [params]});
         await switchTo();
       }

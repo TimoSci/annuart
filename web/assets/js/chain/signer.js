@@ -80,10 +80,24 @@ export function disconnect() {
   if (session !== null) setSession(null);
 }
 
+// How long ensureChain waits for the wallet to announce the chain it switched to.
+export const SWITCH_WAIT_MS = 5000;
+const SWITCH_POLL_MS = 20;
+
+// Resolves to `s` (default: the connected session) when it is on this
+// instance's chain; otherwise throws WrongChainError. Never asks the wallet for
+// anything, so reads that run without a click use this.
+export async function requireChain(s = session) {
+  if (!s) throw new Error("not connected");
+  if (s.chainId !== chainInfo().chainId) throw new WrongChainError();
+  return s;
+}
+
 // Resolves to a session on this instance's chain: `s` itself if it is already
 // there, or the connected session after asking the wallet to switch. A session
-// that is not the connected one (no wallet to ask) is only checked.
-export async function ensureChain(s = session) {
+// that is not the connected one (no wallet to ask) is only checked. For actions
+// the user started with a click.
+export async function ensureChain(s = session, {waitMs = SWITCH_WAIT_MS} = {}) {
   if (!s) throw new Error("not connected");
   const wanted = chainInfo().chainId;
   if (s.chainId === wanted) return s;
@@ -94,7 +108,8 @@ export async function ensureChain(s = session) {
     throw new WrongChainError();
   }
   // The wallet announces the new chain through chainChanged, asynchronously.
-  for (let i = 0; i < 50 && session?.chainId !== wanted; i++) await new Promise(r => setTimeout(r, 20));
+  const deadline = Date.now() + waitMs;
+  while (session?.chainId !== wanted && Date.now() < deadline) await new Promise(r => setTimeout(r, SWITCH_POLL_MS));
   if (session?.chainId !== wanted) throw new WrongChainError();
   return session;
 }

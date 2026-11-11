@@ -107,6 +107,56 @@ test("ensureChain resolves when already on the right chain", async () => {
   assert.deepEqual(eth.switches, []);
 });
 
+test("requireChain refuses a wrong-chain wallet session without asking the wallet to switch", async () => {
+  const eth = setup({chainId: 31337}, fakeEthereum({chainId: 1}));
+  await signer.connect("wallet");
+  await assert.rejects(() => signer.requireChain(), err => err instanceof signer.WrongChainError);
+  assert.deepEqual(eth.switches, []);
+  assert.equal(signer.current().chainId, 1);
+  // ensureChain, by contrast, still asks for the switch.
+  await signer.ensureChain();
+  assert.deepEqual(eth.switches, ["0x7a69"]);
+});
+
+test("requireChain returns a session already on the right chain", async () => {
+  const eth = setup();
+  const s = await signer.connect("wallet");
+  assert.equal(await signer.requireChain(s), s);
+  await assert.rejects(() => signer.requireChain(null), /not connected/);
+  assert.deepEqual(eth.switches, []);
+});
+
+// A wallet that accepts the switch but announces chainChanged only `after` ms later.
+function slowWallet(after) {
+  const e = fakeEthereum({chainId: 1});
+  const request = e.request;
+  e.request = async args => {
+    if (args.method !== "wallet_switchEthereumChain") return request(args);
+    e.switches.push(args.params[0].chainId);
+    setTimeout(() => { e.chainId = 31337; e.emit("chainChanged", "0x7a69"); }, after);
+    return null;
+  };
+  return e;
+}
+
+test("ensureChain keeps polling for a late chainChanged until its wait is up", async () => {
+  // The wait is shortened here; the default (SWITCH_WAIT_MS) is pinned below.
+  setup({chainId: 31337}, slowWallet(150));
+  await signer.connect("wallet");
+  const s = await signer.ensureChain(undefined, {waitMs: 400});
+  assert.equal(s.chainId, 31337);
+});
+
+test("ensureChain gives up when chainChanged does not arrive within its wait", async () => {
+  setup({chainId: 31337}, slowWallet(10_000));
+  await signer.connect("wallet");
+  await assert.rejects(() => signer.ensureChain(undefined, {waitMs: 100}), err => err instanceof signer.WrongChainError);
+});
+
+test("ensureChain waits up to 5 seconds by default", () => {
+  assert.equal(signer.SWITCH_WAIT_MS, 5000);
+});
+
 test("an unconfigured instance (chainId 0) lists no signers", () => {
   setup({chainId: 0, rpcUrl: "", contracts: []});
   window.__annuartDev = {createSigner() {}};
@@ -234,6 +284,23 @@ test("the chain is added with the app's parameters for it", async () => {
     blockExplorerUrls: ["https://sepolia.etherscan.io"],
   });
 });
+
+for (const [shape, error] of [
+  ["err.code", Object.assign(new Error("x"), {code: 4902})],
+  ["err.data.originalError.code", Object.assign(new Error("x"), {code: -32603, data: {originalError: {code: 4902}}})],
+  ["err.error.code", Object.assign(new Error("x"), {code: -32603, error: {code: 4902}})],
+]) {
+  test(`an unknown chain reported as ${shape} === 4902 is added, then switched to`, async () => {
+    const calls = [];
+    const ethereum = fakeWallet({request: async ({method}) => {
+      calls.push(method);
+      if (method === "wallet_switchEthereumChain" && calls.filter(m => m === method).length === 1) throw error;
+      return null;
+    }});
+    await createWalletSigner(ethereum).switchChain(11155111);
+    assert.deepEqual(calls, ["wallet_switchEthereumChain", "wallet_addEthereumChain", "wallet_switchEthereumChain"]);
+  });
+}
 
 test("a chain the app has no parameters for is not added", async () => {
   const methods = [];

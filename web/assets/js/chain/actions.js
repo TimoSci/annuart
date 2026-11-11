@@ -10,7 +10,7 @@
 // once the action has broadcast a transaction, the error carries the last
 // one's hash as err.sentHash, so the caller does not offer to send it again.
 import {Contract, ZeroAddress, makeError} from "ethers";
-import {ensureChain} from "./signer.js";
+import {ensureChain, requireChain} from "./signer.js";
 import {getFhe} from "./fhe.js";
 import {ActionError, explain} from "../errors.js";
 import {formatAmount} from "../units.js";
@@ -297,7 +297,9 @@ export async function withdrawWeth(session, contract, {wei}, onStep) {
   return single(session, onStep, s => wethOf(contract, s.signer).withdraw(wei));
 }
 
-// Reads.
+// Reads. The reveals are started by a click and may ask the wallet to switch
+// network; the others run in the background and only check the chain
+// (requireChain), so they never prompt the wallet.
 
 export async function revealDistribution(session, contract, tokenId) {
   const s = await ensureChain(session);
@@ -314,7 +316,7 @@ export async function revealBalance(session, contract) {
 }
 
 export async function operatorStatus(session, contract) {
-  const s = await ensureChain(session);
+  const s = await requireChain(session);
   const token = tokenOf(contract, s.provider);
   const authorised = await token.isOperator(s.address, contract.nft);
   const logs = await recentLogs(token, token.filters.OperatorSet(s.address, contract.nft), contract.deployBlock);
@@ -358,7 +360,7 @@ const FORGET_AFTER = 12;
 // requestId is a string in everything returned.
 export async function pendingUnwraps(session, contract) {
   requireKind(contract, "wrapped", "Only a wrapped token can be unwrapped.");
-  const s = await ensureChain(session);
+  const s = await requireChain(session);
   const token = tokenOf(contract, s.provider);
   const logs = await recentLogs(token, token.filters.UnwrapRequested(s.address), contract.deployBlock);
   const key = unwrapsKey(s, contract);
@@ -389,11 +391,11 @@ export async function pendingUnwraps(session, contract) {
 
 export async function wethBalance(session, contract) {
   requireKind(contract, "wrapped", "Only a wrapped token has WETH.");
-  const s = await ensureChain(session);
+  const s = await requireChain(session);
   return wethOf(contract, s.provider).balanceOf(s.address);
 }
 
 export async function ethBalance(session) {
-  const s = await ensureChain(session);
+  const s = await requireChain(session);
   return s.provider.getBalance(s.address);
 }

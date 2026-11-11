@@ -97,11 +97,13 @@ for it to appear…` can last that long. Wait before deciding something failed.
 
 ## 7. Another chain
 
-1. With the wallet on a network other than Sepolia, a write asks to switch; refusing gives
+1. With the wallet on a network other than Sepolia, open Tokens: the wallet is not asked to
+   switch, and each card shows `Switch your wallet to the right network to see this.`
+2. Still on the other network, a write asks to switch; refusing gives
    `Switch your wallet to the right network.`
-2. In a wallet that does not know Sepolia yet (remove it from the wallet's networks first, if you
+3. In a wallet that does not know Sepolia yet (remove it from the wallet's networks first, if you
    can), the first write offers to add the network; approve, and the wallet then switches to it.
-3. A transaction left pending for three minutes after it was broadcast adds a `Still waiting.`
+4. A transaction left pending for three minutes after it was broadcast adds a `Still waiting.`
    note that says to reload and check your balance before trying again.
 
 ## 8. Nothing secret reaches the server

@@ -7,13 +7,14 @@
 //
 // Everything drawn from chain data is set as text, never as HTML.
 import {formatAmount} from "../units.js";
-import {current, onChange, chainInfo} from "../chain/signer.js";
+import {current, onChange, chainInfo, WrongChainError} from "../chain/signer.js";
 import * as actions from "../chain/actions.js";
 import {TxActionController} from "./tx_action.js";
 
 const ETH_DECIMALS = 18;
 const UNFINISHED_NOTE = "These were requested but not completed. Finishing one returns its amount as ETH.";
 const WETH_NOTE = "Left over from an interrupted wrap or unwrap.";
+const WRONG_CHAIN = "Switch your wallet to the right network to see this.";
 
 const setHidden = (node, hidden) => {
   if (hidden) node.setAttribute("hidden", ""); else node.removeAttribute("hidden");
@@ -84,7 +85,11 @@ export class TokensController {
     if (session && contract) {
       const {reads} = this.deps;
       const read = async (name, fn) => {
-        try { data[name] = {value: await fn()}; } catch { data[name] = {failed: true}; }
+        try {
+          data[name] = {value: await fn()};
+        } catch (err) {
+          data[name] = {failed: true, wrongChain: err instanceof WrongChainError};
+        }
       };
       const tasks = [read("auth", () => reads.operatorStatus(session, contract))];
       if (this.wrapped) {
@@ -102,7 +107,10 @@ export class TokensController {
   }
 
   render(data, connected) {
-    this.renderAuthorisation(data.auth, connected);
+    // A wallet on another network: one line for the card instead of each
+    // field's failure. The reads never ask the wallet to switch.
+    const wrongChain = Object.values(data).some(d => d.wrongChain);
+    this.renderAuthorisation(data.auth, connected, wrongChain);
     if (!this.wrapped) return;
     const eth = this.role("eth-balance");
     if (eth) eth.textContent = data.eth?.value !== undefined ? `${formatAmount(data.eth.value, ETH_DECIMALS)} ETH` : "";
@@ -114,10 +122,11 @@ export class TokensController {
     this.retired.clear();
   }
 
-  renderAuthorisation(auth, connected) {
+  renderAuthorisation(auth, connected, wrongChain) {
     const node = this.role("authorisation");
     if (!node) return;
     if (!connected) node.textContent = "";
+    else if (wrongChain) node.textContent = WRONG_CHAIN;
     else if (!auth || auth.failed) node.textContent = "Authorisation unavailable.";
     else if (!auth.value.authorised) node.textContent = "Not authorised";
     else node.textContent = auth.value.until ? `Authorised until ${dateText(auth.value.until)}` : "Authorised";
