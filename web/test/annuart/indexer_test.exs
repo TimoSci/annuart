@@ -92,6 +92,15 @@ defmodule Annuart.IndexerTest do
     }
   end
 
+  defp drain_enft_messages(acc \\ []) do
+    receive do
+      msg when msg == :enfts_reset or elem(msg, 0) == :enft_changed ->
+        drain_enft_messages([msg | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
   defp put_block(n, hash \\ nil),
     do: RpcStub.put_block(n, %{hash: hash || "0xh#{n}", timestamp: 1_700_000_000 + n})
 
@@ -196,7 +205,31 @@ defmodule Annuart.IndexerTest do
     assert Enfts.get_enft("mock", 1) == nil
     assert %{owner: @bob} = Enfts.get_enft("mock", 2)
     assert Enfts.cursor(@nft).last_block_hash == "0xother"
-    assert_received :enfts_reset
+
+    # :enfts_reset comes after the rebuild: the new ENFT's change message precedes it.
+    assert [{:enft_changed, "mock", 2}, :enfts_reset] = drain_enft_messages()
+  end
+
+  test "a reset whose rebuild fails is announced once, after a later pass completes it" do
+    seed_basic()
+    Indexer.sync_once()
+
+    put_block(20, "0xother")
+    put_schedule(@nft, 2, [{5, 5}])
+    RpcStub.put_logs([mint_log(@nft, 2, @bob, 7, 0)])
+    Phoenix.PubSub.subscribe(Annuart.PubSub, "enfts")
+
+    RpcStub.put_error(:get_logs, :econnrefused)
+    capture_log(fn -> Indexer.sync_once() end)
+    assert Enfts.get_enft("mock", 1) == nil
+    assert drain_enft_messages() == []
+
+    RpcStub.clear_error(:get_logs)
+    Indexer.sync_once()
+    assert [{:enft_changed, "mock", 2}, :enfts_reset] = drain_enft_messages()
+
+    Indexer.sync_once()
+    assert drain_enft_messages() == []
   end
 
   test "head below cursor triggers a rebuild" do

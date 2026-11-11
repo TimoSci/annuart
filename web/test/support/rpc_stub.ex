@@ -32,6 +32,8 @@ defmodule Annuart.RpcStub do
   @doc "Makes the named stub function (`:block_number`, `:block`, `:get_logs`, `:get_code`) return `{:error, reason}`."
   def put_error(fun, reason), do: update(&put_in(&1.errors[fun], reason))
 
+  def clear_error(fun), do: update(&Map.update!(&1, :errors, fn e -> Map.delete(e, fun) end))
+
   @doc "`{from_block, to_block}` of every `get_logs/1` call, oldest first."
   def log_queries, do: get(&Enum.reverse(&1.log_queries))
 

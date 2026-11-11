@@ -84,7 +84,7 @@ defmodule Annuart.Indexer do
         true ->
           with {:ok, cursor} <- check_reset(contract, head) do
             from = if cursor, do: cursor.last_block + 1, else: contract.deploy_block
-            sync_range(contract, from, head)
+            with :ok <- sync_range(contract, from, head), do: announce_reset(contract)
           end
       end
     end
@@ -113,9 +113,22 @@ defmodule Annuart.Indexer do
   defp reset(contract, why) do
     Logger.warning("indexer: #{contract.label}: #{why}, rebuilding")
     Enfts.reset_contract(contract.nft)
-    broadcast(:enfts_reset)
+    # Remembered outside the database (the cursor is gone) so a rebuild that
+    # fails part-way is still announced once a later pass completes it.
+    :persistent_term.put(reset_key(contract), true)
     {:ok, nil}
   end
+
+  defp announce_reset(contract) do
+    if :persistent_term.get(reset_key(contract), false) do
+      :persistent_term.erase(reset_key(contract))
+      broadcast(:enfts_reset)
+    end
+
+    :ok
+  end
+
+  defp reset_key(contract), do: {__MODULE__, :reset_pending, contract.nft}
 
   defp sync_range(_contract, from, head) when from > head, do: :ok
 
