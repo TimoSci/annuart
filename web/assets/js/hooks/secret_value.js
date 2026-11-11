@@ -3,7 +3,7 @@
 // without LiveView); SecretValue is the LiveView hook around it.
 import {formatAmount} from "../units.js";
 import {explain} from "../errors.js";
-import {current, chainInfo} from "../chain/signer.js";
+import {current, onChange, chainInfo} from "../chain/signer.js";
 import {revealDistribution, revealBalance} from "../chain/actions.js";
 
 const HIDDEN = "•••••";
@@ -16,22 +16,33 @@ export class SecretController {
     this.shown = null;
     this.note = "";
     this.pending = null;
+    // Bumped whenever the value is hidden or reset, so a decryption started
+    // before then is discarded when it finishes.
+    this.generation = 0;
+    this.revealing = false;
     this.onReset = () => this.hide();
     deps.target.addEventListener("annuart:tx", this.onReset);
+    // A new account, chain or disconnect: nothing revealed may stay on screen.
+    this.unsubscribe = deps.onSession?.(this.onReset);
     this.render();
   }
 
   destroy() {
     this.deps.target.removeEventListener("annuart:tx", this.onReset);
+    if (typeof this.unsubscribe === "function") this.unsubscribe();
+    this.generation += 1;
   }
 
   hide() {
+    this.generation += 1;
+    this.revealing = false;
     this.shown = null;
     this.note = "";
     this.render();
   }
 
   toggle() {
+    if (this.revealing) return this.pending;
     if (this.shown !== null) this.hide();
     else this.pending = this.reveal();
     return this.pending;
@@ -48,16 +59,21 @@ export class SecretController {
       return;
     }
     this.note = "Revealing…";
+    this.revealing = true;
+    const generation = this.generation;
     this.render();
     try {
       const value = secret === "balance"
         ? await this.deps.reveal.balance(session, contract)
         : await this.deps.reveal.distribution(session, contract, BigInt(id));
+      if (generation !== this.generation) return;
       this.note = "";
       this.shown = `${formatAmount(value, Number(decimals))} ${symbol ?? ""}`.trim();
     } catch (err) {
+      if (generation !== this.generation) return;
       this.note = explain(err);
     }
+    this.revealing = false;
     this.render();
   }
 
@@ -85,6 +101,7 @@ export const SecretValue = {
   mounted() {
     this.controller = new SecretController(this.el, {
       session: current,
+      onSession: onChange,
       contract: label => chainInfo().contracts.find(c => c.label === label),
       reveal: {distribution: revealDistribution, balance: revealBalance},
       target: window,
