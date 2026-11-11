@@ -11,6 +11,7 @@ import {current, chainInfo} from "../chain/signer.js";
 import * as actions from "../chain/actions.js";
 
 const LABELS = {
+  balance: "Check your balance",
   authorise: "Authorise the contract",
   encrypt: "Encrypt the amount",
   confirm: "Confirm in your wallet",
@@ -25,16 +26,21 @@ const LABELS = {
 };
 
 const SEND = ["confirm", "mined"];
-const WITH_ENCRYPT = ["authorise", "encrypt", "confirm", "mined"];
+const WITH_ENCRYPT = ["balance", "authorise", "encrypt", "confirm", "mined"];
 const FINISH = ["decrypt", "finalise", "withdraw", "mined"];
 // The steps each action reports, in order, so they can all show "waiting".
 const PLANS = {
   createEnft: WITH_ENCRYPT,
   donate: WITH_ENCRYPT,
   wrap: ["deposit", "approve", "wrap", "mined"],
-  unwrap: ["encrypt", "request", ...FINISH],
+  unwrap: ["balance", "encrypt", "request", ...FINISH],
   finaliseUnwrap: FINISH,
 };
+// Steps that are done once their transaction has been broadcast.
+const SENDING = new Set(["authorise", "confirm", "deposit", "approve", "wrap", "request", "finalise", "withdraw"]);
+
+export const START_OVER_QUESTION = "This sends the transaction again. Continue?";
+const shortHash = hash => (hash.length > 18 ? `${hash.slice(0, 10)}…${hash.slice(-6)}` : hash);
 
 const STATE_TEXT = {waiting: "waiting", active: "in progress", done: "done", skipped: "skipped"};
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
@@ -44,18 +50,25 @@ const TYPED = {grouping: false};
 
 class InputError extends Error {}
 
-// The step list an action reports into: one <li> per step, a failure with its
-// reason and a "Try again" button. Shared by every form that runs an action.
+// The step list an action reports into: one <li> per step, and a failure with
+// its reason and a way to go on. Shared by every form that runs an action.
+//
+// Before any transaction went out, the way on is "Try again" (data-role
+// "retry"). After one did, rerunning the whole action would send it again, so
+// the failure says so and offers "Start over" (data-role "start-over"), which
+// the form must confirm with START_OVER_QUESTION before it reruns anything.
 export class StepList {
   constructor(list) {
     this.list = list;
     this.doc = list.ownerDocument;
     this.steps = [];
+    this.recovery = null;
   }
 
   // Shows every step the action will report, all waiting.
   begin(action) {
     this.steps = (PLANS[action] ?? SEND).map(id => ({id, state: "waiting"}));
+    this.recovery = null;
     this.render();
   }
 
@@ -69,6 +82,8 @@ export class StepList {
 
   // An action that threw without reporting leaves its step active, or no step
   // failed at all: the failure goes on the first step not yet finished.
+  // Returns how the failure may be recovered from: {kind: "retry"} or
+  // {kind: "start-over", hash}.
   fail(err) {
     const active = this.steps.filter(step => step.state === "active");
     if (active.length === 0 && !this.steps.some(step => step.state === "failed")) {
@@ -76,7 +91,22 @@ export class StepList {
       if (next) active.push(next);
     }
     for (const step of active) { step.state = "failed"; step.detail = explain(err); }
+    return this.offer(this.recoveryFor(err));
+  }
+
+  // Shows `recovery` as the way on from the failure, and returns it.
+  offer(recovery) {
+    this.recovery = recovery;
     this.render();
+    return recovery;
+  }
+
+  // A transaction was broadcast if the action says so (err.sentHash) or a
+  // step that sends one was reported done.
+  recoveryFor(err) {
+    const sent = this.steps.filter(step => SENDING.has(step.id) && step.state === "done");
+    const hash = err?.sentHash ?? sent.map(step => step.detail?.hash).filter(Boolean).at(-1) ?? null;
+    return hash || sent.length > 0 ? {kind: "start-over", hash} : {kind: "retry"};
   }
 
   render() {
@@ -86,12 +116,18 @@ export class StepList {
       li.dataset.state = step.state;
       const name = LABELS[step.id] ?? step.id;
       if (step.state === "failed") {
-        li.append(`${name}: failed: ${step.detail ?? ""} `);
-        const retry = this.doc.createElement("button");
-        retry.type = "button";
-        retry.dataset.role = "retry";
-        retry.textContent = "Try again";
-        li.append(retry);
+        const startOver = this.recovery?.kind === "start-over";
+        let text = `${name}: failed: ${step.detail ?? ""} `;
+        if (startOver) {
+          const hash = this.recovery.hash ? ` (${shortHash(this.recovery.hash)})` : "";
+          text += `A transaction was already sent${hash}. Check it before trying again. `;
+        }
+        li.append(text);
+        const button = this.doc.createElement("button");
+        button.type = "button";
+        button.dataset.role = startOver ? "start-over" : "retry";
+        button.textContent = startOver ? "Start over" : "Try again";
+        li.append(button);
       } else {
         li.append(`${name}: ${STATE_TEXT[step.state]}`);
       }
@@ -101,7 +137,6 @@ export class StepList {
   }
 }
 
-
 export class TxActionController {
   constructor(el, deps) {
     this.el = el;
@@ -109,6 +144,11 @@ export class TxActionController {
     this.doc = el.ownerDocument;
     this.running = false;
     this.pending = null;
+    // After a failure: {kind: "retry"} reruns at the next click, {kind:
+    // "start-over"} only once confirmed. `finishing` is the request id of an
+    // unwrap that failed after its request was mined: the next run finishes it.
+    this.recovery = null;
+    this.finishing = null;
 
     this.message = this.doc.createElement("p");
     this.message.className = "tx-message";
@@ -171,13 +211,17 @@ export class TxActionController {
   }
 
   // Reads and validates every [data-arg] input, plus the token id.
+  // An amount comes with its symbol and decimals, for the balance check's message.
   readArgs() {
     const args = {};
     if (this.el.dataset.tokenId) args.tokenId = BigInt(this.el.dataset.tokenId);
     for (const input of this.el.querySelectorAll("[data-arg]")) {
       const name = input.dataset.arg;
-      if (name === "amount" || name === "wei") args[name] = this.parse(input).value;
-      else if (name === "to") {
+      if (name === "wei") args.wei = this.parse(input).value;
+      else if (name === "amount") {
+        const {value, symbol, decimals} = this.parse(input);
+        Object.assign(args, {amount: value, symbol, decimals});
+      } else if (name === "to") {
         const to = input.value.trim();
         if (!ADDRESS.test(to)) throw new InputError("Enter a valid address, starting with 0x.");
         args.to = to;
@@ -188,14 +232,20 @@ export class TxActionController {
 
   say(text) { this.message.textContent = text; }
 
+  // Every click (the action's button or the failed step's) goes through what
+  // the last failure left, so nothing reruns a sent transaction unasked.
   run() {
-    this.pending = this.attempt();
+    if (this.running) return this.pending;
+    if (this.recovery?.kind === "start-over" && !this.deps.confirm(START_OVER_QUESTION)) return this.pending;
+    this.pending = this.finishing
+      ? this.execute("finaliseUnwrap", {requestId: this.finishing})
+      : this.attempt();
     return this.pending;
   }
 
   async attempt() {
     if (this.running) return;
-    const {action, label, confirm} = {...this.el.dataset};
+    const {action, confirm} = {...this.el.dataset};
     this.say("");
     let args;
     try {
@@ -205,22 +255,49 @@ export class TxActionController {
       this.say(err.message);
       return;
     }
+    if (!this.deps.session()) { this.say("Connect a wallet first."); return; }
+    if (!this.deps.actions[action] || !this.deps.contract(this.el.dataset.label)) { this.say("This action is not available."); return; }
+    if (confirm && !this.deps.confirm(this.confirmText(confirm, args))) return;
+    return this.execute(action, args);
+  }
+
+  // The confirmation, with {amount} (as typed, ungrouped), {symbol} and {to}
+  // filled in from the inputs. It is shown in the browser only.
+  confirmText(template, args) {
+    const fill = {
+      amount: args.amount !== undefined ? formatAmount(args.amount, args.decimals, TYPED) : "",
+      symbol: this.symbol,
+      to: args.to ?? "",
+    };
+    return template.replace(/\{(amount|symbol|to)\}/g, (_, key) => fill[key]);
+  }
+
+  // Runs `action`; on failure, remembers how to go on.
+  async execute(action, args) {
+    const {label} = this.el.dataset;
     const session = this.deps.session();
-    if (!session) { this.say("Connect a wallet first."); return; }
     const run = this.deps.actions[action];
     const contract = this.deps.contract(label);
+    if (!session) { this.say("Connect a wallet first."); return; }
     if (!run || !contract) { this.say("This action is not available."); return; }
-    if (confirm && !this.deps.confirm(confirm)) return;
-
     this.running = true;
     this.setBusy(true);
     this.stepList.begin(action);
     try {
       const result = await run(session, contract, args, (id, state, detail) => this.stepList.report(id, state, detail));
+      this.recovery = null;
+      this.finishing = null;
       this.deps.push("tx:confirmed", {action, label, tokenId: this.el.dataset.tokenId ?? null, hash: result?.hash ?? null});
       this.deps.announce();
     } catch (err) {
-      this.stepList.fail(err);
+      this.recovery = this.stepList.fail(err);
+      // An unwrap whose request is on chain is finished from then on, never
+      // requested again: finishing sends nothing the request already did.
+      if (action === "unwrap" && err?.requestId) {
+        this.finishing = err.requestId;
+        this.recovery = this.stepList.offer({kind: "retry"});
+      }
+      this.deps.failed?.();
     } finally {
       this.running = false;
       this.setBusy(false);
@@ -242,6 +319,7 @@ export const TxAction = {
       actions,
       confirm: text => window.confirm(text),
       announce: () => window.dispatchEvent(new CustomEvent("annuart:tx")),
+      failed: () => window.dispatchEvent(new CustomEvent("annuart:tx-failed")),
     });
   },
   destroyed() {

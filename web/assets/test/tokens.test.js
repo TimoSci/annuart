@@ -60,6 +60,7 @@ function make({kind = "wrapped", decimals = 9, symbol = "cWETH", contract, reads
     push: (name, payload) => pushed.push([name, payload]),
     confirm: () => true,
     announce: () => { announced.push(1); document.dispatchEvent(new window.Event("annuart:tx")); },
+    failed: () => document.dispatchEvent(new window.Event("annuart:tx-failed")),
   };
   // The static actions are mounted by LiveView; here a controller stands in.
   const statics = [...el.querySelectorAll(".tx")].map(node => new TxActionController(node, tx));
@@ -255,4 +256,43 @@ test("chain data is rendered as text, never HTML", async () => {
   const t = make({reads: {pendingUnwraps: async () => [{requestId: evil, amountHandle: "0x"}]}});
   await t.ctl.pending;
   assert.equal(t.el.querySelector("img"), null);
+});
+
+test("a failed unwrap refreshes the card, so its pending request is listed to finish", async () => {
+  const requestId = "0x" + "33".repeat(32);
+  const data = {pending: []};
+  const t = make({
+    reads: {pendingUnwraps: async () => data.pending},
+    actions: {unwrap: async () => {
+      data.pending = [{requestId, amountHandle: "0xh"}];
+      throw Object.assign(new Error("could not be decrypted"), {requestId});
+    }},
+  });
+  await t.ctl.pending;
+  assert.equal(q(t.el, "unwraps").hasAttribute("hidden"), true);
+  type(action(t.el, "unwrap").querySelector("[data-arg=amount]"), "0.5");
+  click(runBtn(t.el, "unwrap"));
+  await t.statics[2].pending;
+  await t.ctl.pending;
+  assert.equal(q(t.el, "unwraps").hasAttribute("hidden"), false);
+  assert.match(q(t.el, "unwraps").textContent, /Request 0x33333333…333333/);
+  assert.equal(t.counts.pendingUnwraps, 2);
+});
+
+test("a Finish unwrap that fails keeps its failure on screen when the card refreshes", async () => {
+  const requestId = "0x" + "44".repeat(32);
+  const t = make({
+    reads: {pendingUnwraps: async () => [{requestId, amountHandle: "0xh"}]},
+    actions: {finaliseUnwrap: async () => { throw new Error("not decryptable yet"); }},
+  });
+  await t.ctl.pending;
+  const button = q(t.el, "unwraps").querySelector("button[data-role=run]");
+  click(button);
+  await t.ctl.pendingActions.at(-1);
+  await t.ctl.pending;
+  assert.equal(t.counts.pendingUnwraps, 2, "the failure refreshed the card");
+  const failed = q(t.el, "unwraps").querySelectorAll("li[data-state=failed]");
+  assert.equal(failed.length, 1);
+  assert.match(failed[0].textContent, /not decryptable yet/);
+  assert.equal(q(t.el, "unwraps").querySelectorAll("button[data-role=run]").length, 1);
 });

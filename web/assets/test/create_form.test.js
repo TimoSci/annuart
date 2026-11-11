@@ -43,13 +43,14 @@ function page({tokens = [["mock", "TKN", 6]]} = {}) {
   return {document, window, el: document.getElementById("create-form")};
 }
 
-function make({run, session = SESSION, tokens, now = NOW} = {}) {
+function make({run, session = SESSION, tokens, now = NOW, confirm = () => true} = {}) {
   const state = {session, now};
   const listeners = [];
   const {el, document} = page({tokens});
   const calls = [];
   const pushed = [];
   const announced = [];
+  const asked = [];
   const ctl = new CreateFormController(el, {
     push: (name, payload) => pushed.push([name, payload]),
     session: () => state.session,
@@ -58,9 +59,10 @@ function make({run, session = SESSION, tokens, now = NOW} = {}) {
     createEnft: run ?? (async (s, c, args, onStep) => { calls.push({s, c, args}); onStep("mined", "done"); return {hash: "0xh", tokenId: 3n}; }),
     announce: () => announced.push(1),
     now: () => state.now,
+    confirm: text => { asked.push(text); return confirm(text); },
   });
   const setSession = next => { state.session = next; listeners.forEach(fn => fn(next)); };
-  return {ctl, el, document, calls, pushed, announced, state, setSession};
+  return {ctl, el, document, calls, pushed, announced, asked, state, setSession};
 }
 
 const q = (el, role) => el.querySelector(`[data-role=${role}]`);
@@ -114,6 +116,9 @@ test("collects rows into segments and calls createEnft with them", async () => {
   assert.equal(args.to, ME);
   assert.equal(args.start, 0n);
   assert.equal(args.topUps, true);
+  // The token's symbol and decimals, for the balance check's message.
+  assert.equal(args.symbol, "TKN");
+  assert.equal(args.decimals, 6);
   // 6 decimals: 100 and 25 tokens a day, rounded down to whole units a second.
   assert.deepEqual(args.segments, [
     {duration: 18n * 30n * 86400n, ratePerSec: 100_000_000n / 86400n},
@@ -364,7 +369,9 @@ test("a failed step shows a retry; retrying shows the summary again and then run
   const t = make({
     run: async (_s, _c, _a, onStep) => {
       attempts++;
-      onStep("authorise", "done");
+      // Nothing sent yet (a done authorise would be a transaction already out).
+      onStep("balance", "done");
+      onStep("authorise", "skipped");
       onStep("encrypt", "active");
       if (attempts === 1) throw Object.assign(new Error("x"), {code: 4001});
       onStep("mined", "done");
@@ -487,4 +494,82 @@ test("an amount typed with a separator is refused and nothing runs", async () =>
     for (const row of rows(t.el).slice(1)) click(q(row, "remove-period"));
   }
   assert.equal(t.calls.length, 0);
+});
+
+test("the steps start with the balance check", async () => {
+  let seen;
+  const t = make({run: async (_s, _c, _a, onStep) => {
+    seen = [...t.el.querySelectorAll("ol.steps li")].map(li => li.textContent);
+    onStep("mined", "done");
+    return {hash: "0xh", tokenId: 1n};
+  }});
+  fillDefault(t.el);
+  await submit(t);
+  assert.deepEqual(seen, [
+    "Check your balance: waiting", "Authorise the contract: waiting", "Encrypt the amount: waiting",
+    "Confirm in your wallet: waiting", "Done: waiting",
+  ]);
+});
+
+test("after the transaction was sent, a failure offers Start over, which asks before showing the summary", async () => {
+  const hash = "0x" + "cd34".repeat(16);
+  let attempts = 0;
+  let answer = false;
+  const t = make({
+    confirm: () => answer,
+    run: async (_s, _c, _a, onStep) => {
+      attempts++;
+      onStep("balance", "done");
+      onStep("authorise", "skipped");
+      onStep("encrypt", "done");
+      onStep("confirm", "done", {hash});
+      onStep("mined", "active");
+      if (attempts === 1) throw Object.assign(new Error("lost the receipt"), {sentHash: hash});
+      onStep("mined", "done");
+      return {hash, tokenId: 4n};
+    },
+  });
+  fillDefault(t.el);
+  await submit(t);
+  const failed = t.el.querySelector("ol.steps li[data-state=failed]");
+  assert.equal(failed.dataset.step, "mined");
+  assert.match(failed.textContent, /A transaction was already sent \(0xcd34cd34…34cd34\)\. Check it before trying again\./);
+  assert.equal(t.el.querySelector("button[data-role=retry]"), null);
+  const startOver = failed.querySelector("button[data-role=start-over]");
+  assert.equal(startOver.textContent, "Start over");
+
+  // Declined: nothing, not even a summary.
+  click(startOver);
+  assert.deepEqual(t.asked, ["This sends the transaction again. Continue?"]);
+  assert.equal(q(t.el, "summary").hidden, true);
+  // The Create button does not get round it.
+  click(q(t.el, "run"));
+  assert.equal(t.asked.length, 2);
+  assert.equal(q(t.el, "summary").hidden, true);
+  assert.equal(attempts, 1);
+
+  // Accepted: the summary again, and only its confirmation sends.
+  answer = true;
+  click(t.el.querySelector("button[data-role=start-over]"));
+  assert.equal(q(t.el, "summary").hidden, false);
+  assert.equal(attempts, 1);
+  click(q(t.el, "confirm"));
+  await t.ctl.pending;
+  assert.equal(attempts, 2);
+  assert.equal(t.pushed.length, 1);
+});
+
+test("the summary warns when payouts start more than ten years from now", () => {
+  const t = make();
+  fillDefault(t.el);
+  pick(q(t.el, "start-mode"), "at");
+  type(q(t.el, "start-at"), "2040-01-02T00:00");
+  click(q(t.el, "run"));
+  assert.ok(q(t.el, "summary").textContent.includes(
+    "Payouts do not start until 2 January 2040, more than ten years from now."), q(t.el, "summary").textContent);
+
+  // Within ten years: no such line.
+  type(q(t.el, "start-at"), "2039-12-01T00:00");
+  click(q(t.el, "run"));
+  assert.doesNotMatch(q(t.el, "summary").textContent, /more than ten years/);
 });

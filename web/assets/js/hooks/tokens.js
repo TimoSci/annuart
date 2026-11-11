@@ -34,14 +34,21 @@ export class TokensController {
     this.pending = null;
     this.generation = 0;
     this.wrapped = el.dataset.kind === "wrapped";
+    // Kept across a refresh: the drawn actions by key, so one that failed
+    // still shows why after the card is read again.
+    this.retired = new Map();
+    // A failed action may still have changed the chain (an unwrap request that
+    // was mined, WETH left behind), so a failure refreshes the card too.
     this.onTx = () => this.refresh();
     deps.target.addEventListener("annuart:tx", this.onTx);
+    deps.target.addEventListener("annuart:tx-failed", this.onTx);
     this.unsubscribe = deps.onSession?.(() => this.refresh());
     this.refresh();
   }
 
   destroy() {
     this.deps.target.removeEventListener("annuart:tx", this.onTx);
+    this.deps.target.removeEventListener("annuart:tx-failed", this.onTx);
     if (typeof this.unsubscribe === "function") this.unsubscribe();
     this.clearActions();
   }
@@ -53,6 +60,14 @@ export class TokensController {
 
   clearActions() {
     this.dynamic.forEach(c => c.destroy());
+    this.dynamic = [];
+    this.retired.forEach(c => c.destroy());
+    this.retired.clear();
+  }
+
+  // Before a render: the drawn actions may be reused by addAction.
+  retireActions() {
+    for (const c of this.dynamic) this.retired.set(c.key, c);
     this.dynamic = [];
   }
 
@@ -91,9 +106,12 @@ export class TokensController {
     if (!this.wrapped) return;
     const eth = this.role("eth-balance");
     if (eth) eth.textContent = data.eth?.value !== undefined ? `${formatAmount(data.eth.value, ETH_DECIMALS)} ETH` : "";
-    this.clearActions();
+    this.retireActions();
     this.renderUnwraps(data.unwraps?.value ?? []);
     this.renderWeth(data.weth?.value ?? 0n);
+    // Actions no longer wanted (a finished unwrap) go.
+    this.retired.forEach(c => c.destroy());
+    this.retired.clear();
   }
 
   renderAuthorisation(auth, connected) {
@@ -106,8 +124,17 @@ export class TokensController {
   }
 
   // A <div class="tx"> in the markup TxActionController expects, with its
-  // arguments fixed by `args` rather than read from inputs.
-  addAction(parent, {action, label, args}) {
+  // arguments fixed by `args` rather than read from inputs. The same action
+  // for the same `key` drawn before the refresh is moved here as it is.
+  addAction(parent, {action, label, args, key}) {
+    const id = `${action}:${key}`;
+    const kept = this.retired.get(id);
+    if (kept) {
+      this.retired.delete(id);
+      parent.append(kept.el);
+      this.dynamic.push(kept);
+      return;
+    }
     const wrap = this.doc.createElement("div");
     wrap.className = "tx";
     wrap.dataset.action = action;
@@ -122,10 +149,12 @@ export class TokensController {
     wrap.append(button, steps);
     parent.append(wrap);
     const tx = this.deps.tx;
-    this.dynamic.push(new TxActionController(wrap, {
+    const controller = new TxActionController(wrap, {
       ...tx,
       actions: {[action]: (session, contract, _inputs, onStep) => tx.actions[action](session, contract, args, onStep)},
-    }));
+    });
+    controller.key = id;
+    this.dynamic.push(controller);
   }
 
   text(tag, text, className) {
@@ -147,7 +176,7 @@ export class TokensController {
       row.className = "field";
       row.append(this.text("span", `Request ${shortId(requestId)}`));
       section.append(row);
-      this.addAction(row, {action: "finaliseUnwrap", label: "Finish unwrap", args: {requestId}});
+      this.addAction(row, {action: "finaliseUnwrap", label: "Finish unwrap", args: {requestId}, key: requestId});
     }
     section.append(this.text("p", UNFINISHED_NOTE, "note"));
   }
@@ -159,7 +188,7 @@ export class TokensController {
     setHidden(line, balance <= 0n);
     if (balance <= 0n) return;
     line.append(this.text("span", `WETH in your wallet: ${formatAmount(balance, ETH_DECIMALS)} WETH`));
-    this.addAction(line, {action: "withdrawWeth", label: "Convert to ETH", args: {wei: balance}});
+    this.addAction(line, {action: "withdrawWeth", label: "Convert to ETH", args: {wei: balance}, key: balance.toString()});
     line.append(this.text("p", WETH_NOTE, "note"));
   }
 }
@@ -178,6 +207,7 @@ export const Tokens = {
         actions,
         confirm: text => window.confirm(text),
         announce: () => window.dispatchEvent(new CustomEvent("annuart:tx")),
+        failed: () => window.dispatchEvent(new CustomEvent("annuart:tx-failed")),
       },
       target: window,
     });

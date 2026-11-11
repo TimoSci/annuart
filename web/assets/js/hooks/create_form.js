@@ -12,7 +12,7 @@ import {
 import {explainAmount} from "../errors.js";
 import {current, onChange, chainInfo} from "../chain/signer.js";
 import {createEnft} from "../chain/actions.js";
-import {StepList} from "./tx_action.js";
+import {StepList, START_OVER_QUESTION} from "./tx_action.js";
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const ZERO_ADDRESS = /^0x0{40}$/;
@@ -24,6 +24,8 @@ const INDEFINITE_SHARE = 30;
 const MIN_BAR_HEIGHT = 4;
 // Dates beyond this are outside what a JavaScript Date can show.
 const MAX_DATE_SECONDS = 8_640_000_000_000n;
+// A start further off than this is called out in the summary (a year is 365 days).
+const FAR_START_SECONDS = 10n * 31536000n;
 // What the person typed is shown back without digit grouping, so "1,500" can
 // never be read as one and a half; computed values keep it.
 const TYPED = {grouping: false};
@@ -91,7 +93,7 @@ export class CreateFormController {
       switch (button.dataset.role) {
         case "add-period": this.addRow(); this.edited(); break;
         case "remove-period": button.closest("[data-role=period]").remove(); this.syncRows(); this.edited(); break;
-        case "run": case "retry": this.run(); break;
+        case "run": case "retry": case "start-over": this.run(); break;
         case "confirm": this.confirm(); break;
         case "cancel": this.cancel(); break;
       }
@@ -394,7 +396,7 @@ export class CreateFormController {
     }
 
     return {
-      args: {to, amount, segments, start: start ?? 0n, topUps: isChecked(this.role("donations"))},
+      args: {to, amount, segments, start: start ?? 0n, topUps: isChecked(this.role("donations")), symbol, decimals},
       label, symbol, decimals, contract, rows, other, now,
     };
   }
@@ -404,6 +406,9 @@ export class CreateFormController {
     const startText = args.start === 0n
       ? "Payouts start as soon as the transaction is mined."
       : `Payouts start on ${dateText(args.start, true)}.`;
+    const farStart = args.start !== 0n && args.start - now > FAR_START_SECONDS
+      ? `Payouts do not start until ${dateText(args.start)}, more than ten years from now.`
+      : "";
     const donations = args.topUps ? "Donations are allowed" : "Donations are not allowed";
     const words = rows.map((row, i) => {
       const rate = `${effectiveRate(args.segments[i].ratePerSec, row.per, decimals, TYPED)} ${symbol} per ${row.per}`;
@@ -417,6 +422,7 @@ export class CreateFormController {
       `You are about to lock ${formatAmount(args.amount, decimals, TYPED)} ${symbol} in a new ENFT.`,
       `The ENFT will belong to ${me}.`,
       startText,
+      farStart,
       `${donations}, and this cannot be changed later.`,
       `The schedule is ${words}.`,
       warning,
@@ -424,8 +430,12 @@ export class CreateFormController {
     ].filter(Boolean).join(" ");
   }
 
-  // Create: validate, then show the summary and wait for an explicit confirmation.
+  // Create: validate, then show the summary and wait for an explicit
+  // confirmation. After a failure that came once a transaction was sent, any
+  // click first asks whether to send it again.
   run() {
+    if (this.running || this.locked) return this.pending;
+    if (this.steps.recovery?.kind === "start-over" && !this.deps.confirm(START_OVER_QUESTION)) return this.pending;
     this.pending = this.attempt();
     return this.pending;
   }
@@ -520,6 +530,7 @@ export const CreateForm = {
       createEnft,
       announce: () => window.dispatchEvent(new CustomEvent("annuart:tx")),
       now: () => Date.now(),
+      confirm: text => window.confirm(text),
     });
   },
   destroyed() {

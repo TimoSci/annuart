@@ -4,8 +4,10 @@
 // detail?) reports progress with state "active" | "done" | "skipped" | "failed".
 // Every piece of work runs inside the step that owns it; checks made before the
 // first step (the chain check, wrap's amount check) belong to the first step.
-// A failure marks that step "failed" with errors.explain(err) and rethrows.
-import {Contract, ZeroAddress} from "ethers";
+// A failure marks that step "failed" with errors.explain(err) and rethrows;
+// once the action has broadcast a transaction, the error carries the last
+// one's hash as err.sentHash, so the caller does not offer to send it again.
+import {Contract, ZeroAddress, makeError} from "ethers";
 import {ensureChain} from "./signer.js";
 import {getFhe} from "./fhe.js";
 import {ActionError, explain} from "../errors.js";
@@ -14,10 +16,38 @@ import {NFT_ABI, TOKEN_ABI, WETH_ABI} from "./abi.js";
 
 const YEAR = 365 * 86400;
 
+// Waits for a sent transaction. A wallet's "speed up" replaces it with a copy
+// at a higher fee (same nonce, to, data and value); ethers reports that from
+// wait() as TRANSACTION_REPLACED with reason "repriced" and the replacement's
+// receipt, which is then this transaction's outcome. ethers only looks for a
+// replacement on a response made with replaceableTransaction(startBlock): a
+// contract call's response is not one, and would wait forever for a hash that
+// never mines.
+async function mined(tx) {
+  const startBlock = Math.max(0, (await tx.provider.getBlockNumber()) - 1);
+  try {
+    return await tx.replaceableTransaction(startBlock).wait();
+  } catch (err) {
+    if (err?.code !== "TRANSACTION_REPLACED" || err.reason !== "repriced" || !err.receipt) throw err;
+    // wait() checks a mined receipt's status, but not a replacement's.
+    if (err.receipt.status !== 1) {
+      throw makeError("transaction execution reverted", "CALL_EXCEPTION", {receipt: err.receipt});
+    }
+    return err.receipt;
+  }
+}
+
 async function withSteps(onStep, firstStep, fn) {
   const report = (id, state, detail) => onStep?.(id, state, detail);
   let active = null;
   let started = false;
+  // The hash of the last transaction this action broadcast, if any.
+  let sentHash = null;
+  const broadcast = async sendTx => {
+    const tx = await sendTx();
+    sentHash = tx.hash;
+    return tx;
+  };
   const steps = {
     // Runs `work` as step `id`. `doneDetail(result)` is reported with "done".
     async step(id, work, doneDetail) {
@@ -33,15 +63,15 @@ async function withSteps(onStep, firstStep, fn) {
       started = true;
       report(id, "skipped");
     },
-    // Sends a transaction under `sendId`, then waits for it, and runs
-    // `onMined(receipt)`, under `minedId`.
+    // Sends a transaction under `sendId` (done with {hash}), then waits for it,
+    // and runs `onMined(receipt)`, under `minedId`.
     async send(sendId, minedId, sendTx, onMined = receipt => receipt) {
-      const tx = await steps.step(sendId, sendTx);
-      return steps.step(minedId, async () => onMined(await tx.wait()));
+      const tx = await steps.step(sendId, () => broadcast(sendTx), t => ({hash: t.hash}));
+      return steps.step(minedId, async () => onMined(await mined(tx)));
     },
     // Sends, waits for and reads a transaction under one step.
     sendAndWait: (id, sendTx, onMined = receipt => receipt, doneDetail) =>
-      steps.step(id, async () => onMined(await (await sendTx()).wait()), doneDetail),
+      steps.step(id, async () => onMined(await mined(await broadcast(sendTx))), doneDetail),
   };
   try {
     return await fn(steps);
@@ -49,6 +79,9 @@ async function withSteps(onStep, firstStep, fn) {
     // With all work inside steps, nothing can fail between two steps. A step
     // already reported done or skipped is never marked failed.
     const failed = active ?? (started ? null : firstStep);
+    // Once a transaction is out, running the whole action again would send
+    // it again: the error says so, for the caller to offer something else.
+    if (sentHash && err && typeof err === "object") err.sentHash = sentHash;
     if (failed) report(failed, "failed", explain(err));
     throw err;
   }
@@ -77,6 +110,20 @@ function requireKind(contract, kind, message) {
   if (contract.tokenKind !== kind) throw new Error(message);
 }
 
+// ERC-7984 moves zero, without reverting, when asked for more than the
+// balance: an ENFT "created" that way holds nothing, and nobody can ever tell.
+// So the caller's confidential balance is decrypted (the permit is cached, so
+// this asks for at most one signature a session) and a larger amount is
+// refused before anything is sent. `symbol` and `decimals` word the message.
+async function checkBalance(steps, s, contract, {amount, symbol, decimals}) {
+  await steps.step("balance", async () => {
+    const balance = await revealBalance(s, contract);
+    if (amount > balance) {
+      throw new ActionError(`You only have ${formatAmount(balance, decimals, {grouping: false})} ${symbol}.`);
+    }
+  });
+}
+
 // The NFT must be an operator on the holder's tokens before it can pull them.
 async function authoriseIfNeeded(steps, s, contract) {
   const token = tokenOf(contract, s.signer);
@@ -84,9 +131,10 @@ async function authoriseIfNeeded(steps, s, contract) {
   await steps.sendAndWait("authorise", async () => token.setOperator(contract.nft, await yearFromNow(s)));
 }
 
-export function createEnft(session, contract, {to, amount, segments, start, topUps}, onStep) {
-  return withSteps(onStep, "authorise", async steps => {
+export function createEnft(session, contract, {to, amount, segments, start, topUps, symbol, decimals}, onStep) {
+  return withSteps(onStep, "balance", async steps => {
     const s = await ensureChain(session);
+    await checkBalance(steps, s, contract, {amount, symbol, decimals});
     await authoriseIfNeeded(steps, s, contract);
     const enc = await steps.step("encrypt", async () => (await getFhe(s)).encrypt64(contract.nft, s.address, amount));
     const nft = nftOf(contract, s.signer);
@@ -97,9 +145,10 @@ export function createEnft(session, contract, {to, amount, segments, start, topU
   });
 }
 
-export function donate(session, contract, {tokenId, amount}, onStep) {
-  return withSteps(onStep, "authorise", async steps => {
+export function donate(session, contract, {tokenId, amount, symbol, decimals}, onStep) {
+  return withSteps(onStep, "balance", async steps => {
     const s = await ensureChain(session);
+    await checkBalance(steps, s, contract, {amount, symbol, decimals});
     await authoriseIfNeeded(steps, s, contract);
     const enc = await steps.step("encrypt", async () => (await getFhe(s)).encrypt64(contract.nft, s.address, amount));
     const nft = nftOf(contract, s.signer);
@@ -176,10 +225,11 @@ export async function wrap(session, contract, {wei}, onStep) {
 // burnt and the request stays pending until finalised: its id is reported with
 // "request" done, and any later error carries it as err.requestId, so the
 // unwrap can be finished with finaliseUnwrap (see pendingUnwraps).
-export async function unwrap(session, contract, {amount}, onStep) {
+export async function unwrap(session, contract, {amount, symbol, decimals}, onStep) {
   requireKind(contract, "wrapped", "Only a wrapped token can be unwrapped.");
-  return withSteps(onStep, "encrypt", async steps => {
+  return withSteps(onStep, "balance", async steps => {
     const s = await ensureChain(session);
+    await checkBalance(steps, s, contract, {amount, symbol, decimals});
     const token = tokenOf(contract, s.signer);
     const enc = await steps.step("encrypt", async () => (await getFhe(s)).encrypt64(contract.token, s.address, amount));
     const requestId = await steps.sendAndWait("request",
@@ -207,7 +257,7 @@ async function completeUnwrap(steps, s, contract, requestId) {
   const token = tokenOf(contract, s.signer);
   const {clear, proof} = await steps.step("decrypt", async () => {
     if ((await token.unwrapRequester(requestId)) === ZeroAddress) {
-      throw new ActionError("This unwrap has already been finished.");
+      throw new ActionError("This unwrap has already been finished. If the ETH did not arrive, use Convert to ETH below.");
     }
     const {values, proof} = await (await getFhe(s)).publicDecrypt([requestId]);
     const clear = values.get(requestId);

@@ -17,18 +17,20 @@ function setup({action = "donate", extra = "", attrs = ""} = {}) {
   return {document, window, el: document.getElementById("tx")};
 }
 
-function controller(el, {run, session = SESSION, confirm = () => true} = {}) {
+function controller(el, {run, finish, session = SESSION, confirm = () => true} = {}) {
   const pushed = [];
   const events = [];
+  const failures = [];
   const ctl = new TxActionController(el, {
     push: (name, payload) => pushed.push([name, payload]),
     session: () => session,
     contract: label => (label === "mock" ? CONTRACT : undefined),
-    actions: {donate: run, claim: run, transfer: run},
+    actions: {donate: run, claim: run, transfer: run, unwrap: run, finaliseUnwrap: finish},
     confirm,
     announce: () => events.push("annuart:tx"),
+    failed: () => failures.push("annuart:tx-failed"),
   });
-  return {ctl, pushed, events};
+  return {ctl, pushed, events, failures};
 }
 
 const states = el => [...el.querySelectorAll("ol.steps li")].map(li => [li.dataset.step, li.dataset.state]);
@@ -51,12 +53,13 @@ test("renders steps as the action reports them", async () => {
   });
   assert.deepEqual(states(el).length, 0);
   await ctl.run();
-  assert.deepEqual(seen, [["authorise", "skipped"], ["encrypt", "active"], ["confirm", "waiting"], ["mined", "waiting"]]);
+  assert.deepEqual(seen, [["balance", "waiting"], ["authorise", "skipped"], ["encrypt", "active"], ["confirm", "waiting"], ["mined", "waiting"]]);
   const text = [...el.querySelectorAll("ol.steps li")].map(li => li.textContent);
-  assert.match(text[0], /Authorise the contract/);
-  assert.match(text[0], /skipped/);
-  assert.deepEqual(states(el).map(s => s[1]), ["skipped", "done", "done", "done"]);
-  assert.match(el.querySelectorAll("ol.steps li")[1].textContent, /Encrypt the amount.*done/);
+  assert.match(text[0], /^Check your balance: waiting$/);
+  assert.match(text[1], /Authorise the contract/);
+  assert.match(text[1], /skipped/);
+  assert.deepEqual(states(el).map(s => s[1]), ["waiting", "skipped", "done", "done", "done"]);
+  assert.match(el.querySelectorAll("ol.steps li")[2].textContent, /Encrypt the amount.*done/);
 });
 
 test("shows in progress for the active step", async () => {
@@ -159,7 +162,8 @@ test("amount inputs are parsed and passed with the token id, by name", async () 
   let args;
   const {ctl} = controller(el, {run: async (_s, _c, a) => { args = a; return {hash: "0x1"}; }});
   await ctl.run();
-  assert.deepEqual(args, {tokenId: 7n, amount: 150000n});
+  // With the symbol and decimals the balance check words its message with.
+  assert.deepEqual(args, {tokenId: 7n, amount: 150000n, symbol: "TKN", decimals: 2});
 });
 
 test("a to input is passed through as text and an invalid address is refused", async () => {
@@ -316,5 +320,159 @@ test("a throw after step one is done fails the next step and leaves step one don
   await ctl.run();
   assert.deepEqual(states(el), [["confirm", "done"], ["mined", "failed"]]);
   assert.match(el.querySelector("li[data-state=failed]").textContent, /failed: The transaction failed: boom/);
+});
+
+// Once a transaction is out, a retry of the whole action would send it again.
+const HASH = "0x" + "ab12".repeat(16);
+
+function minedFails({sentHash = HASH} = {}) {
+  let calls = 0;
+  const run = async (_s, _c, _a, onStep) => {
+    calls += 1;
+    onStep("confirm", "active");
+    onStep("confirm", "done", {hash: HASH});
+    onStep("mined", "active");
+    const err = Object.assign(new Error("network down"), sentHash ? {sentHash} : {});
+    onStep("mined", "failed", "The transaction failed: network down");
+    throw err;
+  };
+  return {run, calls: () => calls};
+}
+
+test("a failure after the transaction was sent offers Start over, not Try again", async () => {
+  const {el} = setup({action: "claim"});
+  const action = minedFails();
+  const {ctl} = controller(el, {run: action.run});
+  await ctl.run();
+  const failed = el.querySelector("li[data-state=failed]");
+  assert.equal(failed.dataset.step, "mined");
+  assert.equal(failed.textContent,
+    "Done: failed: The transaction failed: network down A transaction was already sent (0xab12ab12…12ab12). Check it before trying again. Start over");
+  assert.equal(el.querySelector("button[data-role=retry]"), null);
+  assert.equal(failed.querySelector("button[data-role=start-over]").textContent, "Start over");
+});
+
+test("Start over asks first, and a declined confirmation reruns nothing", async () => {
+  const {el} = setup({action: "claim"});
+  const action = minedFails();
+  const asked = [];
+  let answer = false;
+  const {ctl} = controller(el, {run: action.run, confirm: text => { asked.push(text); return answer; }});
+  await ctl.run();
+  el.querySelector("button[data-role=start-over]").click();
+  await ctl.pending;
+  assert.deepEqual(asked, ["This sends the transaction again. Continue?"]);
+  assert.equal(action.calls(), 1);
+  // The run button is no way round it either.
+  el.querySelector("button[data-role=run]").click();
+  await ctl.pending;
+  assert.equal(action.calls(), 1);
+  assert.equal(asked.length, 2);
+
+  answer = true;
+  el.querySelector("button[data-role=start-over]").click();
+  await ctl.pending;
+  assert.equal(action.calls(), 2);
+});
+
+test("a done sending step is enough to offer Start over, even without a hash on the error", async () => {
+  const {el} = setup({action: "claim"});
+  const {ctl} = controller(el, {run: minedFails({sentHash: null}).run});
+  await ctl.run();
+  assert.ok(el.querySelector("button[data-role=start-over]"));
+  assert.match(el.querySelector("li[data-state=failed]").textContent, /A transaction was already sent \(0xab12ab12…12ab12\)\./);
+});
+
+test("a failure before anything was sent still offers Try again", async () => {
+  const {el} = setup({extra: AMOUNT});
+  const {ctl} = controller(el, {
+    run: async (_s, _c, _a, onStep) => {
+      onStep("balance", "active");
+      onStep("balance", "failed", "You only have 12 TKN.");
+      throw new Error("You only have 12 TKN.");
+    },
+  });
+  await ctl.run();
+  assert.equal(el.querySelector("li[data-state=failed]").textContent, "Check your balance: failed: You only have 12 TKN. Try again");
   assert.ok(el.querySelector("button[data-role=retry]"));
+  assert.equal(el.querySelector("button[data-role=start-over]"), null);
+});
+
+test("an unwrap that fails after its request retries by finishing that request", async () => {
+  const requestId = "0x" + "77".repeat(32);
+  const {el} = setup({action: "unwrap", extra: AMOUNT});
+  let unwraps = 0;
+  const finishes = [];
+  const {ctl, pushed} = controller(el, {
+    run: async (_s, _c, _a, onStep) => {
+      unwraps += 1;
+      onStep("request", "active");
+      onStep("request", "done", {requestId});
+      onStep("decrypt", "active");
+      onStep("decrypt", "failed", "The unwrap amount could not be decrypted. Try finishing the unwrap again later.");
+      throw Object.assign(new Error("could not be decrypted"), {requestId, sentHash: HASH});
+    },
+    finish: async (_s, c, a, onStep) => {
+      finishes.push({c, a});
+      onStep("decrypt", "done");
+      onStep("finalise", "done");
+      onStep("withdraw", "done");
+      onStep("mined", "done");
+      return {hash: "0xfin"};
+    },
+  });
+  await ctl.run();
+  const retry = el.querySelector("button[data-role=retry]");
+  assert.equal(retry.textContent, "Try again");
+  assert.equal(el.querySelector("button[data-role=start-over]"), null);
+  retry.click();
+  await ctl.pending;
+  assert.equal(unwraps, 1, "the unwrap is not requested again");
+  assert.deepEqual(finishes, [{c: CONTRACT, a: {requestId}}]);
+  assert.deepEqual(states(el), [["decrypt", "done"], ["finalise", "done"], ["withdraw", "done"], ["mined", "done"]]);
+  assert.equal(pushed.length, 1);
+  assert.doesNotMatch(JSON.stringify(pushed), /150000|1500/);
+});
+
+test("an unwrap whose finishing fails again keeps finishing the same request", async () => {
+  const requestId = "0x" + "78".repeat(32);
+  const {el} = setup({action: "unwrap", extra: AMOUNT});
+  let unwraps = 0;
+  const finishes = [];
+  const {ctl} = controller(el, {
+    run: async () => { unwraps += 1; throw Object.assign(new Error("x"), {requestId, sentHash: HASH}); },
+    finish: async (_s, _c, a) => { finishes.push(a); throw new Error("still not decryptable"); },
+  });
+  await ctl.run();
+  el.querySelector("button[data-role=retry]").click();
+  await ctl.pending;
+  el.querySelector("button[data-role=retry]").click();
+  await ctl.pending;
+  assert.equal(unwraps, 1);
+  assert.deepEqual(finishes, [{requestId}, {requestId}]);
+});
+
+test("a failed action is announced as a failure, for the Tokens card to refresh", async () => {
+  const {el} = setup({action: "claim"});
+  const {ctl, failures, events} = controller(el, {run: async () => { throw new Error("x"); }});
+  await ctl.run();
+  assert.deepEqual(failures, ["annuart:tx-failed"]);
+  assert.deepEqual(events, []);
+});
+
+test("a confirmation can name the typed amount, ungrouped, and the recipient", async () => {
+  const to = "0x" + "ab".repeat(20);
+  const donate = setup({attrs: `data-confirm="Donate {amount} {symbol} to ENFT #7? This cannot be undone."`,
+    extra: `<input data-arg="amount" value="123456.5">`});
+  const asked = [];
+  const d = controller(donate.el, {run: async () => ({hash: "0x1"}), confirm: t => { asked.push(t); return true; }});
+  await d.ctl.run();
+  const transfer = setup({action: "transfer", attrs: `data-confirm="Transfer ENFT #7 to {to}? Unclaimed balance goes with the ENFT."`,
+    extra: `<input data-arg="to" value="${to}">`});
+  const t = controller(transfer.el, {run: async () => ({hash: "0x1"}), confirm: x => { asked.push(x); return true; }});
+  await t.ctl.run();
+  assert.deepEqual(asked, [
+    "Donate 123456.5 TKN to ENFT #7? This cannot be undone.",
+    `Transfer ENFT #7 to ${to}? Unclaimed balance goes with the ENFT.`,
+  ]);
 });

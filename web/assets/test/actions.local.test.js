@@ -8,7 +8,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
-import {JsonRpcProvider} from "ethers";
+import {HDNodeWallet, JsonRpcProvider} from "ethers";
 
 const RPC_URL = "http://127.0.0.1:8545";
 const DEPLOYMENTS = new URL("../../../deployments/localhost.json", import.meta.url);
@@ -47,6 +47,7 @@ globalThis.document = {
 
 const actions = await import("../js/chain/actions.js");
 const {explain} = await import("../js/errors.js");
+const {formatAmount} = await import("../js/units.js");
 const {createDevSigner} = await import("../js/chain/signer/dev.js");
 const {createMockFhe} = await import("../js/chain/fhe/mock.js");
 const {getFhe} = await import("../js/chain/fhe.js");
@@ -56,7 +57,7 @@ const mock = chain.contracts.find(c => c.label === "mock");
 const wrapped = chain.contracts.find(c => c.label === "wrapped");
 const DAY = 86400;
 
-let alice, bob, carol, dave;
+let alice, bob, carol, dave, erin;
 if (!skip) {
   // As dev.js does in the browser: the mock FHE client is registered by the dev bundle.
   window.__annuartDev = {createFhe: session => createMockFhe(session, {provider})};
@@ -64,6 +65,10 @@ if (!skip) {
   bob = await createDevSigner({index: 2, provider});
   carol = await createDevSigner({index: 3, provider});
   dave = await createDevSigner({index: 4, provider});
+  // Account 5 is outside the dev login's five: used only by the balance checks.
+  const signer = HDNodeWallet.fromPhrase("test test test test test test test test test test test junk",
+    undefined, "m/44'/60'/0'/0/5").connect(provider);
+  erin = {kind: "dev", address: signer.address, signer, provider, chainId: 31337};
 }
 
 // The same session, but its wallet rejects the nth transaction it is asked to send.
@@ -84,6 +89,38 @@ function rejectingNth(session, n) {
     },
   });
   return {...session, signer};
+}
+
+// The same session, but every transaction it sends is replaced before it is
+// mined by a copy paying a higher fee (a wallet's "speed up"): same nonce, to,
+// data and value. The original never mines; the replacement does.
+function speedingUp(session) {
+  const replaced = [];
+  const signer = new Proxy(session.signer, {
+    get(target, prop) {
+      if (prop === "sendTransaction") {
+        return async tx => {
+          await provider.send("evm_setAutomine", [false]);
+          try {
+            const original = await target.sendTransaction(tx);
+            const replacement = await target.sendTransaction({
+              to: original.to, data: original.data, value: original.value, nonce: original.nonce,
+              gasLimit: original.gasLimit, chainId: original.chainId,
+              maxFeePerGas: original.maxFeePerGas * 2n, maxPriorityFeePerGas: original.maxPriorityFeePerGas * 2n,
+            });
+            await provider.send("evm_mine", []);
+            replaced.push({original: original.hash, replacement: replacement.hash});
+            return original;
+          } finally {
+            await provider.send("evm_setAutomine", [true]);
+          }
+        };
+      }
+      const v = Reflect.get(target, prop, target);
+      return typeof v === "function" ? v.bind(target) : v;
+    },
+  });
+  return {session: {...session, signer}, replaced};
 }
 
 // Records onStep calls for one action.
@@ -120,15 +157,23 @@ async function feesPaid(address, from, to) {
   return total;
 }
 
+// The symbol and decimals the balance check words its message with; the hooks
+// pass the token's own.
+const MOCK_UNITS = {symbol: "MOCK", decimals: 6};
+const WRAPPED_UNITS = {symbol: "cWETH", decimals: 9};
+
 const createArgs = (to, extra = {}) => ({
-  to, amount: 2_000n, segments: [{duration: 1000n, ratePerSec: 1n}], start: 0n, topUps: true, ...extra,
+  to, amount: 2_000n, segments: [{duration: 1000n, ratePerSec: 1n}], start: 0n, topUps: true, ...MOCK_UNITS, ...extra,
 });
+
+// Gives `session` enough mock tokens for an action of `amount`.
+const fund = (session, amount = 2_000n) => actions.faucet(session, mock, {amount}, steps());
 
 test("create -> accrue -> reveal -> claim on the mock token", {skip}, async () => {
   await actions.faucet(alice, mock, {amount: 5_000n}, steps());
   const st = steps();
   const {tokenId, hash} = await actions.createEnft(alice, mock, createArgs(alice.address), st);
-  assert.deepEqual(st.ids(), ["authorise", "encrypt", "confirm", "mined"]);
+  assert.deepEqual(st.ids(), ["balance", "authorise", "encrypt", "confirm", "mined"]);
   assert.ok(st.finalStates().every(s => s === "done" || s === "skipped"));
   assert.equal(typeof tokenId, "bigint");
   assert.match(hash, /^0x[0-9a-f]{64}$/);
@@ -145,6 +190,7 @@ test("create -> accrue -> reveal -> claim on the mock token", {skip}, async () =
 });
 
 test("second create skips the authorise step", {skip}, async () => {
+  await fund(alice);
   const st = steps();
   await actions.createEnft(alice, mock, createArgs(alice.address), st);
   assert.equal(st.state("authorise"), "skipped");
@@ -153,12 +199,13 @@ test("second create skips the authorise step", {skip}, async () => {
 });
 
 test("donate, then transfer; the new owner can reveal and the old owner cannot", {skip}, async () => {
+  await fund(alice);
   const {tokenId} = await actions.createEnft(alice, mock, createArgs(alice.address), steps());
   await actions.faucet(bob, mock, {amount: 500n}, steps());
   const bobBefore = await actions.revealBalance(bob, mock);
   const st = steps();
-  await actions.donate(bob, mock, {tokenId, amount: 300n}, st);
-  assert.deepEqual(st.ids(), ["authorise", "encrypt", "confirm", "mined"]);
+  await actions.donate(bob, mock, {tokenId, amount: 300n, ...MOCK_UNITS}, st);
+  assert.deepEqual(st.ids(), ["balance", "authorise", "encrypt", "confirm", "mined"]);
   assert.equal(await actions.revealBalance(bob, mock), bobBefore - 300n);
 
   await increaseTime(50);
@@ -183,6 +230,7 @@ test("leftover is released at the end", {skip}, async () => {
 });
 
 test("claim by a non-owner fails with the NotOwner message and marks the step failed", {skip}, async () => {
+  await fund(alice);
   const {tokenId} = await actions.createEnft(alice, mock, createArgs(alice.address), steps());
   const st = steps();
   await assert.rejects(
@@ -196,11 +244,12 @@ test("claim by a non-owner fails with the NotOwner message and marks the step fa
 });
 
 test("donate to an ENFT with donations off fails with the TopUpsDisabled message", {skip}, async () => {
+  await fund(alice);
   const {tokenId} = await actions.createEnft(alice, mock, createArgs(alice.address, {topUps: false}), steps());
   await actions.faucet(bob, mock, {amount: 100n}, steps());
   const st = steps();
   await assert.rejects(
-    () => actions.donate(bob, mock, {tokenId, amount: 100n}, st),
+    () => actions.donate(bob, mock, {tokenId, amount: 100n, ...MOCK_UNITS}, st),
     err => explain(err) === "This ENFT does not accept donations.",
   );
   assert.equal(st.state("encrypt"), "done");
@@ -221,8 +270,8 @@ test("wrap then unwrap on the wrapped token restores the ETH balance less gas", 
   assert.equal(await actions.revealBalance(alice, wrapped), balBefore + 10n ** 9n);
 
   const u = steps();
-  await actions.unwrap(alice, wrapped, {amount: 10n ** 9n}, u);
-  assert.deepEqual(u.ids(), ["encrypt", "request", "decrypt", "finalise", "withdraw", "mined"]);
+  await actions.unwrap(alice, wrapped, {amount: 10n ** 9n, ...WRAPPED_UNITS}, u);
+  assert.deepEqual(u.ids(), ["balance", "encrypt", "request", "decrypt", "finalise", "withdraw", "mined"]);
   assert.ok(u.finalStates().every(s => s === "done"));
   assert.equal(await actions.revealBalance(alice, wrapped), balBefore);
 
@@ -324,7 +373,7 @@ test("unwrap with finalise rejected: pendingUnwraps lists it and finaliseUnwrap 
   const st = steps();
   let requestId;
   await assert.rejects(
-    () => actions.unwrap(rejectingNth(dave, 2), wrapped, {amount: UNIT}, st),
+    () => actions.unwrap(rejectingNth(dave, 2), wrapped, {amount: UNIT, ...WRAPPED_UNITS}, st),
     err => { requestId = err.requestId; return explain(err) === "You cancelled the request in your wallet."; },
   );
   assert.match(requestId, /^0x[0-9a-f]{64}$/);
@@ -354,7 +403,7 @@ test("unwrap with withdraw rejected: wethBalance shows it and withdrawWeth recov
 
   const st = steps();
   await assert.rejects(
-    () => actions.unwrap(rejectingNth(dave, 3), wrapped, {amount: UNIT}, st),
+    () => actions.unwrap(rejectingNth(dave, 3), wrapped, {amount: UNIT, ...WRAPPED_UNITS}, st),
     err => typeof err.requestId === "string",
   );
   assert.equal(st.state("finalise"), "done");
@@ -380,7 +429,7 @@ test("a missing decrypted value fails the decrypt step, not the request step", {
   let requestId;
   try {
     await assert.rejects(
-      () => actions.unwrap(dave, wrapped, {amount: UNIT}, st),
+      () => actions.unwrap(dave, wrapped, {amount: UNIT, ...WRAPPED_UNITS}, st),
       err => { requestId = err.requestId; return /could not be decrypted/.test(err.message); },
     );
   } finally {
@@ -394,4 +443,140 @@ test("a missing decrypted value fails the decrypt step, not the request step", {
   assert.deepEqual((await actions.pendingUnwraps(dave, wrapped)).map(p => p.requestId), [requestId]);
   await actions.finaliseUnwrap(dave, wrapped, {requestId}, steps());
   assert.deepEqual(await actions.pendingUnwraps(dave, wrapped), []);
+});
+
+// The balance check: ERC-7984 moves zero, without reverting, when asked for
+// more than the balance, so each action that spends the confidential balance
+// refuses that before it sends anything.
+const ungrouped = (units, decimals) => formatAmount(units, decimals, {grouping: false});
+
+async function expectRefusedForBalance(run, balance, units) {
+  const block = await provider.getBlockNumber();
+  const st = steps();
+  const message = `You only have ${ungrouped(balance, units.decimals)} ${units.symbol}.`;
+  await assert.rejects(() => run(st), err => explain(err) === message);
+  assert.equal(await provider.getBlockNumber(), block, "no transaction was sent");
+  assert.deepEqual(st.ids(), ["balance"]);
+  assert.equal(st.state("balance"), "failed");
+  assert.equal(st.detail("balance"), message);
+}
+
+test("create above the balance fails in the balance step; at exactly the balance it succeeds", {skip}, async () => {
+  await fund(erin, 5_000_000_000n);
+  const balance = await actions.revealBalance(erin, mock);
+  assert.ok(balance >= 5_000_000_000n);
+  await expectRefusedForBalance(
+    st => actions.createEnft(erin, mock, createArgs(erin.address, {amount: balance + 1n}), st), balance, MOCK_UNITS);
+  assert.doesNotMatch(`${ungrouped(balance, 6)}`, /,/);
+
+  const st = steps();
+  const {tokenId} = await actions.createEnft(erin, mock, createArgs(erin.address, {amount: balance}), st);
+  assert.equal(st.state("balance"), "done");
+  assert.equal(typeof tokenId, "bigint");
+  assert.equal(await actions.revealBalance(erin, mock), 0n);
+});
+
+test("donate above the balance fails in the balance step; at exactly the balance it succeeds", {skip}, async () => {
+  await fund(alice);
+  const {tokenId} = await actions.createEnft(alice, mock, createArgs(alice.address), steps());
+  await fund(erin, 300n);
+  const balance = await actions.revealBalance(erin, mock);
+  await expectRefusedForBalance(
+    st => actions.donate(erin, mock, {tokenId, amount: balance + 1n, ...MOCK_UNITS}, st), balance, MOCK_UNITS);
+
+  const st = steps();
+  await actions.donate(erin, mock, {tokenId, amount: balance, ...MOCK_UNITS}, st);
+  assert.equal(st.state("mined"), "done");
+  assert.equal(await actions.revealBalance(erin, mock), 0n);
+});
+
+test("unwrap above the balance fails in the balance step; at exactly the balance it succeeds", {skip}, async () => {
+  await cleanSlate(erin);
+  await actions.wrap(erin, wrapped, {wei: ETHER}, steps());
+  const balance = await actions.revealBalance(erin, wrapped);
+  await expectRefusedForBalance(
+    st => actions.unwrap(erin, wrapped, {amount: balance + 1n, ...WRAPPED_UNITS}, st), balance, WRAPPED_UNITS);
+  assert.deepEqual(await actions.pendingUnwraps(erin, wrapped), []);
+
+  const st = steps();
+  await actions.unwrap(erin, wrapped, {amount: balance, ...WRAPPED_UNITS}, st);
+  assert.ok(st.finalStates().every(s => s === "done"));
+  assert.equal(await actions.revealBalance(erin, wrapped), 0n);
+});
+
+// A wallet's "speed up" replaces the transaction with a copy at a higher fee.
+// ethers reports that from wait() as TRANSACTION_REPLACED, reason "repriced",
+// with the replacement's receipt: the action went through.
+test("a transaction repriced in the wallet counts as mined, with the replacement's receipt", {skip, timeout: 30_000}, async () => {
+  await fund(alice);
+  const {session, replaced} = speedingUp(alice);
+  const st = steps();
+  const {tokenId, hash} = await actions.createEnft(session, mock, createArgs(alice.address), st);
+  assert.ok(replaced.length >= 1);
+  const last = replaced.at(-1);
+  assert.equal(hash, last.replacement);
+  assert.notEqual(hash, last.original);
+  assert.equal(await provider.getTransaction(last.original), null, "the original never mined");
+  assert.equal(st.state("mined"), "done");
+  assert.equal(typeof tokenId, "bigint");
+
+  // A one-step action (sent and waited for under one step) too.
+  const claimed = steps();
+  const claimSpeed = speedingUp(alice);
+  const res = await actions.claim(claimSpeed.session, mock, {tokenId}, claimed);
+  assert.equal(res.hash, claimSpeed.replaced.at(-1).replacement);
+  assert.equal(claimed.state("mined"), "done");
+});
+
+// A replacement that does something else (a cancel) is not success.
+test("a transaction cancelled in the wallet fails the step that waited for it", {skip, timeout: 30_000}, async () => {
+  await fund(alice);
+  const cancel = new Proxy(alice.signer, {
+    get(target, prop) {
+      if (prop === "sendTransaction") {
+        return async tx => {
+          await provider.send("evm_setAutomine", [false]);
+          try {
+            const original = await target.sendTransaction(tx);
+            await target.sendTransaction({
+              to: alice.address, data: "0x", value: 0n, nonce: original.nonce, gasLimit: 21_000n,
+              chainId: original.chainId,
+              maxFeePerGas: original.maxFeePerGas * 2n, maxPriorityFeePerGas: original.maxPriorityFeePerGas * 2n,
+            });
+            await provider.send("evm_mine", []);
+            return original;
+          } finally {
+            await provider.send("evm_setAutomine", [true]);
+          }
+        };
+      }
+      const v = Reflect.get(target, prop, target);
+      return typeof v === "function" ? v.bind(target) : v;
+    },
+  });
+  const st = steps();
+  await assert.rejects(
+    () => actions.createEnft({...alice, signer: cancel}, mock, createArgs(alice.address), st),
+    err => err.code === "TRANSACTION_REPLACED" && err.reason === "cancelled" && /^0x[0-9a-f]{64}$/.test(err.sentHash),
+  );
+  assert.equal(st.state("confirm"), "done");
+  assert.equal(st.state("mined"), "failed");
+});
+
+test("finishing an unwrap that was already finished points to Convert to ETH", {skip}, async () => {
+  await cleanSlate(dave);
+  await actions.wrap(dave, wrapped, {wei: ETHER}, steps());
+  let requestId;
+  await assert.rejects(
+    () => actions.unwrap(rejectingNth(dave, 2), wrapped, {amount: UNIT, ...WRAPPED_UNITS}, steps()),
+    err => { requestId = err.requestId; return true; },
+  );
+  await actions.finaliseUnwrap(dave, wrapped, {requestId}, steps());
+  const block = await provider.getBlockNumber();
+  const st = steps();
+  await assert.rejects(() => actions.finaliseUnwrap(dave, wrapped, {requestId}, st));
+  assert.equal(st.state("decrypt"), "failed");
+  assert.equal(st.detail("decrypt"),
+    "This unwrap has already been finished. If the ETH did not arrive, use Convert to ETH below.");
+  assert.equal(await provider.getBlockNumber(), block);
 });
