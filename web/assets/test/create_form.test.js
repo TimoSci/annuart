@@ -44,19 +44,23 @@ function page({tokens = [["mock", "TKN", 6]]} = {}) {
 }
 
 function make({run, session = SESSION, tokens, now = NOW} = {}) {
+  const state = {session, now};
+  const listeners = [];
   const {el, document} = page({tokens});
   const calls = [];
   const pushed = [];
   const announced = [];
   const ctl = new CreateFormController(el, {
     push: (name, payload) => pushed.push([name, payload]),
-    session: () => session,
+    session: () => state.session,
+    onSession: fn => { listeners.push(fn); return () => {}; },
     contract: label => (label === "mock" ? CONTRACT : undefined),
     createEnft: run ?? (async (s, c, args, onStep) => { calls.push({s, c, args}); onStep("mined", "done"); return {hash: "0xh", tokenId: 3n}; }),
     announce: () => announced.push(1),
-    now: () => now,
+    now: () => state.now,
   });
-  return {ctl, el, document, calls, pushed, announced};
+  const setSession = next => { state.session = next; listeners.forEach(fn => fn(next)); };
+  return {ctl, el, document, calls, pushed, announced, state, setSession};
 }
 
 const q = (el, role) => el.querySelector(`[data-role=${role}]`);
@@ -398,4 +402,58 @@ test("with several tokens the selection decides decimals, symbol and contract", 
   assert.equal(q(t.el, "balance").dataset.label, "other");
   assert.equal(q(t.el, "balance").dataset.decimals, "2");
   assert.equal(t.announced.length, 1, "a revealed balance of the old token is hidden");
+});
+
+test("after success the form stays locked and a second attempt runs nothing", async () => {
+  const t = make();
+  fillDefault(t.el);
+  await submit(t);
+  assert.equal(t.calls.length, 1);
+  assert.match(message(t.el), /^Created\./);
+  for (const node of t.el.querySelectorAll("input, select, button")) {
+    assert.ok(node.hasAttribute("disabled") || node.disabled, `${node.dataset.role} is disabled`);
+  }
+  click(q(t.el, "run"));
+  assert.equal(q(t.el, "confirm"), null);
+  t.ctl.run();
+  await t.ctl.pending;
+  assert.equal(q(t.el, "confirm"), null);
+  assert.equal(q(t.el, "summary").hidden, true);
+  assert.equal(t.calls.length, 1);
+  assert.equal(t.pushed.length, 1);
+});
+
+test("a failed create does not lock the form", async () => {
+  const t = make({run: async () => { throw new Error("boom"); }});
+  fillDefault(t.el);
+  await submit(t);
+  assert.equal(t.el.querySelector("[data-role=run]").hasAttribute("disabled"), false);
+  assert.equal(q(t.el, "amount").hasAttribute("disabled"), false);
+});
+
+test("a wallet change discards a pending summary", async () => {
+  const t = make();
+  fillDefault(t.el);
+  click(q(t.el, "run"));
+  assert.equal(q(t.el, "summary").hidden, false);
+  t.setSession({address: OTHER});
+  assert.equal(q(t.el, "summary").hidden, true);
+  assert.equal(q(t.el, "confirm"), null);
+  assert.equal(t.calls.length, 0);
+});
+
+test("confirming re-checks that a chosen start is still in the future", async () => {
+  const t = make();
+  fillDefault(t.el);
+  pick(q(t.el, "start-mode"), "at");
+  type(q(t.el, "start-at"), "2030-01-01T10:00");
+  click(q(t.el, "run"));
+  assert.equal(q(t.el, "summary").hidden, false);
+  // Minutes pass; the start is now behind us.
+  t.state.now = Date.UTC(2030, 0, 1, 10, 5);
+  click(q(t.el, "confirm"));
+  await t.ctl.pending;
+  assert.match(message(t.el), /start.*future/i);
+  assert.equal(q(t.el, "summary").hidden, true);
+  assert.equal(t.calls.length, 0);
 });

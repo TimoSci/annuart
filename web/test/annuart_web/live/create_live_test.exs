@@ -71,25 +71,85 @@ defmodule AnnuartWeb.CreateLiveTest do
     assert html =~ ~s(phx-update="ignore")
   end
 
-  test "tx:confirmed for createEnft navigates to the new ENFT", %{conn: conn} do
+  defp confirmed(view, token_id, extra \\ %{}) do
+    render_hook(
+      view,
+      "tx:confirmed",
+      Map.merge(
+        %{
+          "action" => "createEnft",
+          "label" => "mock",
+          "tokenId" => token_id,
+          "hash" => "0xabc123"
+        },
+        extra
+      )
+    )
+  end
+
+  test "tx:confirmed for createEnft navigates at once when the ENFT is indexed", %{conn: conn} do
+    mint(token_id: 3)
     {view, _} = connected(conn)
-
-    render_hook(view, "tx:confirmed", %{
-      "action" => "createEnft",
-      "label" => "mock",
-      "tokenId" => "3",
-      "hash" => "0xabc"
-    })
-
+    confirmed(view, "3")
     assert_redirect(view, ~p"/enft/mock/3")
   end
 
-  test "tx:confirmed with an unknown label or malformed token id stays on the page", %{conn: conn} do
+  test "tx:confirmed for an ENFT not yet indexed waits, then navigates on its broadcast", %{
+    conn: conn
+  } do
+    {view, _} = connected(conn)
+    html = confirmed(view, "3")
+    assert html =~ "Created. Waiting for it to appear…"
+    refute_redirected(view)
+
+    # Another ENFT appearing does not end the wait.
+    Phoenix.PubSub.broadcast(Annuart.PubSub, "enfts", {:enft_changed, "mock", 9})
+    _ = render(view)
+    refute_redirected(view)
+
+    mint(token_id: 3)
+    Phoenix.PubSub.broadcast(Annuart.PubSub, "enfts", {:enft_changed, "mock", 3})
+    assert_redirect(view, ~p"/enft/mock/3")
+  end
+
+  test "after the timeout it stops waiting and shows the hash and a link", %{conn: conn} do
+    Application.put_env(:annuart, :create_wait_ms, 20)
+    on_exit(fn -> Application.delete_env(:annuart, :create_wait_ms) end)
+    {view, _} = connected(conn)
+    confirmed(view, "3")
+    Process.sleep(80)
+    html = render(view)
+    assert html =~ "Your ENFT was created. It is taking longer than usual to appear."
+    assert html =~ "0xabc123"
+    assert html =~ ~s(href="/enft/mock/3")
+    refute html =~ "Waiting for it to appear"
+    refute_redirected(view)
+  end
+
+  test "tx:confirmed ignores unusable token ids without crashing", %{conn: conn} do
+    {view, _} = connected(conn)
+
+    for bad <- [%{"a" => 1}, [3], -3, "-3", "abc", "3.5", nil] do
+      confirmed(view, bad)
+    end
+
+    assert Process.alive?(view.pid)
+    refute render(view) =~ "Waiting for it to appear"
+    refute_redirected(view)
+  end
+
+  test "an integer token id is accepted", %{conn: conn} do
+    mint(token_id: 4)
+    {view, _} = connected(conn)
+    confirmed(view, 4)
+    assert_redirect(view, ~p"/enft/mock/4")
+  end
+
+  test "tx:confirmed with an unknown label or another action stays on the page", %{conn: conn} do
     {view, _} = connected(conn)
 
     for params <- [
           %{"action" => "createEnft", "label" => "nope", "tokenId" => "3", "hash" => "0x"},
-          %{"action" => "createEnft", "label" => "mock", "tokenId" => "3; drop", "hash" => "0x"},
           %{"action" => "donate", "label" => "mock", "tokenId" => "3", "hash" => "0x"},
           %{"amount" => "987654321"}
         ] do
@@ -101,17 +161,9 @@ defmodule AnnuartWeb.CreateLiveTest do
   end
 
   test "tx:confirmed ignores any other key", %{conn: conn} do
+    mint(token_id: 3)
     {view, _} = connected(conn)
-
-    render_hook(view, "tx:confirmed", %{
-      "action" => "createEnft",
-      "label" => "mock",
-      "tokenId" => "3",
-      "hash" => "0xabc",
-      "amount" => "987654321"
-    })
-
-    # The redirect is to exactly the ENFT; the extra key goes nowhere.
+    confirmed(view, "3", %{"amount" => "987654321"})
     assert_redirect(view, ~p"/enft/mock/3")
   end
 end

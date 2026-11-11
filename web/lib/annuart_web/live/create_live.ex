@@ -13,30 +13,83 @@ defmodule AnnuartWeb.CreateLive do
   use AnnuartWeb, :live_view
 
   alias Annuart.Chain.{Config, Reader}
+  alias Annuart.Enfts
   alias Annuart.Indexer
   alias AnnuartWeb.Layouts
 
   def mount(_params, _session, socket) do
-    {:ok, assign(socket, page_title: "Create an ENFT", tokens: tokens())}
+    {:ok, assign(socket, page_title: "Create an ENFT", tokens: tokens(), created: nil)}
   end
 
   # The browser reports a mined creation. Only these four public values are read
-  # from the event; anything else in it is ignored, never stored.
+  # from the event; anything else in it is ignored, never stored. The ENFT may
+  # not be indexed yet, so navigation waits until it is (see `arrived/3`).
   def handle_event(
         "tx:confirmed",
-        %{"action" => "createEnft", "label" => label, "tokenId" => token_id, "hash" => _},
+        %{"action" => "createEnft", "label" => label, "tokenId" => token_id, "hash" => hash},
         socket
-      ) do
+      )
+      when is_binary(label) and is_binary(hash) do
     with %Config.Contract{} <- Config.contract(label),
-         {id, ""} <- Integer.parse(to_string(token_id)) do
-      Indexer.sync_now()
-      {:noreply, push_navigate(socket, to: ~p"/enft/#{label}/#{id}")}
+         {:ok, id} <- token_id(token_id) do
+      if Enfts.get_enft(label, id) do
+        {:noreply, push_navigate(socket, to: ~p"/enft/#{label}/#{id}")}
+      else
+        if connected?(socket), do: Phoenix.PubSub.subscribe(Annuart.PubSub, "enfts")
+        Indexer.sync_now()
+        Process.send_after(self(), {:wait_timeout, label, id}, wait_ms())
+        {:noreply, assign(socket, created: %{label: label, id: id, hash: hash, timed_out: false})}
+      end
     else
       _ -> {:noreply, socket}
     end
   end
 
   def handle_event("tx:confirmed", _params, socket), do: {:noreply, socket}
+
+  def handle_info({:enft_changed, label, id}, socket), do: {:noreply, arrived(socket, label, id)}
+
+  def handle_info(:enfts_reset, socket) do
+    case socket.assigns.created do
+      %{label: label, id: id} -> {:noreply, arrived(socket, label, id)}
+      nil -> {:noreply, socket}
+    end
+  end
+
+  def handle_info({:wait_timeout, label, id}, socket) do
+    case socket.assigns.created do
+      %{label: ^label, id: ^id} = created ->
+        {:noreply, assign(socket, :created, %{created | timed_out: true})}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_info(_message, socket), do: {:noreply, socket}
+
+  defp arrived(socket, label, id) do
+    case socket.assigns.created do
+      %{label: ^label, id: ^id, timed_out: false} ->
+        if Enfts.get_enft(label, id),
+          do: push_navigate(socket, to: ~p"/enft/#{label}/#{id}"),
+          else: socket
+
+      _ ->
+        socket
+    end
+  end
+
+  # A token id is a non-negative integer, given as an integer or decimal string.
+  defp token_id(id) when is_integer(id) and id >= 0, do: {:ok, id}
+
+  defp token_id(id) when is_binary(id) do
+    if Regex.match?(~r/\A\d+\z/, id), do: {:ok, String.to_integer(id)}, else: :error
+  end
+
+  defp token_id(_), do: :error
+
+  defp wait_ms, do: Application.get_env(:annuart, :create_wait_ms, 20_000)
 
   # Symbol and decimals of each configured token, for the hook to parse and show
   # amounts with. `nil` when the chain cannot be read; the hook then refuses.
@@ -57,6 +110,12 @@ defmodule AnnuartWeb.CreateLive do
     <Layouts.app flash={@flash} current={:create}>
       <h1>Create an ENFT</h1>
       <p :if={@address == nil}>Connect a wallet to create an ENFT.</p>
+      <p :if={@created && !@created.timed_out} class="note">Created. Waiting for it to appear…</p>
+      <p :if={@created && @created.timed_out} class="note">
+        Your ENFT was created. It is taking longer than usual to appear.
+        Transaction {@created.hash}.
+        <.link navigate={~p"/enft/#{@created.label}/#{@created.id}"}>Open the ENFT page</.link>
+      </p>
       <p :if={@address != nil and @tokens == []}>No ENFT contracts are configured.</p>
 
       <form

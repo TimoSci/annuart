@@ -10,7 +10,7 @@ import {
   ScheduleError, U64_MAX,
 } from "../units.js";
 import {explainAmount} from "../errors.js";
-import {current, chainInfo} from "../chain/signer.js";
+import {current, onChange, chainInfo} from "../chain/signer.js";
 import {createEnft} from "../chain/actions.js";
 import {StepList} from "./tx_action.js";
 
@@ -68,6 +68,7 @@ export class CreateFormController {
     this.running = false;
     this.ready = null;
     this.pending = null;
+    this.locked = false;
 
     this.steps = new StepList(el.querySelector("ol.steps"));
     this.echo = this.doc.createElement("span");
@@ -83,7 +84,7 @@ export class CreateFormController {
     };
     this.onClick = event => {
       const button = event.target.closest?.("button[data-role]");
-      if (!button || !this.el.contains(button) || button.disabled) return;
+      if (!button || !this.el.contains(button) || button.disabled || button.hasAttribute("disabled")) return;
       switch (button.dataset.role) {
         case "add-period": this.addRow(); this.edited(); break;
         case "remove-period": button.closest("[data-role=period]").remove(); this.syncRows(); this.edited(); break;
@@ -98,6 +99,9 @@ export class CreateFormController {
     el.addEventListener("click", this.onClick);
     el.addEventListener("submit", this.onSubmit);
 
+    // A different wallet makes a summary naming the old one untrue.
+    this.unsubscribe = deps.onSession?.(() => this.cancel());
+
     setHidden(this.role("start-at"), true);
     setHidden(this.role("recipient"), true);
     setHidden(this.role("summary"), true);
@@ -106,6 +110,7 @@ export class CreateFormController {
   }
 
   destroy() {
+    this.unsubscribe?.();
     for (const [name, fn] of [["input", this.onChange], ["change", this.onChange], ["click", this.onClick], ["submit", this.onSubmit]]) {
       this.el.removeEventListener(name, fn);
     }
@@ -423,7 +428,7 @@ export class CreateFormController {
   }
 
   async attempt() {
-    if (this.running) return;
+    if (this.running || this.locked) return;
     this.say("");
     this.cancel();
     let checked;
@@ -459,8 +464,13 @@ export class CreateFormController {
 
   confirm() {
     const ready = this.ready;
-    if (!ready || this.running) return;
+    if (!ready || this.running || this.locked) return;
     this.cancel();
+    // The summary may have waited a while: a chosen start must still be ahead.
+    if (ready.args.start !== 0n && ready.args.start <= BigInt(Math.floor(this.deps.now() / 1000))) {
+      this.say("The start must be in the future.");
+      return;
+    }
     this.pending = this.execute(ready);
     return this.pending;
   }
@@ -475,6 +485,7 @@ export class CreateFormController {
       const result = await this.deps.createEnft(session, contract, args, (id, state, detail) => this.steps.report(id, state, detail));
       this.deps.push("tx:confirmed", {action: "createEnft", label, tokenId: String(result.tokenId), hash: result.hash});
       this.deps.announce();
+      this.lock();
     } catch (err) {
       this.steps.fail(err);
     } finally {
@@ -483,9 +494,16 @@ export class CreateFormController {
     }
   }
 
+  // After a create the form stays as it is, so the same ENFT cannot be locked twice.
+  lock() {
+    this.locked = true;
+    for (const node of this.el.querySelectorAll("input, select, button")) node.setAttribute("disabled", "");
+    this.say("Created. Opening your ENFT…");
+  }
+
   setBusy(busy) {
     const button = this.role("run");
-    if (button) button.disabled = busy;
+    if (button && !this.locked) button.disabled = busy;
   }
 }
 
@@ -494,6 +512,7 @@ export const CreateForm = {
     this.controller = new CreateFormController(this.el, {
       push: (name, payload) => this.pushEvent(name, payload),
       session: current,
+      onSession: onChange,
       contract: label => chainInfo().contracts.find(c => c.label === label),
       createEnft,
       announce: () => window.dispatchEvent(new CustomEvent("annuart:tx")),
