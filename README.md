@@ -207,33 +207,73 @@ FHEVM mock.
 ### Deploy
 
 ```bash
-# Local: start a node, then deploy (writes deployments/local.json)
+# Local: start a node, then deploy
 npx hardhat node                                        # terminal 1
-npx hardhat run scripts/deploy.ts --network localhost   # terminal 2
+npx hardhat run scripts/deploy.ts --network localhost   # terminal 2 (mock token)
+TOKEN_KIND=wrapped npx hardhat run scripts/deploy.ts --network localhost
 
-# Sepolia (set a real confidential token to skip the dev mock)
-export SEPOLIA_RPC_URL=...  PRIVATE_KEY=0x...  TOKEN_ADDRESS=0x...
-npx hardhat run scripts/deploy.ts --network sepolia
+# Sepolia
+export SEPOLIA_RPC_URL=...  PRIVATE_KEY=0x...
+TOKEN_KIND=wrapped WETH_ADDRESS=0x... npx hardhat run scripts/deploy.ts --network sepolia
+TOKEN_KIND=plain TOKEN_ADDRESS=0x... LABEL=mytoken npx hardhat run scripts/deploy.ts --network sepolia
 ```
 
-If `TOKEN_ADDRESS` is unset, the deploy uses `MockConfidentialToken` (dev only — its
-constructor reverts on mainnet/BSC/HyperEVM).
+Environment variables:
+
+- `TOKEN_KIND`: `mock` (default, `MockConfidentialToken`, dev only: its constructor reverts on
+  mainnet/BSC/HyperEVM), `wrapped` (`ConfidentialWETH` wrapping a WETH) or `plain` (an existing ERC7984).
+- `LABEL`: the entry name in the deployment file (default: the token kind). Deploying again
+  with the same label replaces that entry.
+- `WETH_ADDRESS`: the WETH to wrap for `wrapped`. Required except on `localhost`/`hardhat`,
+  where a `MockWETH` is deployed when it is unset.
+- `TOKEN_ADDRESS`: required for `plain`.
+
+Each deploy writes `deployments/<network>.json` (git-ignored), keyed by Hardhat's network name:
+
+```json
+{
+  "chainId": 31337,
+  "contracts": [
+    {
+      "label": "mock",
+      "nft": "0x...",
+      "token": "0x...",
+      "tokenKind": "mock",
+      "underlying": null,
+      "deployBlock": 3
+    }
+  ]
+}
+```
+
+`tokenKind` is `mock`, `wrapped` or `plain`; `underlying` is the WETH address for `wrapped`,
+otherwise `null`; `deployBlock` is the block the EndowmentNFT was deployed in.
 
 ### Interaction tasks
 
-Addresses are read from `deployments/local.json` (override with `--nft`/`--token`).
-Add `--network localhost` or `--network sepolia` as appropriate.
+Addresses are read from `deployments/<network>.json` (the first entry, or the one chosen with
+`--label`; `--nft`/`--token` override). Add `--network localhost` or `--network sepolia`.
+`task:mint` only mints test tokens for a `mock` deployment and fails with a clear message otherwise.
 
 ```bash
 npx hardhat task:mint --amount 1000000 --topups true   # mint a new endowment NFT
 npx hardhat task:accrue --id 1                          # advance accrual (anyone)
 npx hardhat task:distribution --id 1                    # decrypt your claimable balance
 npx hardhat task:claim --id 1                           # claim (owner only)
-npx hardhat task:info --id 1                            # owner, mode, distribution handle
+npx hardhat task:info --id 1                            # owner, mode, schedule, settled, distribution handle
+npx hardhat task:info --id 1 --label wrapped            # use another deployment
 ```
 
 The endowment balance is deliberately **not** decryptable — there is no task for it,
 and any attempt to user-decrypt the endowment handle is rejected by the FHEVM ACL.
+
+### Behaviour
+
+- At the end of a fixed schedule, the first accrual releases the whole leftover endowment to
+  the owner's claimable distribution and marks the token settled.
+- Top-ups are rejected after that end.
+- A final segment with `duration = 2^64 - 1` is indefinite and must have a non-zero rate.
+- cWETH has 9 decimals.
 
 For ad-hoc exploration, `npx hardhat console --network localhost` exposes `ethers` and
 `fhevm` (the encrypt/decrypt helpers).

@@ -1,26 +1,39 @@
 import { task } from "hardhat/config";
 import { FhevmType } from "@fhevm/hardhat-plugin";
-import { readFileSync } from "fs";
+import type { HardhatRuntimeEnvironment } from "hardhat/types";
+import { findDeployment } from "./deployments";
 
-function loadDeployment(): { token: string; nft: string } {
-  try {
-    return JSON.parse(readFileSync("deployments/local.json", "utf8"));
-  } catch {
-    return { token: "", nft: "" };
-  }
+const U64_MAX = (1n << 64n) - 1n;
+
+// The deployment for the active network (by --label, else the first entry); --nft/--token override it.
+function loadDeployment(hre: HardhatRuntimeEnvironment, label?: string) {
+  const d = findDeployment(hre.network.name, label);
+  return {
+    nft: d?.nft ?? "",
+    token: d?.token ?? "",
+    tokenKind: d?.tokenKind,
+  };
 }
+
+const LABEL_DESC = "Deployment label in deployments/<network>.json (defaults to the first entry)";
 
 task("task:mint", "Mint an endowment NFT funded with a secret endowment")
   .addParam("amount", "Endowment amount in base units")
   .addOptionalParam("topups", "Allow top-ups: true/false", "false")
-  .addOptionalParam("nft", "EndowmentNFT address (defaults to deployments/local.json)")
-  .addOptionalParam("token", "Confidential token address (defaults to deployments/local.json)")
+  .addOptionalParam("label", LABEL_DESC)
+  .addOptionalParam("nft", "EndowmentNFT address (defaults to the deployment file)")
+  .addOptionalParam("token", "Confidential token address (defaults to the deployment file)")
   .setAction(async (args, hre) => {
     const { ethers, fhevm } = hre;
     await fhevm.initializeCLIApi();
-    const dep = loadDeployment();
+    const dep = loadDeployment(hre, args.label);
     const nftAddr: string = args.nft || dep.nft;
     const tokenAddr: string = args.token || dep.token;
+    if (!args.token && dep.tokenKind !== "mock") {
+      throw new Error(
+        `task:mint only mints test tokens for a mock token; this deployment's token is "${dep.tokenKind}" (not a mock token). Fund your account with the token yourself, or pass --label for a mock deployment.`,
+      );
+    }
     const [signer] = await ethers.getSigners();
     const amount = BigInt(args.amount);
     const topups = String(args.topups) === "true";
@@ -55,10 +68,11 @@ task("task:mint", "Mint an endowment NFT funded with a secret endowment")
 
 task("task:accrue", "Advance a token's distribution accrual (anyone may call)")
   .addParam("id", "tokenId")
+  .addOptionalParam("label", LABEL_DESC)
   .addOptionalParam("nft", "EndowmentNFT address")
   .setAction(async (args, hre) => {
     const { ethers } = hre;
-    const dep = loadDeployment();
+    const dep = loadDeployment(hre, args.label);
     const nft = await ethers.getContractAt("EndowmentNFT", args.nft || dep.nft);
     await (await nft.accrue(BigInt(args.id))).wait();
     console.log(`Accrued tokenId=${args.id}`);
@@ -66,11 +80,12 @@ task("task:accrue", "Advance a token's distribution accrual (anyone may call)")
 
 task("task:claim", "Claim the accrued distribution (owner only)")
   .addParam("id", "tokenId")
+  .addOptionalParam("label", LABEL_DESC)
   .addOptionalParam("nft", "EndowmentNFT address")
   .setAction(async (args, hre) => {
     const { ethers } = hre;
     const [signer] = await ethers.getSigners();
-    const dep = loadDeployment();
+    const dep = loadDeployment(hre, args.label);
     const nft = await ethers.getContractAt("EndowmentNFT", args.nft || dep.nft, signer);
     await (await nft.claim(BigInt(args.id))).wait();
     console.log(`Claimed tokenId=${args.id} to ${signer.address}`);
@@ -78,12 +93,13 @@ task("task:claim", "Claim the accrued distribution (owner only)")
 
 task("task:distribution", "Decrypt and print the distribution balance (owner only)")
   .addParam("id", "tokenId")
+  .addOptionalParam("label", LABEL_DESC)
   .addOptionalParam("nft", "EndowmentNFT address")
   .setAction(async (args, hre) => {
     const { ethers, fhevm } = hre;
     await fhevm.initializeCLIApi();
     const [signer] = await ethers.getSigners();
-    const dep = loadDeployment();
+    const dep = loadDeployment(hre, args.label);
     const nftAddr: string = args.nft || dep.nft;
     const nft = await ethers.getContractAt("EndowmentNFT", nftAddr, signer);
     const handle = await nft.distributionHandle(BigInt(args.id));
@@ -93,14 +109,26 @@ task("task:distribution", "Decrypt and print the distribution balance (owner onl
 
 task("task:info", "Print public info for a token")
   .addParam("id", "tokenId")
+  .addOptionalParam("label", LABEL_DESC)
   .addOptionalParam("nft", "EndowmentNFT address")
   .setAction(async (args, hre) => {
     const { ethers } = hre;
-    const dep = loadDeployment();
+    const dep = loadDeployment(hre, args.label);
     const nft = await ethers.getContractAt("EndowmentNFT", args.nft || dep.nft);
     const id = BigInt(args.id);
     console.log(`owner      = ${await nft.ownerOf(id)}`);
     console.log(`topUps     = ${await nft.topUpsAllowedOf(id)}`);
+    const schedule = await nft.scheduleOf(id);
+    console.log("schedule   =");
+    schedule.forEach((seg: { duration: bigint; ratePerSec: bigint }, i: number) => {
+      const dur = seg.duration === U64_MAX ? "indefinite" : `${seg.duration}s`;
+      console.log(`  [${i}] duration=${dur} ratePerSec=${seg.ratePerSec}`);
+    });
+    console.log(`start      = ${await nft.scheduleStartOf(id)}`);
+    const end = await nft.scheduleEndOf(id);
+    console.log(`end        = ${end === U64_MAX ? "indefinite" : end}`);
+    console.log(`lastAccrue = ${await nft.lastAccrualAtOf(id)}`);
+    console.log(`settled    = ${await nft.settledOf(id)}`);
     console.log(`distHandle = ${await nft.distributionHandle(id)}`);
     console.log("(endowment balance is intentionally not decryptable by the owner)");
   });

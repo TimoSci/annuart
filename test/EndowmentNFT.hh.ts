@@ -43,6 +43,21 @@ describe("EndowmentNFT (Hardhat + fhevm mock)", function () {
     const scheduleStart = BigInt((await ethers.provider.getBlock(mintRcpt!.blockNumber))!.timestamp);
     const tokenId = 1n;
 
+    const minted = mintRcpt!.logs
+      .map((l: { topics: ReadonlyArray<string>; data: string }) => {
+        try {
+          return nft.interface.parseLog(l);
+        } catch {
+          return null;
+        }
+      })
+      .find((e: { name: string } | null) => e?.name === "EndowmentMinted");
+    expect(minted, "EndowmentMinted event").to.not.equal(undefined);
+    expect(minted!.args.tokenId).to.equal(tokenId);
+    expect(minted!.args.creator).to.equal(deployer.address);
+    expect(minted!.args.to).to.equal(deployer.address);
+    expect(minted!.args.topUpsAllowed).to.equal(false);
+
     // Advance ~100s, accrue, and confirm the owner can decrypt the scheduled amount
     // (capped by the endowment), computed from the accrual block's timestamp.
     await time.increase(100);
@@ -61,5 +76,31 @@ describe("EndowmentNFT (Hardhat + fhevm mock)", function () {
     const balHandle = await token.confidentialBalanceOf(deployer.address);
     const bal = await fhevm.userDecryptEuint(FhevmType.euint64, balHandle, tokenAddr, deployer);
     expect(bal).to.equal(expectedBal);
+  });
+
+  it("releases the leftover at schedule end", async function () {
+    const [deployer] = await ethers.getSigners();
+
+    const token = await (await ethers.getContractFactory("MockConfidentialToken")).deploy();
+    await token.waitForDeployment();
+    const tokenAddr = await token.getAddress();
+    const nft = await (await ethers.getContractFactory("EndowmentNFT")).deploy(tokenAddr);
+    await nft.waitForDeployment();
+    const nftAddr = await nft.getAddress();
+
+    await (await token.mint(deployer.address, 2000)).wait();
+    await (await token.setOperator(nftAddr, (await time.latest()) + 365 * 24 * 3600)).wait();
+
+    const enc = await fhevm.createEncryptedInput(nftAddr, deployer.address).add64(2000).encrypt();
+    const segments = [{ duration: 1000, ratePerSec: 1 }]; // schedules 1000 of the 2000
+    await (await nft.mint(deployer.address, enc.handles[0], enc.inputProof, segments, 0, false)).wait();
+
+    await time.increase(1001);
+    await (await nft.claim(1n)).wait();
+
+    const balHandle = await token.confidentialBalanceOf(deployer.address);
+    const bal = await fhevm.userDecryptEuint(FhevmType.euint64, balHandle, tokenAddr, deployer);
+    expect(bal).to.equal(2000n);
+    expect(await nft.settledOf(1n)).to.equal(true);
   });
 });
