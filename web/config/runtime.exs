@@ -30,6 +30,32 @@ config :annuart,
   deployments_path:
     Path.expand(System.get_env("ANNUART_DEPLOYMENTS") || "../deployments/localhost.json")
 
+# Optional indexer and page settings. A value that is not a whole number (or is
+# below its minimum) is ignored with a warning, leaving the default in force.
+parse_int = fn name, min ->
+  with raw when is_binary(raw) <- System.get_env(name),
+       {n, ""} when n >= min <- Integer.parse(String.trim(raw)) do
+    n
+  else
+    nil ->
+      nil
+
+    _ ->
+      require Logger
+      Logger.warning("ignoring #{name}: expected a whole number of at least #{min}")
+      nil
+  end
+end
+
+for {key, value} <- [
+      public_rpc_url: System.get_env("ANNUART_PUBLIC_RPC_URL"),
+      indexer_confirmations: parse_int.("ANNUART_CONFIRMATIONS", 0),
+      indexer_chunk: parse_int.("ANNUART_LOG_CHUNK", 1)
+    ],
+    value != nil do
+  config :annuart, [{key, value}]
+end
+
 if config_env() == :prod do
   database_path =
     System.get_env("DATABASE_PATH") ||

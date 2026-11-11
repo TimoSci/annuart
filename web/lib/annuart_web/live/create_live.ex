@@ -91,7 +91,7 @@ defmodule AnnuartWeb.CreateLive do
 
   defp token_id(_), do: :error
 
-  defp wait_ms, do: Application.get_env(:annuart, :create_wait_ms, 20_000)
+  defp wait_ms, do: Application.get_env(:annuart, :create_wait_ms) || Config.index_wait_ms()
 
   # Symbol and decimals of each configured token, for the hook to parse and show
   # amounts with. `nil` when the chain cannot be read; the hook then refuses.

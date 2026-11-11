@@ -55,4 +55,72 @@ defmodule Annuart.Chain.ReaderTest do
 
     assert Reader.token_meta(@token) == {:ok, %{symbol: "MOCK", decimals: 6}}
   end
+
+  describe "token_meta cache" do
+    @token2 "0x00000000000000000000000000000000000000cc"
+
+    setup do
+      previous = Application.fetch_env(:annuart, :cache_token_meta)
+      previous_chain = Application.fetch_env(:annuart, :chain)
+      Application.put_env(:annuart, :cache_token_meta, true)
+      Application.put_env(:annuart, :chain, chain_id: 1, rpc_url: "x", contracts: [])
+      clear_cache()
+
+      on_exit(fn ->
+        clear_cache()
+
+        for {k, v} <- [cache_token_meta: previous, chain: previous_chain] do
+          case v do
+            {:ok, val} -> Application.put_env(:annuart, k, val)
+            :error -> Application.delete_env(:annuart, k)
+          end
+        end
+      end)
+    end
+
+    defp clear_cache do
+      for {{Annuart.Chain.Reader, :token_meta, _, _} = key, _} <- :persistent_term.get(),
+          do: :persistent_term.erase(key)
+    end
+
+    defp seed_meta(token) do
+      symbol =
+        "0x" <>
+          word(32) <> word(4) <> Base.encode16("MOCK", case: :lower) <> String.duplicate("0", 56)
+
+      RpcStub.put_call(token, Abi.encode_call(:symbol, []), {:ok, symbol})
+      RpcStub.put_call(token, Abi.encode_call(:decimals, []), {:ok, "0x" <> word(6)})
+    end
+
+    defp calls_to(token), do: Enum.count(RpcStub.eth_calls(), fn {to, _} -> to == token end)
+
+    test "two calls for one token read the chain once" do
+      seed_meta(@token)
+      assert {:ok, %{symbol: "MOCK", decimals: 6}} = Reader.token_meta(@token)
+      assert {:ok, %{symbol: "MOCK", decimals: 6}} = Reader.token_meta(@token)
+
+      calls = RpcStub.eth_calls()
+      assert Enum.count(calls, &(&1 == {@token, Abi.encode_call(:symbol, [])})) == 1
+      assert Enum.count(calls, &(&1 == {@token, Abi.encode_call(:decimals, [])})) == 1
+    end
+
+    test "an error is not cached" do
+      assert {:error, _} = Reader.token_meta(@token2)
+      first = calls_to(@token2)
+
+      seed_meta(@token2)
+      assert {:ok, %{decimals: 6}} = Reader.token_meta(@token2)
+      assert calls_to(@token2) > first
+    end
+
+    test "a different chain id does not share the entry" do
+      seed_meta(@token)
+      assert {:ok, _} = Reader.token_meta(@token)
+      before = calls_to(@token)
+
+      Application.put_env(:annuart, :chain, chain_id: 2, rpc_url: "x", contracts: [])
+      assert {:ok, _} = Reader.token_meta(@token)
+      assert calls_to(@token) == before * 2
+    end
+  end
 end

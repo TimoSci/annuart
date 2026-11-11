@@ -67,6 +67,84 @@ defmodule Annuart.Chain.ConfigTest do
     assert {:error, :invalid} = Config.load(path)
   end
 
+  describe "what the page publishes" do
+    @env_keys [:chain, :public_rpc_url, :indexer_confirmations, :indexer_chunk]
+
+    setup do
+      previous = for k <- @env_keys, do: {k, Application.fetch_env(:annuart, k)}
+
+      for k <- [:public_rpc_url, :indexer_confirmations, :indexer_chunk],
+          do: Application.delete_env(:annuart, k)
+
+      on_exit(fn ->
+        for {k, v} <- previous do
+          case v do
+            {:ok, val} -> Application.put_env(:annuart, k, val)
+            :error -> Application.delete_env(:annuart, k)
+          end
+        end
+      end)
+    end
+
+    defp put_chain(opts) do
+      Application.put_env(
+        :annuart,
+        :chain,
+        Keyword.merge([rpc_url: "http://127.0.0.1:8545", contracts: []], opts)
+      )
+    end
+
+    test "public/0 hides the server RPC URL off the local chain" do
+      put_chain(chain_id: 11_155_111, rpc_url: "https://rpc.example/v3/SECRET", contracts: [])
+      assert Config.public().rpcUrl == nil
+      refute Jason.encode!(Config.public()) =~ "SECRET"
+    end
+
+    test "public/0 publishes the RPC URL on chain 31337" do
+      put_chain(chain_id: 31_337, rpc_url: "http://127.0.0.1:8545", contracts: [])
+      assert Config.public().rpcUrl == "http://127.0.0.1:8545"
+    end
+
+    test "public/0 prefers an explicit public RPC URL" do
+      put_chain(chain_id: 11_155_111, rpc_url: "https://rpc.example/v3/SECRET", contracts: [])
+      Application.put_env(:annuart, :public_rpc_url, "https://public.example")
+      assert Config.public().rpcUrl == "https://public.example"
+    end
+
+    test "a blank public RPC URL counts as unset" do
+      put_chain(chain_id: 11_155_111, rpc_url: "https://rpc.example/v3/SECRET", contracts: [])
+      Application.put_env(:annuart, :public_rpc_url, "  ")
+      assert Config.public_rpc_url() == nil
+      assert Config.public().rpcUrl == nil
+    end
+
+    test "confirmations default to 0 locally and 2 elsewhere, and can be set" do
+      put_chain(chain_id: 31_337, contracts: [])
+      assert Config.confirmations() == 0
+      put_chain(chain_id: 0, contracts: [])
+      assert Config.confirmations() == 0
+      put_chain(chain_id: 11_155_111, contracts: [])
+      assert Config.confirmations() == 2
+      Application.put_env(:annuart, :indexer_confirmations, 5)
+      assert Config.confirmations() == 5
+      assert Config.index_wait_ms() == 95_000
+    end
+
+    test "a bad confirmations setting falls back to the default" do
+      put_chain(chain_id: 11_155_111, contracts: [])
+      Application.put_env(:annuart, :indexer_confirmations, -1)
+      assert Config.confirmations() == 2
+      Application.put_env(:annuart, :indexer_confirmations, "3")
+      assert Config.confirmations() == 2
+    end
+
+    test "log_chunk defaults to 2000 and can be set" do
+      assert Config.log_chunk() == 2_000
+      Application.put_env(:annuart, :indexer_chunk, 10)
+      assert Config.log_chunk() == 10
+    end
+  end
+
   describe "init/0" do
     setup do
       previous =

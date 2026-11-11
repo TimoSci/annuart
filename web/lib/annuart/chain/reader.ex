@@ -4,7 +4,7 @@ defmodule Annuart.Chain.Reader do
   contract's ACL does not allow, in which case the call reverts (or the
   function does not exist) and `schedule/2` returns `{:error, :hidden}`.
   """
-  alias Annuart.Chain.Abi
+  alias Annuart.Chain.{Abi, Config}
 
   @spec schedule(String.t(), integer) ::
           {:ok, [%{duration: integer, rate_per_sec: integer}]} | {:error, :hidden | term}
@@ -26,6 +26,27 @@ defmodule Annuart.Chain.Reader do
 
   @spec token_meta(String.t()) :: {:ok, %{symbol: String.t(), decimals: integer}} | {:error, term}
   def token_meta(token) do
+    if Application.get_env(:annuart, :cache_token_meta, true) do
+      key = {__MODULE__, :token_meta, Config.chain_id(), String.downcase(token)}
+
+      case :persistent_term.get(key, nil) do
+        nil ->
+          with {:ok, meta} = ok <- read_token_meta(token) do
+            :persistent_term.put(key, meta)
+            ok
+          end
+
+        meta ->
+          {:ok, meta}
+      end
+    else
+      read_token_meta(token)
+    end
+  end
+
+  # A token's symbol and decimals do not change, so only successes are cached
+  # (a failed read may be a node hiccup).
+  defp read_token_meta(token) do
     with {:ok, symbol} <- read(token, :symbol, []),
          {:ok, decimals} <- read(token, :decimals, []) do
       {:ok, %{symbol: symbol, decimals: decimals}}

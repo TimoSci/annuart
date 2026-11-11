@@ -6,7 +6,17 @@ defmodule Annuart.RpcStub do
   """
   use Agent
 
-  @empty %{logs: [], calls: %{}, blocks: %{}, head: 0, code: %{}, errors: %{}, log_queries: []}
+  @empty %{
+    logs: [],
+    calls: %{},
+    blocks: %{},
+    head: 0,
+    code: %{},
+    errors: %{},
+    log_queries: [],
+    log_errors: %{},
+    call_log: []
+  }
 
   def start_link(_ \\ []), do: Agent.start_link(fn -> @empty end, name: __MODULE__)
 
@@ -32,10 +42,18 @@ defmodule Annuart.RpcStub do
   @doc "Makes the named stub function (`:block_number`, `:block`, `:get_logs`, `:get_code`) return `{:error, reason}`."
   def put_error(fun, reason), do: update(&put_in(&1.errors[fun], reason))
 
+  @doc "Makes `get_logs/1` return `{:error, reason}` for queries starting at `from_block`."
+  def put_log_error(from_block, reason), do: update(&put_in(&1.log_errors[from_block], reason))
+
+  def clear_log_errors, do: update(&Map.put(&1, :log_errors, %{}))
+
   def clear_error(fun), do: update(&Map.update!(&1, :errors, fn e -> Map.delete(e, fun) end))
 
   @doc "`{from_block, to_block}` of every `get_logs/1` call, oldest first."
   def log_queries, do: get(&Enum.reverse(&1.log_queries))
+
+  @doc "`{to, data}` of every `eth_call/2`, oldest first."
+  def eth_calls, do: get(&Enum.reverse(&1.call_log))
 
   def put_head(number), do: update(&Map.put(&1, :head, number))
   def put_code(address, code), do: update(&put_in(&1.code[String.downcase(address)], code))
@@ -60,7 +78,13 @@ defmodule Annuart.RpcStub do
 
   def get_logs(%{from_block: from, to_block: to} = filter) do
     update(&Map.update!(&1, :log_queries, fn q -> [{from, to} | q] end))
-    failing(:get_logs, fn -> do_get_logs(filter) end)
+
+    failing(:get_logs, fn ->
+      case get(&Map.get(&1.log_errors, from)) do
+        nil -> do_get_logs(filter)
+        reason -> {:error, reason}
+      end
+    end)
   end
 
   defp do_get_logs(%{from_block: from, to_block: to} = filter) do
@@ -80,6 +104,8 @@ defmodule Annuart.RpcStub do
   end
 
   def eth_call(to, data) do
+    update(&Map.update!(&1, :call_log, fn l -> [{String.downcase(to), data} | l] end))
+
     case get(&Map.fetch(&1.calls, {String.downcase(to), data})) do
       {:ok, result} -> result
       :error -> {:error, {:revert, "0x"}}

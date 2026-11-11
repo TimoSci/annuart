@@ -121,6 +121,47 @@ defmodule Annuart.Chain.Config do
   @spec rpc_url() :: String.t()
   def rpc_url, do: Keyword.get(chain_env(), :rpc_url, @default_rpc_url)
 
+  @local_chain 31_337
+  @default_log_chunk 2_000
+
+  @doc """
+  RPC URL the browser may use, from `ANNUART_PUBLIC_RPC_URL`; `nil` when unset
+  or blank. The server's own URL usually carries a provider key and is never
+  published through this function.
+  """
+  @spec public_rpc_url() :: String.t() | nil
+  def public_rpc_url do
+    case Application.get_env(:annuart, :public_rpc_url) do
+      url when is_binary(url) -> if String.trim(url) == "", do: nil, else: String.trim(url)
+      _ -> nil
+    end
+  end
+
+  @doc """
+  Blocks the indexer stays behind the head. Defaults to 0 on the local chain
+  (and when no chain is configured) and 2 elsewhere, where short reorgs happen.
+  """
+  @spec confirmations() :: non_neg_integer
+  def confirmations do
+    case Application.get_env(:annuart, :indexer_confirmations) do
+      n when is_integer(n) and n >= 0 -> n
+      _ -> if chain_id() in [@local_chain, @no_chain_id], do: 0, else: 2
+    end
+  end
+
+  @doc "Most blocks asked of the node in one `eth_getLogs` call."
+  @spec log_chunk() :: pos_integer
+  def log_chunk do
+    case Application.get_env(:annuart, :indexer_chunk) do
+      n when is_integer(n) and n >= 1 -> n
+      _ -> @default_log_chunk
+    end
+  end
+
+  @doc "How long a creator waits for the indexer to show a new ENFT, in milliseconds."
+  @spec index_wait_ms() :: pos_integer
+  def index_wait_ms, do: 20_000 + confirmations() * 15_000
+
   @doc """
   Loads the deployment file named by the `:deployments_path` and `:rpc_url`
   application env (set in `runtime.exs`) into the `:chain` env. Called once at
@@ -158,7 +199,7 @@ defmodule Annuart.Chain.Config do
   def public do
     %{
       chainId: chain_id(),
-      rpcUrl: rpc_url(),
+      rpcUrl: browser_rpc_url(),
       contracts:
         Enum.map(contracts(), fn c ->
           %{
@@ -171,6 +212,16 @@ defmodule Annuart.Chain.Config do
           }
         end)
     }
+  end
+
+  # The server URL only reaches the page on the local chain, where it is
+  # a loopback address and carries no key.
+  defp browser_rpc_url do
+    cond do
+      url = public_rpc_url() -> url
+      chain_id() == @local_chain -> rpc_url()
+      true -> nil
+    end
   end
 
   defp chain_env, do: Application.get_env(:annuart, :chain, [])

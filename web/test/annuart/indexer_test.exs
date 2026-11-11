@@ -369,4 +369,104 @@ defmodule Annuart.IndexerTest do
     for id <- [3, 4, 5], do: assert(Enfts.get_enft("mock", id) == nil)
     assert Enfts.cursor(@nft).last_block == 20
   end
+
+  describe "confirmation depth" do
+    setup do
+      previous = Application.fetch_env(:annuart, :indexer_confirmations)
+      Application.put_env(:annuart, :indexer_confirmations, 2)
+
+      on_exit(fn ->
+        case previous do
+          {:ok, v} -> Application.put_env(:annuart, :indexer_confirmations, v)
+          :error -> Application.delete_env(:annuart, :indexer_confirmations)
+        end
+      end)
+    end
+
+    test "stays confirmations blocks behind the head" do
+      put_contracts([contract("mock", @nft, 90)])
+      put_blocks(90..101)
+      RpcStub.put_head(100)
+      put_schedule(@nft, 1, [{1000, 1}])
+      RpcStub.put_logs([mint_log(@nft, 1, @alice, 99, 0)])
+
+      Indexer.sync_once()
+
+      assert Enum.all?(RpcStub.log_queries(), fn {_from, to} -> to <= 98 end)
+      assert Enfts.cursor(@nft).last_block == 98
+      assert Enfts.get_enft("mock", 1) == nil
+
+      RpcStub.put_head(101)
+      Indexer.sync_once()
+
+      assert Enfts.cursor(@nft).last_block == 99
+      assert Enfts.get_enft("mock", 1)
+    end
+
+    test "does nothing while the head is within the confirmation depth of the deploy block" do
+      put_contracts([contract("mock", @nft, 90)])
+      put_blocks(90..91)
+      RpcStub.put_head(91)
+
+      log = capture_log(fn -> Indexer.sync_once() end)
+
+      assert log == ""
+      assert RpcStub.log_queries() == []
+      assert Enfts.cursor(@nft) == nil
+    end
+  end
+
+  describe "log chunks" do
+    setup do
+      previous = Application.fetch_env(:annuart, :indexer_chunk)
+      Application.put_env(:annuart, :indexer_chunk, 10)
+
+      on_exit(fn ->
+        case previous do
+          {:ok, v} -> Application.put_env(:annuart, :indexer_chunk, v)
+          :error -> Application.delete_env(:annuart, :indexer_chunk)
+        end
+      end)
+    end
+
+    test "reads logs in chunks of the configured size" do
+      put_contracts([contract("mock", @nft, 90)])
+      put_blocks(90..115)
+      RpcStub.put_head(115)
+
+      Indexer.sync_once()
+
+      assert RpcStub.log_queries() == [{90, 99}, {100, 109}, {110, 115}]
+    end
+
+    test "a refused log query keeps the cursor and is retried" do
+      put_contracts([contract("mock", @nft, 90)])
+      put_blocks(90..115)
+      RpcStub.put_head(115)
+      RpcStub.put_log_error(100, {:http, 429})
+
+      log = capture_log(fn -> assert :ok = Indexer.sync_once() end)
+
+      assert log =~ "429"
+      assert Enfts.cursor(@nft).last_block == 99
+
+      RpcStub.clear_log_errors()
+      assert :ok = Indexer.sync_once()
+      assert Enfts.cursor(@nft).last_block == 115
+    end
+  end
+
+  test "with no contracts configured the stored rows are left alone" do
+    seed_basic()
+    Indexer.sync_once()
+    assert Enfts.get_enft("mock", 1)
+
+    put_contracts([])
+    Phoenix.PubSub.subscribe(Annuart.PubSub, "enfts")
+    assert :ok = Indexer.sync_once()
+
+    assert [%{token_id: 1}] = Repo.all(Annuart.Enfts.Enft)
+    assert Enfts.cursor(@nft)
+    refute :enfts_reset in drain_enft_messages()
+  end
 end

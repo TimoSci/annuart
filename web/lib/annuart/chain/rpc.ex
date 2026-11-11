@@ -36,7 +36,10 @@ defmodule Annuart.Chain.Rpc do
   defp call(method, params) do
     body = %{jsonrpc: "2.0", id: 1, method: method, params: params}
 
-    case Req.post(Config.rpc_url(), json: body, retry: false) do
+    # Tests add `plug: {Req.Test, Annuart.Chain.Rpc}` through the app env.
+    options = Application.get_env(:annuart, :rpc_req_options, [])
+
+    case Req.post(Config.rpc_url(), [json: body, retry: false] ++ options) do
       {:ok, %{status: 200, body: %{"error" => error}}} -> {:error, rpc_error(error)}
       {:ok, %{status: 200, body: %{"result" => result}}} -> {:ok, result}
       {:ok, %{status: status}} -> {:error, {:http, status}}

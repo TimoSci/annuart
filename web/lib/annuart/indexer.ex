@@ -18,7 +18,6 @@ defmodule Annuart.Indexer do
   alias Annuart.Enfts
 
   @topic "enfts"
-  @chunk 2_000
   @zero "0x0000000000000000000000000000000000000000"
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -31,14 +30,16 @@ defmodule Annuart.Indexer do
   @spec sync_once() :: :ok
   def sync_once do
     contracts = Config.contracts()
-    removed = delete_unconfigured(contracts)
+    removed = contracts != [] and delete_unconfigured(contracts)
     Enum.each(contracts, &sync_contract/1)
     if removed, do: broadcast(:enfts_reset)
     :ok
   end
 
   # A redeploy can leave rows of an address that is no longer in the
-  # deployment file; they would show a dead contract's ENFTs.
+  # deployment file; they would show a dead contract's ENFTs. With no
+  # contracts at all (a deployment file that failed to load) the stored rows
+  # are left alone rather than wiped.
   defp delete_unconfigured(contracts) do
     Enfts.delete_unconfigured(Enum.map(contracts, & &1.nft))
   rescue
@@ -99,7 +100,9 @@ defmodule Annuart.Indexer do
         true ->
           with {:ok, cursor} <- check_reset(contract, head) do
             from = if cursor, do: cursor.last_block + 1, else: contract.deploy_block
-            with :ok <- sync_range(contract, from, head), do: announce_reset(contract)
+            # Stay behind the head so a short reorg cannot reach what is stored.
+            target = head - Config.confirmations()
+            with :ok <- sync_range(contract, from, target), do: announce_reset(contract)
           end
       end
     end
@@ -148,7 +151,7 @@ defmodule Annuart.Indexer do
   defp sync_range(_contract, from, head) when from > head, do: :ok
 
   defp sync_range(contract, from, head) do
-    to = min(from + @chunk - 1, head)
+    to = min(from + Config.log_chunk() - 1, head)
 
     with {:ok, logs} <- fetch_logs(contract, from, to),
          {:ok, touched} <- apply_logs(contract, logs),

@@ -30,6 +30,9 @@ config :annuart, :chain, chain_id: 31337, rpc_url: "http://127.0.0.1:8545", cont
 # Tests never touch a chain: all RPC goes through the stub.
 config :annuart, :rpc, Annuart.RpcStub
 
+# Token metadata is cached in production; tests seed the stub per test instead.
+config :annuart, :cache_token_meta, false
+
 config :logger, level: :warning
 
 # Initialize plugs at runtime for faster test compilation

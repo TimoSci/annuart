@@ -29,6 +29,23 @@ defmodule AnnuartWeb.BrowseLiveTest do
     assert html =~ ~s(href="/enft/mock/2")
   end
 
+  test "the page does not carry the server RPC URL off the local chain", %{conn: conn} do
+    previous = Application.fetch_env!(:annuart, :chain)
+    on_exit(fn -> Application.put_env(:annuart, :chain, previous) end)
+
+    Application.put_env(:annuart, :chain,
+      chain_id: 11_155_111,
+      rpc_url: "https://rpc.example/v3/SECRET",
+      contracts: []
+    )
+
+    html = html_response(get(conn, ~p"/"), 200)
+    refute html =~ "SECRET"
+    refute html =~ "rpc.example"
+    {:ok, _v, live_html} = live(conn, ~p"/")
+    refute live_html =~ "SECRET"
+  end
+
   test "navigation lists the pages in order with their activity ids", %{conn: conn} do
     {:ok, _v, html} = live(conn, ~p"/")
 
