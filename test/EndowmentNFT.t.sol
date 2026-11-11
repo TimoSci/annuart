@@ -268,4 +268,46 @@ contract EndowmentNFTTest is FhevmTest {
         // Contract still holds the full endowment.
         assertEq(decrypt(token.confidentialBalanceOf(address(nft))), 500);
     }
+
+    function test_views_exposeSchedule() public {
+        uint64 t0 = uint64(block.timestamp);
+        uint256 id = _mintEndowment(alice, 500, true);
+        Segment[] memory s = nft.scheduleOf(id);
+        assertEq(s.length, 1);
+        assertEq(s[0].duration, 1_000);
+        assertEq(s[0].ratePerSec, 1);
+        assertEq(nft.scheduleStartOf(id), t0);
+        assertEq(nft.scheduleEndOf(id), t0 + 1_000);
+        assertEq(nft.lastAccrualAtOf(id), t0);
+        vm.warp(t0 + 40);
+        nft.accrue(id);
+        assertEq(nft.lastAccrualAtOf(id), t0 + 40);
+    }
+
+    function test_views_indefiniteEndIsMax() public {
+        uint256 id = _mintWith(alice, 500, false, _open(1), uint64(block.timestamp));
+        assertEq(nft.scheduleEndOf(id), type(uint64).max);
+    }
+
+    function test_views_revertForNonexistentToken() public {
+        vm.expectRevert(EndowmentNFT.NonexistentToken.selector);
+        nft.scheduleOf(99);
+        vm.expectRevert(EndowmentNFT.NonexistentToken.selector);
+        nft.scheduleStartOf(99);
+        vm.expectRevert(EndowmentNFT.NonexistentToken.selector);
+        nft.scheduleEndOf(99);
+        vm.expectRevert(EndowmentNFT.NonexistentToken.selector);
+        nft.lastAccrualAtOf(99);
+    }
+
+    function test_mint_emitsEndowmentMinted() public {
+        token.mint(creator, 500);
+        vm.prank(creator);
+        token.setOperator(address(nft), uint48(block.timestamp + 365 days));
+        (externalEuint64 h, bytes memory p) = encryptUint64(500, creator, address(nft));
+        vm.expectEmit(true, true, true, true, address(nft));
+        emit EndowmentNFT.EndowmentMinted(1, creator, alice, uint64(block.timestamp), true);
+        vm.prank(creator);
+        nft.mint(alice, h, p, _segments(), 0, true); // 0 resolves to block.timestamp
+    }
 }

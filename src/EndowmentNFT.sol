@@ -24,6 +24,15 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
     uint256 internal _nextId;
     mapping(uint256 => Endowment) internal _endowments;
 
+    /// @dev Deliberately omits the schedule; read it via scheduleOf.
+    event EndowmentMinted(
+        uint256 indexed tokenId,
+        address indexed creator,
+        address indexed to,
+        uint64 scheduleStart,
+        bool topUpsAllowed
+    );
+
     error EmptySchedule();
     error ZeroDurationSegment();
     error IndefiniteSegmentNotLast();
@@ -73,6 +82,33 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
         FHE.allow(e.distribution, to);
 
         _safeMint(to, tokenId);
+        emit EndowmentMinted(tokenId, msg.sender, to, start, topUpsAllowed);
+    }
+
+    function scheduleOf(uint256 tokenId) external view returns (Segment[] memory) {
+        _requireMinted(tokenId);
+        return _endowments[tokenId].schedule;
+    }
+
+    function scheduleStartOf(uint256 tokenId) external view returns (uint64) {
+        _requireMinted(tokenId);
+        return _endowments[tokenId].scheduleStart;
+    }
+
+    /// @return type(uint64).max when the schedule has no end.
+    function scheduleEndOf(uint256 tokenId) external view returns (uint64) {
+        _requireMinted(tokenId);
+        Endowment storage e = _endowments[tokenId];
+        return Schedule.scheduleEnd(e.schedule, e.scheduleStart);
+    }
+
+    function lastAccrualAtOf(uint256 tokenId) external view returns (uint64) {
+        _requireMinted(tokenId);
+        return _endowments[tokenId].lastAccrualAt;
+    }
+
+    function _requireMinted(uint256 tokenId) internal view {
+        if (_ownerOf(tokenId) == address(0)) revert NonexistentToken();
     }
 
     function distributionHandle(uint256 tokenId) external view returns (euint64) {
