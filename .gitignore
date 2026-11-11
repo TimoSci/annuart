@@ -10,7 +10,8 @@ client/dist/
 artifacts/
 cache-hardhat/
 types/
-deployments/
+deployments/*
+!deployments/sepolia.json
 dist/
 fhevmTemp/
 
