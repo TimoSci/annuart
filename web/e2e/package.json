@@ -1,0 +1,13 @@
+{
+  "name": "annuart-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Browser end-to-end flows for the Annuart web app against a local Hardhat node",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0",
+    "ethers": "6.17.0"
+  }
+}

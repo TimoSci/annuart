@@ -50,17 +50,25 @@ config :annuart, AnnuartWeb.Endpoint,
 # configured to run both http and https servers on
 # different ports.
 
-# Reload browser tabs when matching files change.
+# Reload browser tabs when matching files change. ANNUART_LIVE_RELOAD=false
+# turns this off: the browser end-to-end run (web/e2e) sets it, because a
+# reload in the middle of a flow (after a late watcher rebuild) restarts the
+# page the flow is driving.
 config :annuart, AnnuartWeb.Endpoint,
   live_reload: [
     web_console_logger: true,
-    patterns: [
-      # Static assets, except user uploads
-      ~r"priv/static/(?!uploads/).*\.(js|css|png|jpeg|jpg|gif|svg)$"E,
-      # Router, Controllers, LiveViews and LiveComponents
-      ~r"lib/annuart_web/router\.ex$"E,
-      ~r"lib/annuart_web/(controllers|live|components)/.*\.(ex|heex)$"E
-    ]
+    patterns:
+      if System.get_env("ANNUART_LIVE_RELOAD") == "false" do
+        []
+      else
+        [
+          # Static assets, except user uploads
+          ~r"priv/static/(?!uploads/).*\.(js|css|png|jpeg|jpg|gif|svg)$"E,
+          # Router, Controllers, LiveViews and LiveComponents
+          ~r"lib/annuart_web/router\.ex$"E,
+          ~r"lib/annuart_web/(controllers|live|components)/.*\.(ex|heex)$"E
+        ]
+      end
   ]
 
 # Enable dev routes for dashboard and mailbox

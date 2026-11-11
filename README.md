@@ -282,6 +282,105 @@ For ad-hoc exploration, `npx hardhat console --network localhost` exposes `ether
 
 ---
 
+## Web app
+
+`web/` is a Phoenix LiveView app for browsing, creating and managing ENFTs. The server indexes
+the contracts' public events and renders pages; everything secret happens in the browser.
+
+### The privacy rule
+
+**No amount ever reaches the server.** Endowment and donation amounts, revealed balances and
+revealed claimable amounts are typed, encrypted, decrypted and shown only by browser code. Their
+inputs have no `name`, sit in `phx-update="ignore"` regions, and are never sent in a LiveView
+event, form or URL; the server only hears `tx:confirmed` with an action, a contract label, a token
+id and a transaction hash. The server never holds a private key and never signs, encrypts or
+decrypts. `web/e2e` checks this in a real browser.
+
+### Prerequisites
+
+- Elixir 1.20 (with Erlang/OTP)
+- Node 20+ (for Hardhat, the JS dependencies and the tests)
+
+### Run it locally
+
+```bash
+# repo root: a local chain with the FHEVM mock, and both token variants
+npx hardhat node                                                     # terminal 1
+npx hardhat run scripts/deploy.ts --network localhost                # terminal 2: mock token
+TOKEN_KIND=wrapped npx hardhat run scripts/deploy.ts --network localhost
+
+# the app
+cd web
+npm install --prefix assets   # JS dependencies; its postinstall vendors the relayer SDK
+mix setup                     # deps, database, asset tools, first build
+mix phx.server                # http://localhost:4000
+```
+
+Deploy before starting the server: it reads `deployments/localhost.json` once, at start. After a
+restart of the Hardhat node, redeploy; the running server notices the new chain and rebuilds its
+index. After pulling changes to a migration, run `mix ecto.reset` once (it drops the dev
+database; the index is rebuilt from the chain).
+
+macOS: if the downloaded `tailwind` or `esbuild` binary is killed as soon as it starts, re-sign it
+ad hoc: `codesign -s - --force <path>`, for example
+`codesign -s - --force _build/tailwind-macos-arm64-4.1.12` or
+`codesign -s - --force _build/esbuild-darwin-arm64` (run from `web/`).
+
+### Dev login
+
+In dev and test, the wallet control in the header is a `<select>` of Hardhat's first five
+accounts (derived in the browser from Hardhat's public test mnemonic). Picking one connects as
+that account; transactions are signed in the page and the FHEVM mock stands in for the relayer.
+It only works on chain 31337 and is never part of a production build: the dev bundle (`dev.js`)
+is referenced only when `:dev_wallet` is on, which only `config/dev.exs` and `config/test.exs`
+set. In production the control is `Connect wallet`, for a browser wallet.
+
+### Environment variables
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `ANNUART_RPC_URL` | `http://127.0.0.1:8545` | The chain's JSON-RPC endpoint. One running instance talks to one chain. |
+| `ANNUART_DEPLOYMENTS` | `../deployments/localhost.json` (relative to `web/`) | The deployment file written by `scripts/deploy.ts`. |
+| `PORT` | `4000` | HTTP port. |
+| `ANNUART_LIVE_RELOAD` | on | Dev only: `false` turns off browser live reload (the e2e run does). |
+| `DATABASE_PATH`, `SECRET_KEY_BASE`, `PHX_HOST`, `PHX_SERVER` | | Production, as usual for Phoenix. |
+
+### Tests
+
+```bash
+# Contracts (repo root)
+forge test
+
+# Server (web/)
+mix test
+
+# Browser code, in Node (web/). The *.local tests need a running Hardhat node with both
+# variants deployed, and are skipped without one.
+node --test "assets/test/**/*.test.js"
+
+# Browser end to end (web/e2e/). Starts its own Hardhat node, deploys both variants and starts
+# the Phoenix dev server, so ports 8545 and 4000 must be free.
+cd e2e
+npm install
+npx playwright install chromium
+npx playwright test
+```
+
+`E2E_REUSE=1 npx playwright test` reuses a node and server that are already running, which is
+quicker while working on the flows; the final flow restarts the node, so run it on its own or
+skip it with `--grep-invert restarted` then. `web/docs/manual-checklist.md` is the same ground by
+hand with a real wallet on Sepolia, plus what an automated run cannot judge.
+
+To check that a production build carries no dev code:
+
+```bash
+MIX_ENV=prod mix assets.deploy
+grep -rlE "test test test test|createDevSigner|MockFhevmInstance" priv/static/assets/   # prints nothing
+mix phx.digest.clean --all
+```
+
+---
+
 ## License
 
 MIT

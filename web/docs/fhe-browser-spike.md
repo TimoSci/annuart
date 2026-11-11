@@ -1,11 +1,12 @@
 # FHE in the browser: spike findings
 
-Task 1 spike, code in `spike/fhe-browser/`. Both checks ran in headless Chromium (Playwright 1.65,
+Task 1 spike. Its code, `spike/fhe-browser/`, was deleted in Task 14 once the app's own browser
+flows (`web/e2e/`) covered the same ground; it is in git history at commit `f56e61b`. Both checks ran in headless Chromium (Playwright 1.65,
 Chrome Headless Shell 158) against a fresh `npx hardhat node` (chain id 31337) with the
 `@fhevm/hardhat-plugin` mock, after `scripts/deploy.ts`. Versions: `@fhevm/mock-utils` 0.4.2,
 `@zama-fhe/relayer-sdk` 0.4.1, `ethers` 6.17.0, `esbuild` 0.28.2.
 
-Run it with: `cd spike/fhe-browser && npm install && npx playwright install chromium && npx playwright test`.
+It was run with: `cd spike/fhe-browser && npm install && npx playwright install chromium && npx playwright test`.
 
 Observed result: `{"done":true,"mintedTokenId":"1","decryptedDistribution":"100","expectedDistribution":"100"}`
 for the mock, `{"done":true,"sdkInitialised":true}` for the relayer SDK. 2 of 2 tests pass.
