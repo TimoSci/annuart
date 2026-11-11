@@ -17,10 +17,11 @@ defmodule AnnuartWeb.Router do
   scope "/", AnnuartWeb do
     pipe_through :browser
 
-    live_session :public do
+    live_session :public, on_mount: AnnuartWeb.WalletHook do
       live "/", BrowseLive
       live "/enft/:label/:id", EnftLive
       live "/market", MarketLive
+      live "/mine", MyEnftsLive
     end
   end
 

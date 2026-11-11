@@ -2,5 +2,7 @@
   "name": "annuart-assets",
   "private": true,
   "description": "JS dependencies for the Annuart web app, bundled by esbuild via mix",
-  "dependencies": {}
+  "dependencies": {
+    "ethers": "^6.17.0"
+  }
 }
