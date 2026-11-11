@@ -161,10 +161,14 @@ export class TxActionController {
       this.deps.push("tx:confirmed", {action, label, tokenId: this.el.dataset.tokenId ?? null, hash: result?.hash ?? null});
       this.deps.announce();
     } catch (err) {
-      // An action that threw without reporting leaves its step active.
-      for (const step of this.steps) {
-        if (step.state === "active") { step.state = "failed"; step.detail = explain(err); }
+      // An action that threw without reporting leaves its step active, or no
+      // step failed at all: the failure goes on the first step not yet finished.
+      const active = this.steps.filter(step => step.state === "active");
+      if (active.length === 0 && !this.steps.some(step => step.state === "failed")) {
+        const next = this.steps.find(step => step.state === "waiting");
+        if (next) active.push(next);
       }
+      for (const step of active) { step.state = "failed"; step.detail = explain(err); }
       this.render();
     } finally {
       this.running = false;

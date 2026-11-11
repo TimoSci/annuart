@@ -279,3 +279,38 @@ test("revealing without a wallet says so", async () => {
   assert.match(el.textContent, /Connect a wallet first\./);
   assert.match(el.textContent, /•••••/);
 });
+
+test("an action that throws before reporting any step fails on the first step, with a retry", async () => {
+  const {el} = setup({action: "claim"});
+  let calls = 0;
+  const {ctl} = controller(el, {
+    run: async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("Only a wrapped token can be wrapped.");
+      return {hash: "0x1"};
+    },
+  });
+  await ctl.run();
+  const items = [...el.querySelectorAll("ol.steps li")];
+  assert.deepEqual(states(el), [["confirm", "failed"], ["mined", "waiting"]]);
+  assert.match(items[0].textContent, /failed: The transaction failed: Only a wrapped token can be wrapped\./);
+  el.querySelector("button[data-role=retry]").click();
+  await ctl.pending;
+  assert.equal(calls, 2);
+  assert.equal(el.querySelector("button[data-role=retry]"), null);
+});
+
+test("a throw after step one is done fails the next step and leaves step one done", async () => {
+  const {el} = setup({action: "claim"});
+  const {ctl} = controller(el, {
+    run: async (_s, _c, _a, onStep) => {
+      onStep("confirm", "active");
+      onStep("confirm", "done");
+      throw new Error("boom");
+    },
+  });
+  await ctl.run();
+  assert.deepEqual(states(el), [["confirm", "done"], ["mined", "failed"]]);
+  assert.match(el.querySelector("li[data-state=failed]").textContent, /failed: The transaction failed: boom/);
+  assert.ok(el.querySelector("button[data-role=retry]"));
+});
