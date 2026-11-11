@@ -6,7 +6,15 @@ struct Segment {
     uint64 ratePerSec; // base units accrued per second during this segment
 }
 
+/// @dev Duration sentinel: a segment with this duration never ends.
+uint64 constant INDEFINITE = type(uint64).max;
+
 library Schedule {
+    /// @dev True when `s` is non-empty and its last segment never ends.
+    function isIndefinite(Segment[] memory s) internal pure returns (bool) {
+        return s.length > 0 && s[s.length - 1].duration == INDEFINITE;
+    }
+
     /// @dev Total accrued over [from, to] intersected with the schedule window,
     ///      saturating at type(uint64).max instead of overflowing.
     function integrate(Segment[] memory s, uint64 start, uint64 from, uint64 to)

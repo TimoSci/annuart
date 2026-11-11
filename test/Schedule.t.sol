@@ -2,13 +2,39 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import {Schedule, Segment} from "../src/libraries/Schedule.sol";
+import {Schedule, Segment, INDEFINITE} from "../src/libraries/Schedule.sol";
 
 contract ScheduleTest is Test {
     function _two() internal pure returns (Segment[] memory s) {
         s = new Segment[](2);
         s[0] = Segment({duration: 100, ratePerSec: 2}); // [0,100)   -> 200
         s[1] = Segment({duration: 100, ratePerSec: 5}); // [100,200) -> 500
+    }
+
+    function _openEnded() internal pure returns (Segment[] memory s) {
+        s = new Segment[](2);
+        s[0] = Segment({duration: 100, ratePerSec: 2});       // [0,100) -> 200
+        s[1] = Segment({duration: INDEFINITE, ratePerSec: 3}); // [100, forever)
+    }
+
+    function test_isIndefinite() public pure {
+        assertTrue(Schedule.isIndefinite(_openEnded()));
+        assertFalse(Schedule.isIndefinite(_two()));
+        assertFalse(Schedule.isIndefinite(new Segment[](0)));
+    }
+
+    function test_indefinite_integratesPastFiniteSegments() public pure {
+        // 200 from the first segment + 3 * 900 from the open one
+        assertEq(Schedule.integrate(_openEnded(), 0, 0, 1_000), 2_900);
+    }
+
+    function test_indefinite_scheduleEndIsMax() public pure {
+        assertEq(Schedule.scheduleEnd(_openEnded(), 1_700_000_000), type(uint64).max);
+    }
+
+    function test_indefinite_noOverflowWithLateStart() public pure {
+        uint64 start = type(uint64).max - 10;
+        assertEq(Schedule.integrate(_openEnded(), start, start, type(uint64).max), 20);
     }
 
     function test_fullWindow() public pure {
