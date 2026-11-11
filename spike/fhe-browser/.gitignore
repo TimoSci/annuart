@@ -1,0 +1,6 @@
+node_modules/
+# copied from node_modules by `npm run assets`, and esbuild output
+dist/
+relayer-sdk/
+test-results/
+playwright-report/

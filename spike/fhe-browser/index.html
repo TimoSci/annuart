@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>FHE browser spike</title>
+  </head>
+  <body>
+    <p>FHE browser spike. Run with <code>?spike=mock</code> or <code>?spike=relayer</code>; the result lands in <code>window.__spike</code>.</p>
+    <script>
+      (function () {
+        var spike = new URLSearchParams(location.search).get("spike");
+        function load(src, module) {
+          var s = document.createElement("script");
+          s.src = src;
+          if (module) s.type = "module";
+          s.async = false;
+          document.body.appendChild(s);
+        }
+        if (spike === "mock") {
+          load("/dist/spike-mock.js", true);
+        } else if (spike === "relayer") {
+          load("/relayer-sdk/relayer-sdk-js.umd.js", false);
+          load("/dist/spike-relayer.js", true);
+        } else {
+          window.__spike = { done: true, error: "unknown ?spike=" + spike };
+        }
+      })();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,20 @@
+{
+  "name": "fhe-browser-spike",
+  "private": true,
+  "type": "module",
+  "description": "Throwaway spike: Zama FHEVM mock and relayer SDK in a real browser (Task 1).",
+  "scripts": {
+    "assets": "node -e \"const fs=require('fs'),s='node_modules/@zama-fhe/relayer-sdk/';fs.mkdirSync('dist',{recursive:true});fs.mkdirSync('relayer-sdk',{recursive:true});for(const f of ['tfhe_bg.wasm','kms_lib_bg.wasm'])fs.copyFileSync(s+'lib/'+f,'dist/'+f);for(const f of ['tfhe_bg.wasm','kms_lib_bg.wasm'])fs.copyFileSync(s+'bundle/'+f,'relayer-sdk/'+f);fs.copyFileSync(s+'bundle/relayer-sdk-js.umd.cjs','relayer-sdk/relayer-sdk-js.umd.js')\"",
+    "serve": "esbuild spike-mock.js spike-relayer.js --bundle --format=esm --platform=browser --target=esnext --outdir=dist --alias:@zama-fhe/relayer-sdk/node=@zama-fhe/relayer-sdk/web --servedir=. --serve=127.0.0.1:8611",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "@fhevm/mock-utils": "0.4.2",
+    "@zama-fhe/relayer-sdk": "0.4.1",
+    "ethers": "6.17.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0",
+    "esbuild": "0.28.2"
+  }
+}
