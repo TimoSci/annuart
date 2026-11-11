@@ -14,7 +14,8 @@ defmodule AnnuartWeb.EnftLive do
 
   alias Annuart.Chain.{Config, Reader}
   alias Annuart.{Enfts, Schedule}
-  alias AnnuartWeb.{EnftComponents, Layouts}
+  alias Annuart.Indexer
+  alias AnnuartWeb.{EnftComponents, Layouts, TxComponents}
 
   @zero_address "0x0000000000000000000000000000000000000000"
 
@@ -37,6 +38,25 @@ defmodule AnnuartWeb.EnftLive do
       _ -> raise AnnuartWeb.NotFoundError
     end
   end
+
+  # A transaction was confirmed in the browser. Only these four public values
+  # are read from the event; anything else in it is ignored, never stored.
+  def handle_event(
+        "tx:confirmed",
+        %{"action" => _, "label" => _, "tokenId" => _, "hash" => _},
+        socket
+      ) do
+    Indexer.sync_now()
+    %{contract: contract, token_id: token_id} = socket.assigns
+
+    {:noreply,
+     assign(socket,
+       last_accrual_at: ok_or_nil(Reader.last_accrual_at(contract.nft, token_id)),
+       settled: ok_or_nil(Reader.settled(contract.nft, token_id))
+     )}
+  end
+
+  def handle_event("tx:confirmed", _params, socket), do: {:noreply, socket}
 
   def handle_info({:enft_changed, label, token_id}, socket)
       when label == socket.assigns.label and token_id == socket.assigns.token_id,
@@ -71,6 +91,19 @@ defmodule AnnuartWeb.EnftLive do
 
   defp ok_or_nil({:ok, value}), do: value
   defp ok_or_nil(_), do: nil
+
+  # Donations are accepted while the contract allows them and the schedule has
+  # not ended. A hidden schedule cannot be checked, so the contract decides.
+  defp donations_open?(%{top_ups_allowed: false}, _settled), do: false
+  defp donations_open?(_enft, true), do: false
+  defp donations_open?(%{schedule: nil}, _settled), do: true
+
+  defp donations_open?(%{schedule: schedule, schedule_start: start}, _settled) do
+    case Schedule.ends_at(schedule, start) do
+      :never -> true
+      at -> at > System.os_time(:second)
+    end
+  end
 
   defp payouts_end(%{schedule: nil}), do: {:text, "Private schedule"}
 
@@ -161,7 +194,99 @@ defmodule AnnuartWeb.EnftLive do
             </table>
           </div>
         </div>
-        <div class="col" id="enft-side"></div>
+        <div class="col" id="enft-side">
+          <div
+            :if={@address != nil and @address == @enft.owner}
+            class="area panel"
+            id="panel-yours"
+            data-activity-id="panel:enft:yours"
+          >
+            <h2>Yours</h2>
+            <div class="kv">
+              <span class="k">Claimable</span>
+              <span
+                id="secret-claimable"
+                phx-hook="SecretValue"
+                phx-update="ignore"
+                data-secret="distribution"
+                data-label={@label}
+                data-id={@token_id}
+                data-decimals={@token_meta && @token_meta.decimals}
+                data-symbol={@token_meta && @token_meta.symbol}
+              >
+              </span>
+            </div>
+            <p class="note">As of the last accrual.</p>
+            <TxComponents.action
+              id="tx-claim"
+              action="claim"
+              label="Claim"
+              contract_label={@label}
+              token_id={@token_id}
+            />
+            <TxComponents.action
+              id="tx-transfer"
+              action="transfer"
+              label="Transfer"
+              contract_label={@label}
+              token_id={@token_id}
+              confirm="Unclaimed balance goes with the ENFT. Claim first if you want to keep it."
+            >
+              <input type="text" data-arg="to" placeholder="Recipient address" autocomplete="off" />
+            </TxComponents.action>
+            <p class="note">
+              Unclaimed balance goes with the ENFT. Claim first if you want to keep it.
+            </p>
+          </div>
+
+          <div
+            :if={donations_open?(@enft, @settled)}
+            class="area panel"
+            data-activity-id="panel:enft:donate"
+          >
+            <h2>Donate</h2>
+            <TxComponents.action
+              :if={@address}
+              id="tx-donate"
+              action="donate"
+              label="Donate"
+              contract_label={@label}
+              token_id={@token_id}
+              decimals={@token_meta && @token_meta.decimals}
+              symbol={@token_meta && @token_meta.symbol}
+            >
+              <input
+                type="text"
+                inputmode="decimal"
+                data-arg="amount"
+                placeholder="Amount"
+                autocomplete="off"
+              />
+            </TxComponents.action>
+            <p :if={!@address}>Connect a wallet to donate.</p>
+            <p class="note">Encrypted before it leaves your browser.</p>
+          </div>
+
+          <div class="area panel" data-activity-id="panel:enft:maintenance">
+            <h2>Maintenance</h2>
+            <TxComponents.action
+              id="tx-accrue"
+              action="accrue"
+              label="Update accrual"
+              contract_label={@label}
+              token_id={@token_id}
+            />
+            <p class="note">
+              Moves earned payouts into the claimable balance. Anyone may do this.
+            </p>
+          </div>
+
+          <div class="area panel" data-activity-id="panel:enft:sell">
+            <h2>Sell</h2>
+            <button type="button" disabled>Sell</button>
+            <span class="soon">Coming soon</span>
+          </div>
+        </div>
       </div>
     </Layouts.app>
     """

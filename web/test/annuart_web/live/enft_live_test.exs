@@ -162,4 +162,139 @@ defmodule AnnuartWeb.EnftLiveTest do
     {:ok, _v, html} = live(conn, ~p"/enft/mock/1")
     assert html =~ "Far in the future"
   end
+
+  describe "actions" do
+    defp connect_as(view, address),
+      do: render_hook(view, "wallet:changed", %{"address" => address})
+
+    @stranger "0x" <> String.duplicate("00", 18) <> "beef"
+
+    test "owner sees Yours with claim and transfer", %{conn: conn} do
+      mint()
+      {:ok, view, html} = live(conn, ~p"/enft/mock/1")
+      refute html =~ "As of the last accrual."
+
+      html = connect_as(view, owner())
+      assert html =~ "Yours"
+      assert html =~ "As of the last accrual."
+      assert has_element?(view, ~s(#tx-claim[phx-hook="TxAction"][data-action="claim"]), "Claim")
+      assert has_element?(view, ~s(#tx-transfer[data-action="transfer"] input[data-arg="to"]))
+      assert has_element?(view, ~s(#tx-transfer[data-confirm]))
+      assert html =~ "Unclaimed balance goes with the ENFT. Claim first if you want to keep it."
+
+      assert has_element?(
+               view,
+               ~s([data-secret="distribution"][phx-hook="SecretValue"][data-id="1"])
+             )
+    end
+
+    test "non-owner and anonymous visitors do not see Yours", %{conn: conn} do
+      mint()
+      {:ok, view, html} = live(conn, ~p"/enft/mock/1")
+      refute html =~ "As of the last accrual."
+      refute has_element?(view, "#tx-claim")
+
+      connect_as(view, @stranger)
+      refute has_element?(view, "#tx-claim")
+      refute has_element?(view, "#tx-transfer")
+      refute render(view) =~ "As of the last accrual."
+    end
+
+    test "donate panel hidden when donations are off", %{conn: conn} do
+      mint(top_ups_allowed: false)
+      {:ok, view, html} = live(conn, ~p"/enft/mock/1")
+      refute html =~ "Connect a wallet to donate."
+      connect_as(view, @stranger)
+      refute has_element?(view, "#tx-donate")
+    end
+
+    test "donate panel hidden after a fixed schedule has ended", %{conn: conn} do
+      mint(schedule_start: 1_000_000_000)
+      {:ok, view, html} = live(conn, ~p"/enft/mock/1")
+      refute html =~ "Connect a wallet to donate."
+      connect_as(view, @stranger)
+      refute has_element?(view, "#tx-donate")
+    end
+
+    test "donate panel shown on an indefinite schedule", %{conn: conn} do
+      mint(
+        schedule_start: 1_000_000_000,
+        schedule: [%{"duration" => indefinite(), "rate_per_sec" => 1}]
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/enft/mock/1")
+      connect_as(view, @stranger)
+      assert has_element?(view, ~s(#tx-donate[data-action="donate"] input[data-arg="amount"]))
+    end
+
+    test "anonymous visitor is told to connect a wallet to donate", %{conn: conn} do
+      mint()
+      {:ok, view, html} = live(conn, ~p"/enft/mock/1")
+      assert html =~ "Connect a wallet to donate."
+      refute has_element?(view, "#tx-donate")
+      assert html =~ "Encrypted before it leaves your browser."
+
+      connect_as(view, @stranger)
+      refute render(view) =~ "Connect a wallet to donate."
+      assert has_element?(view, ~s(#tx-donate[data-decimals="0"][data-symbol="TKN"]))
+    end
+
+    test "maintenance and sell panels are always shown", %{conn: conn} do
+      mint()
+      {:ok, view, html} = live(conn, ~p"/enft/mock/1")
+      assert has_element?(view, ~s(#tx-accrue[data-action="accrue"]), "Update accrual")
+      assert html =~ "Moves earned payouts into the claimable balance. Anyone may do this."
+      assert has_element?(view, "button[disabled]", "Sell")
+      assert html =~ "Coming soon"
+    end
+
+    test "tx:confirmed triggers a sync and refreshes last accrued", %{conn: conn} do
+      mint()
+      {:ok, view, html} = live(conn, ~p"/enft/mock/1")
+      assert html =~ "2026-12-01"
+
+      # 1_796_200_000 is 2026-12-02 08:26 UTC
+      stub_reads(1, last_accrual_at: 1_796_200_000, settled: true)
+
+      html =
+        render_hook(view, "tx:confirmed", %{
+          "action" => "accrue",
+          "label" => "mock",
+          "tokenId" => "1",
+          "hash" => "0xabc"
+        })
+
+      assert html =~ "2026-12-02"
+      assert html =~ "This schedule has ended and the leftover was released to the owner."
+    end
+
+    test "tx:confirmed payload with an amount key is ignored", %{conn: conn} do
+      mint()
+      {:ok, view, _html} = live(conn, ~p"/enft/mock/1")
+
+      html =
+        render_hook(view, "tx:confirmed", %{
+          "action" => "donate",
+          "label" => "mock",
+          "tokenId" => "1",
+          "hash" => "0xabc",
+          "amount" => "987654321"
+        })
+
+      assert Process.alive?(view.pid)
+      refute html =~ "987654321"
+      refute inspect(:sys.get_state(view.pid).socket.assigns) =~ "987654321"
+      # and a malformed payload is ignored too
+      render_hook(view, "tx:confirmed", %{"amount" => "987654321"})
+      assert Process.alive?(view.pid)
+    end
+
+    test "amount inputs carry data-arg and no name", %{conn: conn} do
+      mint()
+      {:ok, view, _} = live(conn, ~p"/enft/mock/1")
+      html = connect_as(view, owner())
+      assert html =~ ~s(data-arg="amount")
+      refute html =~ ~r/<input[^>]*\bname=/
+    end
+  end
 end

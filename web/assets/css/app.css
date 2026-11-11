@@ -109,3 +109,20 @@ td.n, th.n { text-align: right; padding-right: 0; }
   border-radius: 6px; padding: 5px 10px; font: inherit; cursor: pointer;
 }
 #wallet button:hover, #wallet select:hover { background: var(--hot-bg); }
+
+.tx { margin: 0 0 12px; }
+.tx input[data-arg] {
+  background: var(--page-bg, transparent); color: var(--hot-fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 5px 10px; font: inherit; margin-right: 8px; max-width: 100%;
+}
+.tx button, .panel button[disabled] {
+  background: var(--rest-bg); color: var(--hot-fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 5px 12px; font: inherit; cursor: pointer;
+}
+.panel button[disabled] { cursor: default; opacity: .6; }
+.tx .amount-echo, .tx .tx-message { display: block; font-size: 12px; margin: 6px 0; }
+.tx .tx-message:empty { display: none; }
+.tx ol.steps { list-style: none; padding: 0; margin: 8px 0 0; font-size: 13px; }
+.tx ol.steps:empty { display: none; }
+.tx ol.steps li[data-state=waiting] { opacity: .5; }
+.tx ol.steps li[data-state=active], .tx ol.steps li[data-state=failed] { color: var(--hot-fg); }

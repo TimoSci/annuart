@@ -9,5 +9,8 @@
     "@fhevm/mock-utils": "0.4.2",
     "@zama-fhe/relayer-sdk": "0.4.1",
     "ethers": "^6.17.0"
+  },
+  "devDependencies": {
+    "linkedom": "^0.18.12"
   }
 }

@@ -5,6 +5,7 @@ defmodule AnnuartWeb.MyEnftsLive do
   """
   use AnnuartWeb, :live_view
 
+  alias Annuart.Chain.{Config, Reader}
   alias Annuart.Enfts
   alias AnnuartWeb.{EnftComponents, Layouts}
 
@@ -23,11 +24,26 @@ defmodule AnnuartWeb.MyEnftsLive do
   defp owned(nil, _refresh), do: nil
   defp owned(address, _refresh), do: Enfts.list_owned(address)
 
+  # Decimals and symbol of each token the listed ENFTs use, for the reveal
+  # control to format with. One read per distinct contract.
+  defp metas(nil), do: %{}
+
+  defp metas(enfts) do
+    for label <- enfts |> Enum.map(& &1.label) |> Enum.uniq(),
+        %Config.Contract{token: token} <- [Config.contract(label)],
+        {:ok, meta} <- [Reader.token_meta(token)],
+        into: %{},
+        do: {label, meta}
+  end
+
+  defp meta(metas, label), do: Map.get(metas, label)
+
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current={:mine}>
       <h1>My ENFTs</h1>
       <% enfts = owned(@address, @refresh) %>
+      <% metas = metas(enfts) %>
       <p :if={enfts == nil}>Connect a wallet to see your ENFTs.</p>
       <p :if={enfts == []}>You do not own any ENFTs yet.</p>
 
@@ -45,9 +61,12 @@ defmodule AnnuartWeb.MyEnftsLive do
           <span>{if e.top_ups_allowed, do: "Donations on", else: "Donations off"}</span>
           <span
             id={"secret-distribution-#{e.label}-#{e.token_id}"}
+            phx-hook="SecretValue"
             data-secret="distribution"
             data-label={e.label}
             data-id={e.token_id}
+            data-decimals={meta(metas, e.label) && meta(metas, e.label).decimals}
+            data-symbol={meta(metas, e.label) && meta(metas, e.label).symbol}
             phx-update="ignore"
           >
           </span>
