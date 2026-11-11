@@ -7,6 +7,8 @@ defmodule Annuart.Application do
 
   @impl true
   def start(_type, _args) do
+    Annuart.Chain.Config.init()
+
     children = [
       AnnuartWeb.Telemetry,
       Annuart.Repo,

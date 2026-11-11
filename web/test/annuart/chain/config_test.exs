@@ -1,5 +1,8 @@
 defmodule Annuart.Chain.ConfigTest do
-  use ExUnit.Case, async: true
+  # Not async: some tests change application env.
+  use ExUnit.Case, async: false
+
+  import ExUnit.CaptureLog
 
   alias Annuart.Chain.Config
 
@@ -53,5 +56,51 @@ defmodule Annuart.Chain.ConfigTest do
   test "a contract missing a field is invalid", %{dir: dir} do
     path = write_tmp!(dir, ~s({"chainId":1,"contracts":[{"label":"x"}]}))
     assert {:error, :invalid} = Config.load(path)
+  end
+
+  describe "init/0" do
+    setup do
+      previous =
+        for k <- [:chain, :deployments_path, :rpc_url],
+            do: {k, Application.fetch_env(:annuart, k)}
+
+      Application.delete_env(:annuart, :chain)
+
+      on_exit(fn ->
+        for {k, v} <- previous do
+          case v do
+            {:ok, val} -> Application.put_env(:annuart, k, val)
+            :error -> Application.delete_env(:annuart, k)
+          end
+        end
+      end)
+    end
+
+    test "a missing file yields no contracts, chain id 0 and a warning" do
+      Application.put_env(:annuart, :deployments_path, "/nonexistent.json")
+      Application.put_env(:annuart, :rpc_url, "http://rpc.test")
+
+      log = capture_log(fn -> assert :ok = Config.init() end)
+
+      assert log =~ "could not load deployments"
+      assert Config.contracts() == []
+      assert Config.chain_id() == 0
+      assert Config.rpc_url() == "http://rpc.test"
+    end
+
+    test "a valid file yields its contracts", %{dir: dir} do
+      Application.put_env(:annuart, :deployments_path, write_tmp!(dir, deployment("mock")))
+      Application.put_env(:annuart, :rpc_url, "http://rpc.test")
+
+      assert capture_log(fn -> Config.init() end) == ""
+      assert Config.chain_id() == 31337
+      assert [%Config.Contract{label: "mock"}] = Config.contracts()
+      assert Config.contract("mock").deploy_block == 8
+    end
+
+    test "chain_id is 0 when nothing is configured" do
+      assert Config.chain_id() == 0
+      assert Config.contracts() == []
+    end
   end
 end

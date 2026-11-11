@@ -23,13 +23,12 @@ end
 config :annuart, AnnuartWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
-# One running instance talks to one chain.
-rpc_url = System.get_env("ANNUART_RPC_URL") || "http://127.0.0.1:8545"
-
-deployments =
-  Path.expand(System.get_env("ANNUART_DEPLOYMENTS") || "../deployments/localhost.json")
-
-config :annuart, :chain, Annuart.Chain.Config.env_from_file(deployments, rpc_url)
+# One running instance talks to one chain. Only raw settings are stored here;
+# Annuart.Chain.Config.init/0 reads the deployment file when the app starts.
+config :annuart,
+  rpc_url: System.get_env("ANNUART_RPC_URL") || "http://127.0.0.1:8545",
+  deployments_path:
+    Path.expand(System.get_env("ANNUART_DEPLOYMENTS") || "../deployments/localhost.json")
 
 if config_env() == :prod do
   database_path =

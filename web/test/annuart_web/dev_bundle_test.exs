@@ -73,4 +73,21 @@ defmodule AnnuartWeb.DevBundleTest do
              "deployBlock" => 11
            } = Enum.at(meta["contracts"], 1)
   end
+
+  test "with no loadable deployment the meta tag claims no chain", %{conn: conn} do
+    Application.put_env(:annuart, :chain,
+      chain_id: 0,
+      rpc_url: "http://127.0.0.1:8545",
+      contracts: []
+    )
+
+    [content] =
+      get(conn, ~p"/")
+      |> html_response(200)
+      |> LazyHTML.from_document()
+      |> LazyHTML.query(~s(meta[name="annuart-chain"]))
+      |> LazyHTML.attribute("content")
+
+    assert %{"chainId" => 0, "contracts" => []} = Jason.decode!(content)
+  end
 end

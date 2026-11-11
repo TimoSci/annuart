@@ -71,6 +71,15 @@ defmodule Annuart.MixProject do
   #     $ mix setup
   #
   # See the documentation for `Mix` for more info on aliases.
+  # The dev bundle (dev wallet, mock FHE) is never built for production.
+  defp dev_bundle, do: if(Mix.env() == :prod, do: [], else: ["esbuild dev"])
+
+  # Removes a stale dev.js (and digested/gzipped variants) left by a dev build,
+  # so phx.digest cannot digest it and Plug.Static cannot serve it in production.
+  defp remove_dev_bundle(_args) do
+    "priv/static/assets/dev{,-*}.js*" |> Path.wildcard() |> Enum.each(&File.rm!/1)
+  end
+
   defp aliases do
     [
       setup: ["deps.get", "ecto.setup", "assets.setup", "assets.build"],
@@ -78,9 +87,10 @@ defmodule Annuart.MixProject do
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
-      "assets.build": ["compile", "tailwind annuart", "esbuild annuart", "esbuild dev"],
+      "assets.build": ["compile", "tailwind annuart", "esbuild annuart"] ++ dev_bundle(),
       "assets.deploy": [
         "compile",
+        &remove_dev_bundle/1,
         "tailwind annuart --minify",
         "esbuild annuart --minify",
         "phx.digest"

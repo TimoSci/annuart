@@ -22,7 +22,7 @@ defmodule Annuart.Chain.Config do
           }
   end
 
-  @default_chain_id 31337
+  @no_chain_id 0
   @default_rpc_url "http://127.0.0.1:8545"
 
   @token_kinds %{"mock" => :mock, "wrapped" => :wrapped, "plain" => :plain}
@@ -101,9 +101,9 @@ defmodule Annuart.Chain.Config do
 
   defp parse_contract(_), do: :error
 
-  @doc "Chain id of the running instance (defaults to the local dev chain, 31337)."
+  @doc "Chain id of the running instance (0 when no deployment file could be loaded)."
   @spec chain_id() :: integer
-  def chain_id, do: Keyword.get(chain_env(), :chain_id, @default_chain_id)
+  def chain_id, do: Keyword.get(chain_env(), :chain_id, @no_chain_id)
 
   @doc "Deployed contracts; empty when the deployment file could not be loaded."
   @spec contracts() :: [Contract.t()]
@@ -114,6 +114,22 @@ defmodule Annuart.Chain.Config do
 
   @spec rpc_url() :: String.t()
   def rpc_url, do: Keyword.get(chain_env(), :rpc_url, @default_rpc_url)
+
+  @doc """
+  Loads the deployment file named by the `:deployments_path` and `:rpc_url`
+  application env (set in `runtime.exs`) into the `:chain` env. Called once at
+  application start. Does nothing when `:chain` is already configured.
+  """
+  @spec init() :: :ok
+  def init do
+    if Application.get_env(:annuart, :chain) == nil do
+      path = Application.get_env(:annuart, :deployments_path, "../deployments/localhost.json")
+      rpc_url = Application.get_env(:annuart, :rpc_url, @default_rpc_url)
+      Application.put_env(:annuart, :chain, env_from_file(path, rpc_url))
+    end
+
+    :ok
+  end
 
   @doc """
   Builds the `:chain` application env from the deployment file at `path`.
@@ -127,7 +143,7 @@ defmodule Annuart.Chain.Config do
 
       {:error, reason} ->
         Logger.warning("could not load deployments from #{path}: #{reason}; no contracts")
-        [chain_id: @default_chain_id, rpc_url: rpc_url, contracts: []]
+        [chain_id: @no_chain_id, rpc_url: rpc_url, contracts: []]
     end
   end
 
