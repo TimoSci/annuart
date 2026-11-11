@@ -28,6 +28,25 @@ defmodule AnnuartWeb.DevBundleTest do
     refute html_response(get(conn, ~p"/"), 200) =~ "/assets/dev.js"
   end
 
+  # The dev bundle is ESM: the relayer SDK it bundles for the mock uses
+  # import.meta and source-phase imports, which esbuild cannot emit as an IIFE.
+  test "dev.js is loaded as a module script", %{conn: conn} do
+    Application.put_env(:annuart, :dev_wallet, true)
+
+    [type] =
+      get(conn, ~p"/")
+      |> html_response(200)
+      |> LazyHTML.from_document()
+      |> LazyHTML.query(~s(script[src^="/assets/dev.js"]))
+      |> LazyHTML.attribute("type")
+
+    assert type == "module"
+  end
+
+  test "the vendored relayer SDK is served from /vendor" do
+    assert "vendor" in AnnuartWeb.static_paths()
+  end
+
   test "chain meta tag carries chain id, rpc url and contracts", %{conn: conn} do
     Application.put_env(:annuart, :chain,
       chain_id: 31337,

@@ -2,7 +2,12 @@
   "name": "annuart-assets",
   "private": true,
   "description": "JS dependencies for the Annuart web app, bundled by esbuild via mix",
+  "scripts": {
+    "postinstall": "node scripts/vendor-relayer-sdk.mjs"
+  },
   "dependencies": {
+    "@fhevm/mock-utils": "0.4.2",
+    "@zama-fhe/relayer-sdk": "0.4.1",
     "ethers": "^6.17.0"
   }
 }

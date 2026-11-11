@@ -37,14 +37,23 @@ esbuild_env = %{
 }
 
 config :esbuild,
-  version: "0.25.4",
+  version: "0.28.2",
   annuart: [
     args: ["js/app.js" | esbuild_args],
     cd: Path.expand("../assets", __DIR__),
     env: esbuild_env
   ],
+  # The dev bundle is ESM (loaded with type="module", which defers like the
+  # app bundle and keeps document order): the relayer SDK that the mock needs
+  # uses source-phase imports, which esbuild cannot emit as an IIFE. And
+  # @fhevm/mock-utils imports the SDK's Node entry; the web entry exports the
+  # same names (web/docs/fhe-browser-spike.md).
   dev: [
-    args: ["js/dev.js" | esbuild_args],
+    args: [
+      "js/dev.js",
+      "--format=esm",
+      "--alias:@zama-fhe/relayer-sdk/node=@zama-fhe/relayer-sdk/web" | esbuild_args
+    ],
     cd: Path.expand("../assets", __DIR__),
     env: esbuild_env
   ]

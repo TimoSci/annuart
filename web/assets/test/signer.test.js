@@ -165,3 +165,20 @@ test("disconnect clears the session and notifies", async () => {
   assert.equal(signer.current(), null);
   assert.deepEqual(seen, [null]);
 });
+
+test("ensureChain(session) checks a session that is not the connected one, without switching", async () => {
+  const eth = setup({chainId: 31337}, fakeEthereum({chainId: 1}));
+  await signer.connect("wallet");
+  const dev = {kind: "dev", address: ALICE, signer: {}, provider: {}, chainId: 31337};
+  assert.equal(await signer.ensureChain(dev), dev);
+  await assert.rejects(() => signer.ensureChain({...dev, chainId: 1}), err => err instanceof signer.WrongChainError);
+  assert.deepEqual(eth.switches, []);
+});
+
+test("ensureChain returns the connected session once it is on the right chain", async () => {
+  setup({chainId: 31337}, fakeEthereum({chainId: 1}));
+  const s = await signer.connect("wallet");
+  const after = await signer.ensureChain(s);
+  assert.equal(after.chainId, 31337);
+  assert.equal(after, signer.current());
+});

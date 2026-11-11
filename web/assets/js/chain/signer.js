@@ -76,11 +76,14 @@ export function disconnect() {
   if (session !== null) setSession(null);
 }
 
-export async function ensureChain() {
-  if (!session) throw new Error("not connected");
+// Resolves to a session on this instance's chain: `s` itself if it is already
+// there, or the connected session after asking the wallet to switch. A session
+// that is not the connected one (no wallet to ask) is only checked.
+export async function ensureChain(s = session) {
+  if (!s) throw new Error("not connected");
   const wanted = chainInfo().chainId;
-  if (session.chainId === wanted) return;
-  if (!driver?.switchChain) throw new WrongChainError();
+  if (s.chainId === wanted) return s;
+  if (s !== session || !driver?.switchChain) throw new WrongChainError();
   try {
     await driver.switchChain(wanted);
   } catch {
@@ -89,4 +92,5 @@ export async function ensureChain() {
   // The wallet announces the new chain through chainChanged, asynchronously.
   for (let i = 0; i < 50 && session?.chainId !== wanted; i++) await new Promise(r => setTimeout(r, 20));
   if (session?.chainId !== wanted) throw new WrongChainError();
+  return session;
 }
