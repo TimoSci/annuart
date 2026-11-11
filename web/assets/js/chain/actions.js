@@ -143,6 +143,13 @@ export async function faucet(session, contract, {amount}, onStep) {
   return single(session, onStep, s => tokenOf(contract, s.signer).mint(s.address, amount));
 }
 
+// Wrapping more than the wallet's ETH plus the WETH it already holds cannot
+// succeed. Gas is not reserved: a wallet that spends everything fails in the
+// wallet, with its own message.
+export function checkWrapFunds(wei, eth, weth) {
+  if (wei > eth + weth) throw new ActionError("You do not have that much ETH.");
+}
+
 // ETH -> WETH -> confidential WETH. The wrapper takes whole multiples of
 // rate(), so `wei` is rounded down to one. WETH the wallet already holds counts
 // towards it: a retry after a failed approve or wrap does not deposit again.
@@ -154,8 +161,9 @@ export async function wrap(session, contract, {wei}, onStep) {
     const token = tokenOf(contract, s.signer);
     const rate = await token.rate();
     const amount = wei - (wei % rate);
-    if (amount === 0n) throw new ActionError(`Wrap at least ${formatAmount(rate, 18)} ETH.`);
     const held = await weth.balanceOf(s.address);
+    checkWrapFunds(wei, await s.provider.getBalance(s.address), held);
+    if (amount === 0n) throw new ActionError(`Wrap at least ${formatAmount(rate, 18)} ETH.`);
     if (held >= amount) steps.skip("deposit");
     else await steps.sendAndWait("deposit", () => weth.deposit({value: amount - held}));
     await steps.sendAndWait("approve", () => weth.approve(contract.token, amount));

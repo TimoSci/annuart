@@ -23,6 +23,7 @@ defmodule AnnuartWeb.Router do
       live "/create", CreateLive
       live "/market", MarketLive
       live "/mine", MyEnftsLive
+      live "/tokens", TokensLive
     end
   end
 
