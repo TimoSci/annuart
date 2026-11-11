@@ -91,4 +91,21 @@ defmodule AnnuartWeb.BrowseLiveTest do
     {:ok, _v, html} = live(conn, ~p"/")
     assert html =~ "No ENFTs yet."
   end
+
+  test "ENFTs with out-of-range timestamps still list", %{conn: conn} do
+    mint(
+      token_id: 1,
+      schedule_start: 18_446_744_073_709_551_000,
+      schedule: [%{"duration" => indefinite(), "rate_per_sec" => 1}]
+    )
+
+    mint(
+      token_id: 2,
+      schedule: [%{"duration" => 18_446_744_073_709_000_000, "rate_per_sec" => 1}]
+    )
+
+    {:ok, _v, html} = live(conn, ~p"/")
+    assert html =~ ~s(data-activity-id="enft:mock:1")
+    assert html =~ ~s(data-activity-id="enft:mock:2")
+  end
 end

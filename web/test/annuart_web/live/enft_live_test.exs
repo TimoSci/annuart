@@ -74,7 +74,7 @@ defmodule AnnuartWeb.EnftLiveTest do
     stub_reads(1, settled: true)
     {:ok, _v, html} = live(conn, ~p"/enft/mock/1")
     assert html =~ "This schedule has ended and the leftover was released to the owner."
-    refute html =~ "will be paid"
+    refute html =~ "any leftover is paid to the owner at the end"
   end
 
   test "hidden schedule shows Private schedule and no table", %{conn: conn} do
@@ -137,5 +137,29 @@ defmodule AnnuartWeb.EnftLiveTest do
     transfer(enft, creator(), owner(), 5, ~U[2026-11-13 10:00:00Z])
     Phoenix.PubSub.broadcast(Annuart.PubSub, "enfts", {:enft_changed, "mock", 1})
     assert render(view) =~ "Transferred to"
+  end
+
+  test "a start beyond the valid date range renders Far in the future", %{conn: conn} do
+    mint(
+      schedule_start: 18_446_744_073_709_551_000,
+      schedule: [%{"duration" => indefinite(), "rate_per_sec" => 1}]
+    )
+
+    {:ok, _v, html} = live(conn, ~p"/enft/mock/1")
+    assert html =~ "Far in the future"
+    refute html =~ ~s(datetime="")
+  end
+
+  test "a computed end beyond the valid date range renders Far in the future", %{conn: conn} do
+    mint(
+      schedule_start: 1_796_083_200,
+      schedule: [
+        %{"duration" => 18_446_744_073_709_000_000, "rate_per_sec" => 1},
+        %{"duration" => 1, "rate_per_sec" => 1}
+      ]
+    )
+
+    {:ok, _v, html} = live(conn, ~p"/enft/mock/1")
+    assert html =~ "Far in the future"
   end
 end

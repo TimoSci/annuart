@@ -121,15 +121,30 @@ defmodule AnnuartWeb.EnftComponents do
   end
 
   def datetime(assigns) do
-    assigns = assign(assigns, :dt, to_datetime(assigns.value))
+    case to_datetime(assigns.value) do
+      {:ok, dt} ->
+        assigns = assign(assigns, :dt, dt)
 
-    ~H"""
-    <time {@rest} datetime={DateTime.to_iso8601(@dt)}>{format(@dt, @format)}</time>
-    """
+        ~H"""
+        <time {@rest} datetime={DateTime.to_iso8601(@dt)}>{format(@dt, @format)}</time>
+        """
+
+      :error ->
+        ~H"""
+        <span {@rest}>Far in the future</span>
+        """
+    end
   end
 
-  defp to_datetime(%DateTime{} = dt), do: dt
-  defp to_datetime(seconds) when is_integer(seconds), do: DateTime.from_unix!(seconds)
+  # Unix seconds come from uint64 contract values and may be beyond the calendar's range.
+  defp to_datetime(%DateTime{} = dt), do: {:ok, dt}
+
+  defp to_datetime(seconds) when is_integer(seconds) do
+    case DateTime.from_unix(seconds) do
+      {:ok, dt} -> {:ok, dt}
+      {:error, _} -> :error
+    end
+  end
 
   defp format(dt, :date), do: Calendar.strftime(dt, "%Y-%m-%d")
   defp format(dt, :datetime), do: Calendar.strftime(dt, "%Y-%m-%d %H:%M UTC")
