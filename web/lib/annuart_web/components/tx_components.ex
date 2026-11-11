@@ -13,7 +13,11 @@ defmodule AnnuartWeb.TxComponents do
   attr :label, :string, required: true, doc: "The button text"
   attr :contract_label, :string, required: true
   attr :token_id, :integer, default: nil
-  attr :confirm, :string, default: nil
+
+  attr :confirm, :string,
+    default: nil,
+    doc: "A question asked before running; the hook fills in {amount}, {symbol} and {to}"
+
   attr :decimals, :integer, default: nil, doc: "The token's decimals, for amount inputs"
   attr :symbol, :string, default: nil
   slot :inner_block

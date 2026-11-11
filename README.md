@@ -366,6 +366,9 @@ npx playwright install chromium
 npx playwright test
 ```
 
+The e2e run rewrites `deployments/localhost.json` and the dev database, and stops whatever is
+listening on port 8545.
+
 `E2E_REUSE=1 npx playwright test` reuses a node and server that are already running, which is
 quicker while working on the flows; the final flow restarts the node, so run it on its own or
 skip it with `--grep-invert restarted` then. `web/docs/manual-checklist.md` is the same ground by

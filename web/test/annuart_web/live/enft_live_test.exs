@@ -69,11 +69,11 @@ defmodule AnnuartWeb.EnftLiveTest do
     assert html =~ "2026-12-01"
   end
 
-  test "settled ENFT says the schedule has ended and the leftover was released", %{conn: conn} do
+  test "settled ENFT says the schedule has ended and any leftover was released", %{conn: conn} do
     mint()
     stub_reads(1, settled: true)
     {:ok, _v, html} = live(conn, ~p"/enft/mock/1")
-    assert html =~ "This schedule has ended and the leftover was released to the owner."
+    assert html =~ "This schedule has ended and any leftover was released to the owner."
     refute html =~ "any leftover is paid to the owner at the end"
   end
 
@@ -179,7 +179,12 @@ defmodule AnnuartWeb.EnftLiveTest do
       assert html =~ "As of the last accrual."
       assert has_element?(view, ~s(#tx-claim[phx-hook="TxAction"][data-action="claim"]), "Claim")
       assert has_element?(view, ~s(#tx-transfer[data-action="transfer"] input[data-arg="to"]))
-      assert has_element?(view, ~s(#tx-transfer[data-confirm]))
+      # The hook fills in the recipient typed into the input, in the browser.
+      assert has_element?(
+               view,
+               ~s(#tx-transfer[data-confirm="Transfer ENFT #1 to {to}? Unclaimed balance goes with the ENFT. Claim first if you want to keep it."])
+             )
+
       assert html =~ "Unclaimed balance goes with the ENFT. Claim first if you want to keep it."
 
       assert has_element?(
@@ -237,6 +242,11 @@ defmodule AnnuartWeb.EnftLiveTest do
       connect_as(view, @stranger)
       refute render(view) =~ "Connect a wallet to donate."
       assert has_element?(view, ~s(#tx-donate[data-decimals="0"][data-symbol="TKN"]))
+      # The amount is filled in by the hook, in the browser; the server never has it.
+      assert has_element?(
+               view,
+               ~s(#tx-donate[data-confirm="Donate {amount} {symbol} to ENFT #1? This cannot be undone."])
+             )
     end
 
     test "maintenance and sell panels are always shown", %{conn: conn} do
@@ -265,7 +275,7 @@ defmodule AnnuartWeb.EnftLiveTest do
         })
 
       assert html =~ "2026-12-02"
-      assert html =~ "This schedule has ended and the leftover was released to the owner."
+      assert html =~ "This schedule has ended and any leftover was released to the owner."
     end
 
     test "tx:confirmed payload with an amount key is ignored", %{conn: conn} do

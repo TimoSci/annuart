@@ -71,6 +71,8 @@ defmodule AnnuartWeb.CreateLiveTest do
     assert html =~ ~s(phx-update="ignore")
   end
 
+  @hash "0x" <> String.duplicate("ab12", 16)
+
   defp confirmed(view, token_id, extra \\ %{}) do
     render_hook(
       view,
@@ -80,7 +82,7 @@ defmodule AnnuartWeb.CreateLiveTest do
           "action" => "createEnft",
           "label" => "mock",
           "tokenId" => token_id,
-          "hash" => "0xabc123"
+          "hash" => @hash
         },
         extra
       )
@@ -120,7 +122,7 @@ defmodule AnnuartWeb.CreateLiveTest do
     Process.sleep(80)
     html = render(view)
     assert html =~ "Your ENFT was created. It is taking longer than usual to appear."
-    assert html =~ "0xabc123"
+    assert html =~ @hash
     assert html =~ ~s(href="/enft/mock/3")
     refute html =~ "Waiting for it to appear"
     refute_redirected(view)
@@ -158,6 +160,31 @@ defmodule AnnuartWeb.CreateLiveTest do
 
     assert Process.alive?(view.pid)
     refute_redirected(view)
+  end
+
+  test "tx:confirmed is ignored unless the hash is 0x and 64 hex digits", %{conn: conn} do
+    mint(token_id: 3)
+    {view, _} = connected(conn)
+
+    for bad <- [
+          "0xabc123",
+          "0x" <> String.duplicate("a", 63),
+          "0x" <> String.duplicate("a", 65),
+          "0x" <> String.duplicate("g", 64),
+          String.duplicate("a", 66),
+          "0x" <> String.duplicate("a", 64) <> "\n",
+          "<script>alert(1)</script>",
+          123
+        ] do
+      confirmed(view, "3", %{"hash" => bad})
+    end
+
+    assert Process.alive?(view.pid)
+    refute_redirected(view)
+    refute render(view) =~ "Waiting for it to appear"
+
+    confirmed(view, "3", %{"hash" => "0x" <> String.duplicate("AbCd", 16)})
+    assert_redirect(view, ~p"/enft/mock/3")
   end
 
   test "tx:confirmed ignores any other key", %{conn: conn} do

@@ -40,3 +40,10 @@ test("a hovered list row is marked by an outline", () => {
   assert.ok(hover, "no .rows .row:hover rule");
   assert.match(hover[1], /outline\s*:/);
 });
+
+test("the page-loading bar is greyscale", () => {
+  const app = readFileSync(new URL("../js/app.js", import.meta.url), "utf8");
+  const config = app.match(/topbar\.config\(([^)]*)\)/);
+  assert.ok(config, "no topbar.config call");
+  assert.match(config[1], /barColors:\s*\{0:\s*"#86868b"\}/);
+});

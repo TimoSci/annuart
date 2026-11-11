@@ -22,15 +22,17 @@ defmodule AnnuartWeb.CreateLive do
   end
 
   # The browser reports a mined creation. Only these four public values are read
-  # from the event; anything else in it is ignored, never stored. The ENFT may
-  # not be indexed yet, so navigation waits until it is (see `arrived/3`).
+  # from the event; anything else in it is ignored, never stored, and an event
+  # whose hash is not a transaction hash is ignored whole. The ENFT may not be
+  # indexed yet, so navigation waits until it is (see `arrived/3`).
   def handle_event(
         "tx:confirmed",
         %{"action" => "createEnft", "label" => label, "tokenId" => token_id, "hash" => hash},
         socket
       )
       when is_binary(label) and is_binary(hash) do
-    with %Config.Contract{} <- Config.contract(label),
+    with true <- Regex.match?(~r/\A0x[0-9a-fA-F]{64}\z/, hash),
+         %Config.Contract{} <- Config.contract(label),
          {:ok, id} <- token_id(token_id) do
       if Enfts.get_enft(label, id) do
         {:noreply, push_navigate(socket, to: ~p"/enft/#{label}/#{id}")}

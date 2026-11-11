@@ -168,7 +168,7 @@ defmodule AnnuartWeb.EnftLive do
               <p>Private schedule</p>
             <% end %>
             <p :if={@settled == true} class="note">
-              This schedule has ended and the leftover was released to the owner.
+              This schedule has ended and any leftover was released to the owner.
             </p>
             <p
               :if={(@settled != true and @periods) && not Schedule.indefinite?(@enft.schedule)}
@@ -230,7 +230,7 @@ defmodule AnnuartWeb.EnftLive do
               label="Transfer"
               contract_label={@label}
               token_id={@token_id}
-              confirm="Unclaimed balance goes with the ENFT. Claim first if you want to keep it."
+              confirm={"Transfer ENFT ##{@token_id} to {to}? Unclaimed balance goes with the ENFT. Claim first if you want to keep it."}
             >
               <input type="text" data-arg="to" placeholder="Recipient address" autocomplete="off" />
             </TxComponents.action>
@@ -254,6 +254,7 @@ defmodule AnnuartWeb.EnftLive do
               token_id={@token_id}
               decimals={@token_meta && @token_meta.decimals}
               symbol={@token_meta && @token_meta.symbol}
+              confirm={"Donate {amount} {symbol} to ENFT ##{@token_id}? This cannot be undone."}
             >
               <input
                 type="text"
