@@ -132,6 +132,8 @@ function speedingUp(session) {
 function steps() {
   const log = [];
   const fn = (id, state, detail) => log.push({id, state, detail});
+  fn.sentLog = [];
+  fn.sent = (id, hash) => fn.sentLog.push({id, hash});
   fn.log = log;
   fn.ids = () => [...new Set(log.map(e => e.id))];
   fn.state = id => log.filter(e => e.id === id).at(-1)?.state;
@@ -179,6 +181,9 @@ test("create -> accrue -> reveal -> claim on the mock token", {skip}, async () =
   const st = steps();
   const {tokenId, hash} = await actions.createEnft(alice, mock, createArgs(alice.address), st);
   assert.deepEqual(st.ids(), ["balance", "authorise", "encrypt", "confirm", "mined"]);
+  // Both ways of sending report the broadcast: a one-step wait and a send/mined pair.
+  assert.deepEqual(st.sentLog.map(e => e.id), ["authorise", "mined"]);
+  assert.ok(st.sentLog.every(e => /^0x[0-9a-f]{64}$/.test(e.hash)));
   assert.ok(st.finalStates().every(s => s === "done" || s === "skipped"));
   assert.equal(typeof tokenId, "bigint");
   assert.match(hash, /^0x[0-9a-f]{64}$/);
@@ -595,7 +600,8 @@ test("an unwrap request older than the log look-back is found from storage until
     err => { requestId = err.requestId; return true; },
   );
   const key = `annuart:unwraps:31337:${wrapped.token}:${dave.address}`.toLowerCase();
-  assert.deepEqual(JSON.parse(store.get(key)).map(u => u.requestId), [requestId]);
+  // Earlier finished requests may still be remembered (kept 12 blocks): this one is last.
+  assert.equal(JSON.parse(store.get(key)).at(-1).requestId, requestId);
 
   // Push the request out of the look-back: the logs no longer reach it.
   await provider.send("hardhat_mine", ["0x" + (50_100).toString(16)]);
@@ -605,6 +611,34 @@ test("an unwrap request older than the log look-back is found from storage until
   assert.ok(store.has(key));
 
   await actions.finaliseUnwrap(dave, wrapped, {requestId}, steps());
+  assert.deepEqual(await actions.pendingUnwraps(dave, wrapped), []);
+  assert.equal(store.has(key), false);
+  await cleanSlate(dave);
+});
+
+test("a remembered unwrap request is kept for 12 blocks after it reads as finished", {skip}, async () => {
+  await cleanSlate(dave);
+  await actions.wrap(dave, wrapped, {wei: ETHER}, steps());
+  let requestId;
+  await assert.rejects(
+    () => actions.unwrap(rejectingNth(dave, 2), wrapped, {amount: UNIT, ...WRAPPED_UNITS}, steps()),
+    err => { requestId = err.requestId; return true; },
+  );
+  const key = `annuart:unwraps:31337:${wrapped.token}:${dave.address}`.toLowerCase();
+  const [entry] = JSON.parse(store.get(key));
+  assert.equal(typeof entry.block, "number");
+
+  await actions.finaliseUnwrap(dave, wrapped, {requestId}, steps());
+  // A lagging RPC could read zero this early for a live request: not pruned yet.
+  assert.deepEqual(await actions.pendingUnwraps(dave, wrapped), []);
+  assert.ok(store.has(key));
+
+  await provider.send("hardhat_mine", ["0xc"]);
+  assert.deepEqual(await actions.pendingUnwraps(dave, wrapped), []);
+  assert.equal(store.has(key), false);
+
+  // An entry with no block number is treated as old.
+  store.set(key, JSON.stringify([{requestId, amountHandle: entry.amountHandle}]));
   assert.deepEqual(await actions.pendingUnwraps(dave, wrapped), []);
   assert.equal(store.has(key), false);
   await cleanSlate(dave);

@@ -5,6 +5,8 @@
 // Every piece of work runs inside the step that owns it; checks made before the
 // first step (the chain check, wrap's amount check) belong to the first step.
 // A failure marks that step "failed" with errors.explain(err) and rethrows;
+// the optional onStep.sent(stepId, hash) says a step's transaction is broadcast and
+// the step now waits on the network;
 // once the action has broadcast a transaction, the error carries the last
 // one's hash as err.sentHash, so the caller does not offer to send it again.
 import {Contract, ZeroAddress, makeError} from "ethers";
@@ -73,11 +75,18 @@ async function withSteps(onStep, firstStep, fn) {
     // and runs `onMined(receipt)`, under `minedId`.
     async send(sendId, minedId, sendTx, onMined = receipt => receipt) {
       const tx = await steps.step(sendId, () => broadcast(sendTx), t => ({hash: t.hash}));
-      return steps.step(minedId, async () => onMined(await mined(tx)));
+      return steps.step(minedId, async () => {
+        onStep?.sent?.(minedId, tx.hash);
+        return onMined(await mined(tx));
+      });
     },
     // Sends, waits for and reads a transaction under one step.
     sendAndWait: (id, sendTx, onMined = receipt => receipt, doneDetail) =>
-      steps.step(id, async () => onMined(await mined(await broadcast(sendTx))), doneDetail),
+      steps.step(id, async () => {
+        const tx = await broadcast(sendTx);
+        onStep?.sent?.(id, tx.hash);
+        return onMined(await mined(tx));
+      }, doneDetail),
   };
   try {
     return await fn(steps);
@@ -242,7 +251,7 @@ export async function unwrap(session, contract, {amount, symbol, decimals}, onSt
       () => token.unwrap(s.address, s.address, enc.handle, enc.inputProof),
       receipt => {
         const {unwrapRequestId, amount: amountHandle} = findEvent(receipt, token, "UnwrapRequested").args;
-        rememberUnwrap(s, contract, {requestId: unwrapRequestId, amountHandle});
+        rememberUnwrap(s, contract, {requestId: unwrapRequestId, amountHandle, block: receipt.blockNumber});
         return unwrapRequestId;
       },
       id => ({requestId: id}));
@@ -332,36 +341,49 @@ function storeUnwraps(key, list) {
   } catch { /* storage unavailable: the request is found through the logs */ }
 }
 
-function rememberUnwrap(s, contract, {requestId, amountHandle}) {
+function rememberUnwrap(s, contract, {requestId, amountHandle, block}) {
   const key = unwrapsKey(s, contract);
   const id = String(requestId);
   const list = storedUnwraps(key).filter(u => u.requestId !== id);
-  storeUnwraps(key, [...list, {requestId: id, amountHandle: String(amountHandle)}]);
+  storeUnwraps(key, [...list, {requestId: id, amountHandle: String(amountHandle), block}]);
 }
+
+// A request reading as finished this soon after it was made may be a lagging
+// RPC that has not seen it yet: it is forgotten only after this many blocks.
+const FORGET_AFTER = 12;
 
 // Unwrap requests paid to the session's address that are still pending. A
 // request is pending while the wrapper still maps its id to a receiver:
 // finalizeUnwrap deletes that entry, so unwrapRequester(id) is then zero.
+// requestId is a string in everything returned.
 export async function pendingUnwraps(session, contract) {
   requireKind(contract, "wrapped", "Only a wrapped token can be unwrapped.");
   const s = await ensureChain(session);
   const token = tokenOf(contract, s.provider);
   const logs = await recentLogs(token, token.filters.UnwrapRequested(s.address), contract.deployBlock);
   const key = unwrapsKey(s, contract);
-  const stored = storedUnwraps(key);
+  const stored = new Map(storedUnwraps(key).map(u => [u.requestId, u]));
   const candidates = new Map();
-  for (const u of stored) candidates.set(u.requestId, {requestId: u.requestId, amountHandle: u.amountHandle});
+  for (const u of stored.values()) candidates.set(u.requestId, {requestId: u.requestId, amountHandle: u.amountHandle});
   for (const log of logs) {
-    const {unwrapRequestId: requestId, amount: amountHandle} = log.args;
-    candidates.set(String(requestId), {requestId, amountHandle});
+    const requestId = String(log.args.unwrapRequestId);
+    candidates.set(requestId, {requestId, amountHandle: log.args.amount});
   }
   const pending = [];
-  const finished = new Set();
+  const finished = [];
+  let head = null;
   for (const [id, request] of candidates) {
-    if ((await token.unwrapRequester(request.requestId)) !== ZeroAddress) pending.push(request);
-    else finished.add(id);
+    if ((await token.unwrapRequester(request.requestId)) !== ZeroAddress) { pending.push(request); continue; }
+    const block = stored.get(id)?.block;
+    if (!stored.has(id)) continue;
+    head ??= await s.provider.getBlockNumber();
+    if (typeof block !== "number" || head >= block + FORGET_AFTER) finished.push(id);
   }
-  if (stored.some(u => finished.has(u.requestId))) storeUnwraps(key, stored.filter(u => !finished.has(u.requestId)));
+  if (finished.length) {
+    // Re-read: another tab or action may have remembered a request meanwhile.
+    const gone = new Set(finished);
+    storeUnwraps(key, storedUnwraps(key).filter(u => !gone.has(u.requestId)));
+  }
   return pending;
 }
 

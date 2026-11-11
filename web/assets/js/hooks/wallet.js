@@ -52,6 +52,8 @@ export const Wallet = {
   reconnect() {
     const choice = remembered();
     if (current() || reconnecting || !choice) return;
+    // The dev login does not exist here (another chain, or no dev bundle): forget it.
+    if (!availableSigners().some(s => s.id === choice.id)) { remember(null); return; }
     reconnecting = this.connectWith(choice, {silent: true}).finally(() => { reconnecting = null; });
   },
 

@@ -506,7 +506,7 @@ function fakeTimers() {
   };
 }
 
-test("a step waiting on a sent transaction gains a note after 180 seconds, and loses it when it moves on", async () => {
+test("the note comes 180 seconds after the broadcast, not after the wallet prompt", async () => {
   const {el} = setup({action: "claim"});
   const timers = fakeTimers();
   let onStep;
@@ -516,24 +516,60 @@ test("a step waiting on a sent transaction gains a note after 180 seconds, and l
     run: (_s, _c, _a, report) => new Promise(resolve => { onStep = report; finish = resolve; }),
   });
   const done = ctl.run();
-  onStep("confirm", "active");
-  assert.equal(timers.pending.size, 0); // no transaction yet
-  onStep("confirm", "done", {hash: HASH});
-  onStep("mined", "active");
+  onStep("approve", "active"); // the wallet prompt: no transaction yet
+  assert.equal(timers.pending.size, 0);
+  timers.fire();
+  assert.doesNotMatch(el.textContent, WAITING);
+
+  onStep.sent("approve", HASH); // hash-less step: the hash arrives only through sent
   assert.equal(timers.pending.size, 1);
   assert.equal([...timers.pending.values()][0].ms, 180_000);
   assert.doesNotMatch(el.textContent, WAITING);
 
   timers.fire();
-  const mined = el.querySelector("li[data-step=mined]");
-  assert.match(mined.textContent, WAITING);
+  const approve = el.querySelector("li[data-step=approve]");
+  assert.match(approve.textContent, WAITING);
   assert.equal(el.querySelectorAll("ol.steps button").length, 0);
-  assert.equal(el.querySelectorAll("ol.steps li").length, 2);
 
-  onStep("mined", "done");
+  onStep("approve", "done");
+  assert.doesNotMatch(el.textContent, WAITING);
+
+  // The next step never sent anything: it never shows the note.
+  onStep("wrap", "active");
+  assert.equal(timers.pending.size, 0);
+  timers.fire();
   assert.doesNotMatch(el.textContent, WAITING);
   finish({hash: HASH});
   await done;
+});
+
+test("the note goes, and the timer is cancelled, when the step fails", async () => {
+  const {el} = setup({action: "claim"});
+  const timers = fakeTimers();
+  const {ctl} = controller(el, {
+    timers: {setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout},
+    run: async (_s, _c, _a, onStep) => {
+      onStep("mined", "active");
+      onStep.sent("mined", HASH);
+      timers.fire();
+      assert.match(el.textContent, WAITING);
+      onStep("mined", "failed", "boom");
+      throw new Error("boom");
+    },
+  });
+  await ctl.run();
+  assert.doesNotMatch(el.textContent, WAITING);
+});
+
+test("destroying the controller cancels a pending note timer", () => {
+  const {el} = setup({action: "claim"});
+  const timers = fakeTimers();
+  const {ctl} = controller(el, {timers: {setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout}});
+  ctl.stepList.report("mined", "active");
+  ctl.stepList.sent("mined", HASH);
+  assert.equal(timers.pending.size, 1);
+  ctl.destroy();
+  assert.equal(timers.pending.size, 0);
 });
 
 test("the waiting timer does not outlive a failure", async () => {
@@ -542,8 +578,8 @@ test("the waiting timer does not outlive a failure", async () => {
   const {ctl} = controller(el, {
     timers: {setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout},
     run: async (_s, _c, _a, onStep) => {
-      onStep("confirm", "done", {hash: HASH});
       onStep("mined", "active");
+      onStep.sent("mined", HASH);
       throw new Error("boom");
     },
   });

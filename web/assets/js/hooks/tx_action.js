@@ -68,7 +68,6 @@ export class StepList {
     this.setTimer = opts.setTimeout ?? ((fn, ms) => globalThis.setTimeout(fn, ms));
     this.clearTimer = opts.clearTimeout ?? (t => globalThis.clearTimeout(t));
     this.timer = null;
-    this.hash = null;
     this.list = list;
     this.doc = list.ownerDocument;
     this.steps = [];
@@ -79,7 +78,6 @@ export class StepList {
   begin(action) {
     this.steps = (PLANS[action] ?? SEND).map(id => ({id, state: "waiting"}));
     this.recovery = null;
-    this.hash = null;
     this.stopWaiting();
     this.render();
   }
@@ -90,15 +88,20 @@ export class StepList {
     step.state = state;
     step.detail = detail;
     this.stopWaiting();
-    if (detail?.hash) this.hash = detail.hash;
-    // In progress after a transaction went out: the step is waiting for it.
-    if (state === "active" && this.hash) {
-      this.timer = this.setTimer(() => {
-        this.timer = null;
-        if (step.state === "active") { step.waitingNote = true; this.render(); }
-      }, STILL_WAITING_MS);
-    }
     this.render();
+  }
+
+  // The action broadcast step `id`'s transaction: from now on that step waits
+  // on the network, and gets a note if that takes too long. Never armed during
+  // the wallet prompt, which is before the broadcast.
+  sent(id) {
+    const step = this.steps.find(s => s.id === id);
+    if (!step || step.state !== "active") return;
+    this.stopWaiting();
+    this.timer = this.setTimer(() => {
+      this.timer = null;
+      if (step.state === "active") { step.waitingNote = true; this.render(); }
+    }, STILL_WAITING_MS);
   }
 
   // Clears the timer and every "still waiting" note.
@@ -207,6 +210,7 @@ export class TxActionController {
   }
 
   destroy() {
+    this.stepList.stopWaiting();
     this.el.removeEventListener("input", this.onInput);
     this.el.removeEventListener("click", this.onClick);
   }
@@ -314,7 +318,9 @@ export class TxActionController {
     this.setBusy(true);
     this.stepList.begin(action);
     try {
-      const result = await run(session, contract, args, (id, state, detail) => this.stepList.report(id, state, detail));
+      const report = (id, state, detail) => this.stepList.report(id, state, detail);
+      report.sent = (id, hash) => this.stepList.sent(id, hash);
+      const result = await run(session, contract, args, report);
       this.recovery = null;
       this.finishing = null;
       this.deps.push("tx:confirmed", {action, label, tokenId: this.el.dataset.tokenId ?? null, hash: result?.hash ?? null});

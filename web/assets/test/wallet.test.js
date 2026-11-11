@@ -9,7 +9,12 @@ const {document, window} = parseHTML(`<html><head>
 </head><body><div id="wallet"></div></body></html>`);
 globalThis.document = document;
 globalThis.window = globalThis;
-globalThis.localStorage = {getItem: () => null, setItem() {}, removeItem() {}};
+const store = new Map();
+globalThis.localStorage = {
+  getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)), removeItem: k => store.delete(k),
+};
+const setChain = chainId => document.querySelector("meta[name='annuart-chain']")
+  .setAttribute("content", JSON.stringify({chainId, rpcUrl: null, contracts: []}));
 
 // linkedom's <select> has a read-only value; the hook sets it.
 Object.defineProperty(window.HTMLSelectElement?.prototype ?? Object.getPrototypeOf(document.createElement("select")), "value", {
@@ -50,4 +55,21 @@ test("with no injected wallet, the button says so", async () => {
   hook.el.querySelector("button.wallet-connect").onclick();
   await new Promise(r => setTimeout(r, 10));
   assert.equal(hook.el.querySelector(".wallet-note").textContent, "No wallet found");
+});
+
+test("off the local chain the dev bundle adds no select, and a remembered dev choice is removed quietly", async () => {
+  setChain(11155111);
+  window.__annuartDev = {createSigner: async () => ({}), accounts: ["0x" + "11".repeat(20)]};
+  store.set("annuart:signer", JSON.stringify({id: "dev", index: 0}));
+  const hook = Object.create(Wallet);
+  hook.el = document.getElementById("wallet");
+  hook.pushEvent = () => {};
+  hook.mounted();
+  await new Promise(r => setTimeout(r, 10));
+  assert.ok(hook.el.querySelector("button.wallet-connect"));
+  assert.equal(hook.el.querySelector("select"), null);
+  assert.equal(hook.el.querySelector(".wallet-note"), null);
+  assert.equal(store.has("annuart:signer"), false);
+  hook.destroyed();
+  setChain(31337);
 });
