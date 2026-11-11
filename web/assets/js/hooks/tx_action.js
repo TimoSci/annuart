@@ -42,12 +42,69 @@ const ETH_DECIMALS = 18;
 
 class InputError extends Error {}
 
+// The step list an action reports into: one <li> per step, a failure with its
+// reason and a "Try again" button. Shared by every form that runs an action.
+export class StepList {
+  constructor(list) {
+    this.list = list;
+    this.doc = list.ownerDocument;
+    this.steps = [];
+  }
+
+  // Shows every step the action will report, all waiting.
+  begin(action) {
+    this.steps = (PLANS[action] ?? SEND).map(id => ({id, state: "waiting"}));
+    this.render();
+  }
+
+  report(id, state, detail) {
+    let step = this.steps.find(s => s.id === id);
+    if (!step) { step = {id, state}; this.steps.push(step); }
+    step.state = state;
+    step.detail = detail;
+    this.render();
+  }
+
+  // An action that threw without reporting leaves its step active, or no step
+  // failed at all: the failure goes on the first step not yet finished.
+  fail(err) {
+    const active = this.steps.filter(step => step.state === "active");
+    if (active.length === 0 && !this.steps.some(step => step.state === "failed")) {
+      const next = this.steps.find(step => step.state === "waiting");
+      if (next) active.push(next);
+    }
+    for (const step of active) { step.state = "failed"; step.detail = explain(err); }
+    this.render();
+  }
+
+  render() {
+    const items = this.steps.map(step => {
+      const li = this.doc.createElement("li");
+      li.dataset.step = step.id;
+      li.dataset.state = step.state;
+      const name = LABELS[step.id] ?? step.id;
+      if (step.state === "failed") {
+        li.append(`${name}: failed: ${step.detail ?? ""} `);
+        const retry = this.doc.createElement("button");
+        retry.type = "button";
+        retry.dataset.role = "retry";
+        retry.textContent = "Try again";
+        li.append(retry);
+      } else {
+        li.append(`${name}: ${STATE_TEXT[step.state]}`);
+      }
+      return li;
+    });
+    this.list.replaceChildren(...items);
+  }
+}
+
+
 export class TxActionController {
   constructor(el, deps) {
     this.el = el;
     this.deps = deps;
     this.doc = el.ownerDocument;
-    this.steps = [];
     this.running = false;
     this.pending = null;
 
@@ -56,6 +113,7 @@ export class TxActionController {
     this.message.setAttribute("role", "alert");
     this.list = el.querySelector("ol.steps");
     this.list.before(this.message);
+    this.stepList = new StepList(this.list);
 
     this.echoes = [...el.querySelectorAll("[data-arg=amount], [data-arg=wei]")].map(input => {
       const echo = this.doc.createElement("span");
@@ -154,22 +212,13 @@ export class TxActionController {
 
     this.running = true;
     this.setBusy(true);
-    this.steps = (PLANS[action] ?? SEND).map(id => ({id, state: "waiting"}));
-    this.render();
+    this.stepList.begin(action);
     try {
-      const result = await run(session, contract, args, (id, state, detail) => this.report(id, state, detail));
+      const result = await run(session, contract, args, (id, state, detail) => this.stepList.report(id, state, detail));
       this.deps.push("tx:confirmed", {action, label, tokenId: this.el.dataset.tokenId ?? null, hash: result?.hash ?? null});
       this.deps.announce();
     } catch (err) {
-      // An action that threw without reporting leaves its step active, or no
-      // step failed at all: the failure goes on the first step not yet finished.
-      const active = this.steps.filter(step => step.state === "active");
-      if (active.length === 0 && !this.steps.some(step => step.state === "failed")) {
-        const next = this.steps.find(step => step.state === "waiting");
-        if (next) active.push(next);
-      }
-      for (const step of active) { step.state = "failed"; step.detail = explain(err); }
-      this.render();
+      this.stepList.fail(err);
     } finally {
       this.running = false;
       this.setBusy(false);
@@ -179,35 +228,6 @@ export class TxActionController {
   setBusy(busy) {
     const button = this.el.querySelector("button[data-role=run]");
     if (button) button.disabled = busy;
-  }
-
-  report(id, state, detail) {
-    let step = this.steps.find(s => s.id === id);
-    if (!step) { step = {id, state}; this.steps.push(step); }
-    step.state = state;
-    step.detail = detail;
-    this.render();
-  }
-
-  render() {
-    const items = this.steps.map(step => {
-      const li = this.doc.createElement("li");
-      li.dataset.step = step.id;
-      li.dataset.state = step.state;
-      const name = LABELS[step.id] ?? step.id;
-      if (step.state === "failed") {
-        li.append(`${name}: failed: ${step.detail ?? ""} `);
-        const retry = this.doc.createElement("button");
-        retry.type = "button";
-        retry.dataset.role = "retry";
-        retry.textContent = "Try again";
-        li.append(retry);
-      } else {
-        li.append(`${name}: ${STATE_TEXT[step.state]}`);
-      }
-      return li;
-    });
-    this.list.replaceChildren(...items);
   }
 }
 

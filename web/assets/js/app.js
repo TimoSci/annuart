@@ -27,12 +27,13 @@ import topbar from "../vendor/topbar"
 import {Wallet} from "./hooks/wallet.js"
 import {TxAction} from "./hooks/tx_action.js"
 import {SecretValue} from "./hooks/secret_value.js"
+import {CreateForm} from "./hooks/create_form.js"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, Wallet, TxAction, SecretValue},
+  hooks: {...colocatedHooks, Wallet, TxAction, SecretValue, CreateForm},
 })
 
 // Show progress bar on live navigation and form submits

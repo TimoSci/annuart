@@ -47,7 +47,7 @@ defmodule AnnuartWeb.Layouts do
           Browse
         </.link>
         <.link
-          href="/create"
+          navigate={~p"/create"}
           class={["nav-item", @current == :create && "current"]}
           data-activity-id="nav:create"
         >

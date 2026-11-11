@@ -126,3 +126,36 @@ td.n, th.n { text-align: right; padding-right: 0; }
 .tx ol.steps:empty { display: none; }
 .tx ol.steps li[data-state=waiting] { opacity: .5; }
 .tx ol.steps li[data-state=active], .tx ol.steps li[data-state=failed] { color: var(--hot-fg); }
+
+/* Create ENFT form */
+.create { display: flex; flex-direction: column; gap: 12px; max-width: 760px; }
+.create .field { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; }
+.create .field > label { min-width: 120px; opacity: .75; }
+.create input[type=text], .create input[type=datetime-local], .create select {
+  background: transparent; color: var(--hot-fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 5px 10px; font: inherit; max-width: 100%;
+}
+.create select option { background: var(--rest-bg); }
+.create button {
+  align-self: flex-start; background: var(--rest-bg); color: var(--hot-fg);
+  border: 1px solid var(--line); border-radius: 6px; padding: 5px 12px; font: inherit; cursor: pointer;
+}
+.create button:hover { background: var(--hot-bg); }
+.create button:disabled { opacity: .6; cursor: default; }
+.create [hidden] { display: none; }
+.create .period {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 0; border-top: 1px solid var(--line);
+}
+.create .period input[data-role=length] { width: 5em; }
+.create .period input[data-role=rate] { width: 8em; }
+.create .period .effective, .create .period .upto { font-size: 12px; opacity: .8; }
+.create .amount-echo, .create .tx-message, .create .total { font-size: 12px; margin: 4px 0; }
+.create .tx-message:empty, .create .warning:empty, .create .total:empty { display: none; }
+.create .warning { color: var(--hot-fg); border: 1px dashed var(--rest-fg); border-radius: 6px; padding: 8px; font-size: 13px; }
+.create .summary { border: 1px solid var(--rest-fg); border-radius: 8px; padding: 12px 14px; color: var(--hot-fg); }
+.create .summary button { margin-right: 8px; }
+.create ol.steps { list-style: none; padding: 0; margin: 4px 0 0; font-size: 13px; }
+.create ol.steps:empty { display: none; }
+.create ol.steps li[data-state=waiting] { opacity: .5; }
+.create ol.steps li[data-state=active], .create ol.steps li[data-state=failed] { color: var(--hot-fg); }
