@@ -6,7 +6,7 @@ import {FHE, euint64, externalEuint64} from "@fhevm/solidity/lib/FHE.sol";
 import "encrypted-types/EncryptedTypes.sol";
 import {MockConfidentialToken} from "../src/mocks/MockConfidentialToken.sol";
 import {EndowmentNFT} from "../src/EndowmentNFT.sol";
-import {Schedule, Segment} from "../src/libraries/Schedule.sol";
+import {Schedule, Segment, INDEFINITE} from "../src/libraries/Schedule.sol";
 import {IERC7984} from "@openzeppelin/confidential-contracts/interfaces/IERC7984.sol";
 
 contract EndowmentNFTTest is FhevmTest {
@@ -33,13 +33,68 @@ contract EndowmentNFTTest is FhevmTest {
         s[0] = Segment({duration: 1_000, ratePerSec: 1}); // 1 unit/sec for 1000s
     }
 
-    function _mintEndowment(address to, uint64 amount, bool topUps) internal returns (uint256 id) {
+    function _mintWith(address to, uint64 amount, bool topUps, Segment[] memory segs, uint64 start)
+        internal
+        returns (uint256 id)
+    {
         token.mint(creator, amount);
         vm.prank(creator);
         token.setOperator(address(nft), uint48(block.timestamp + 365 days));
         (externalEuint64 handle, bytes memory proof) = encryptUint64(amount, creator, address(nft));
         vm.prank(creator);
-        id = nft.mint(to, handle, proof, _segments(), uint64(block.timestamp), topUps);
+        id = nft.mint(to, handle, proof, segs, start, topUps);
+    }
+
+    function _mintEndowment(address to, uint64 amount, bool topUps) internal returns (uint256 id) {
+        id = _mintWith(to, amount, topUps, _segments(), uint64(block.timestamp));
+    }
+
+    function _open(uint64 rate) internal pure returns (Segment[] memory s) {
+        s = new Segment[](2);
+        s[0] = Segment({duration: 100, ratePerSec: 1});
+        s[1] = Segment({duration: INDEFINITE, ratePerSec: rate});
+    }
+
+    function test_mint_revertsWhenIndefiniteNotLast() public {
+        Segment[] memory s = new Segment[](2);
+        s[0] = Segment({duration: INDEFINITE, ratePerSec: 1});
+        s[1] = Segment({duration: 100, ratePerSec: 1});
+        token.mint(creator, 10);
+        vm.prank(creator);
+        token.setOperator(address(nft), uint48(block.timestamp + 365 days));
+        (externalEuint64 h, bytes memory p) = encryptUint64(10, creator, address(nft));
+        vm.expectRevert(EndowmentNFT.IndefiniteSegmentNotLast.selector);
+        vm.prank(creator);
+        nft.mint(alice, h, p, s, uint64(block.timestamp), false);
+    }
+
+    function test_mint_revertsWhenIndefiniteRateZero() public {
+        Segment[] memory s = _open(0);
+        token.mint(creator, 10);
+        vm.prank(creator);
+        token.setOperator(address(nft), uint48(block.timestamp + 365 days));
+        (externalEuint64 h, bytes memory p) = encryptUint64(10, creator, address(nft));
+        vm.expectRevert(EndowmentNFT.ZeroRateIndefiniteSegment.selector);
+        vm.prank(creator);
+        nft.mint(alice, h, p, s, uint64(block.timestamp), false);
+    }
+
+    function test_indefinite_paysUntilEndowmentRunsOut() public {
+        uint256 id = _mintWith(alice, 1_000, false, _open(2), uint64(block.timestamp));
+        vm.warp(block.timestamp + 200); // 100*1 + 100*2 = 300
+        nft.accrue(id);
+        assertEq(decrypt(nft.distributionHandle(id)), 300);
+        vm.warp(block.timestamp + 10_000); // would be far more than 1000
+        nft.accrue(id);
+        assertEq(decrypt(nft.distributionHandle(id)), 1_000);
+    }
+
+    // Review Focus 4
+    function test_indefinite_saturatedIntegrationDoesNotRevert() public {
+        uint256 id = _mintWith(alice, 1_000, false, _open(type(uint64).max), uint64(block.timestamp));
+        vm.warp(block.timestamp + 365 days);
+        nft.accrue(id);
+        assertEq(decrypt(nft.distributionHandle(id)), 1_000);
     }
 
     function test_mint_distributionStartsZeroAndOwnerReadable() public {

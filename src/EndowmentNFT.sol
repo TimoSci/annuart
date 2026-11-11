@@ -6,7 +6,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {FHE, euint64, externalEuint64} from "@fhevm/solidity/lib/FHE.sol";
 import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {IERC7984} from "@openzeppelin/confidential-contracts/interfaces/IERC7984.sol";
-import {Schedule, Segment} from "./libraries/Schedule.sol";
+import {Schedule, Segment, INDEFINITE} from "./libraries/Schedule.sol";
 
 contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
     using Schedule for Segment[];
@@ -26,6 +26,8 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
 
     error EmptySchedule();
     error ZeroDurationSegment();
+    error IndefiniteSegmentNotLast();
+    error ZeroRateIndefiniteSegment();
     error TopUpsDisabled();
     error NonexistentToken();
     error NotOwner();
@@ -59,6 +61,10 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
         e.topUpsAllowed = topUpsAllowed;
         for (uint256 i = 0; i < segments.length; i++) {
             if (segments[i].duration == 0) revert ZeroDurationSegment();
+            if (segments[i].duration == INDEFINITE) {
+                if (i != segments.length - 1) revert IndefiniteSegmentNotLast();
+                if (segments[i].ratePerSec == 0) revert ZeroRateIndefiniteSegment();
+            }
             e.schedule.push(segments[i]);
         }
 
