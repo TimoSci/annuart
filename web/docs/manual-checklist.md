@@ -15,9 +15,11 @@ cannot judge.
    history" and disconnect).
 4. Keep the browser's developer tools open on the Network tab, with "Preserve log" on, for step 8.
 
-On Sepolia the lists wait on the server: a new ENFT or a transfer shows up after about half a
-minute (two confirmations of about 12 seconds, plus the server's polling), and `Created. Waiting
-for it to appear…` can last that long. Wait before deciding something failed.
+On Sepolia the lists wait on the server: a new ENFT or a transfer shows up after half a minute
+to a minute (two confirmations of about 12 seconds, plus up to 12 seconds of the server's
+polling), and `Created. Waiting for it to appear…` can last that long. If it then says it is
+taking longer than usual, the page keeps waiting and opens the ENFT once it appears. Wait before
+deciding something failed.
 
 ## 1. Anonymous visitor
 

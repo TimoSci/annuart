@@ -157,8 +157,9 @@ offered, because it only works on the local chain.
 Things that differ from the local chain:
 
 - **Lists update more slowly.** The server stays two blocks behind the chain head
-  (`ANNUART_CONFIRMATIONS`, default 2 off the local chain) before it records an event, so
-  a new ENFT or a transfer takes about half a minute to appear.
+  (`ANNUART_CONFIRMATIONS`, default 2 off the local chain) before it records an event, and
+  it reads the chain every 12 seconds (`ANNUART_POLL_MS`), so a new ENFT or a transfer
+  takes half a minute to a minute to appear.
 - **The first start reads the chain from the deploy block**, which is quick right after
   deploying and slower the older the contracts get.
 - **Some free RPC plans only allow log queries over a small block range.** If the server

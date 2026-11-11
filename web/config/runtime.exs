@@ -50,7 +50,8 @@ end
 for {key, value} <- [
       public_rpc_url: System.get_env("ANNUART_PUBLIC_RPC_URL"),
       indexer_confirmations: parse_int.("ANNUART_CONFIRMATIONS", 0),
-      indexer_chunk: parse_int.("ANNUART_LOG_CHUNK", 1)
+      indexer_chunk: parse_int.("ANNUART_LOG_CHUNK", 1),
+      indexer_interval_ms: parse_int.("ANNUART_POLL_MS", 1_000)
     ],
     value != nil do
   config :annuart, [{key, value}]

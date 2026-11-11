@@ -68,12 +68,18 @@ defmodule Annuart.Chain.ConfigTest do
   end
 
   describe "what the page publishes" do
-    @env_keys [:chain, :public_rpc_url, :indexer_confirmations, :indexer_chunk]
+    @env_keys [
+      :chain,
+      :public_rpc_url,
+      :indexer_confirmations,
+      :indexer_chunk,
+      :indexer_interval_ms
+    ]
 
     setup do
       previous = for k <- @env_keys, do: {k, Application.fetch_env(:annuart, k)}
 
-      for k <- [:public_rpc_url, :indexer_confirmations, :indexer_chunk],
+      for k <- [:public_rpc_url, :indexer_confirmations, :indexer_chunk, :indexer_interval_ms],
           do: Application.delete_env(:annuart, k)
 
       on_exit(fn ->
@@ -105,6 +111,72 @@ defmodule Annuart.Chain.ConfigTest do
       assert Config.public().rpcUrl == "http://127.0.0.1:8545"
     end
 
+    test "public/0 withholds a non-loopback server RPC URL on chain 31337" do
+      put_chain(chain_id: 31_337, rpc_url: "https://rpc.example/v3/SECRET", contracts: [])
+      assert Config.public().rpcUrl == nil
+      refute Jason.encode!(Config.public()) =~ "SECRET"
+    end
+
+    test "public/0 publishes each loopback form of the RPC URL on chain 31337" do
+      for url <- [
+            "http://localhost:8545",
+            "http://127.0.0.1:8545",
+            "http://[::1]:8545",
+            "http://127.0.0.1:8545/"
+          ] do
+        put_chain(chain_id: 31_337, rpc_url: url, contracts: [])
+        assert Config.public().rpcUrl == url, url
+      end
+    end
+
+    test "a host that only starts like a loopback one is not loopback" do
+      for url <- ["http://127.0.0.1.example.com:8545", "http://localhost.example", "not a url"] do
+        put_chain(chain_id: 31_337, rpc_url: url, contracts: [])
+        assert Config.public().rpcUrl == nil, url
+      end
+    end
+
+    test "a withheld RPC URL on chain 31337 is warned about once at start, without the URL" do
+      put_chain(chain_id: 31_337, rpc_url: "https://rpc.example/v3/SECRET", contracts: [])
+      log = capture_log(fn -> Config.warn_withheld_rpc_url() end)
+      assert log =~ "the dev login needs a loopback RPC URL"
+      refute log =~ "SECRET"
+
+      for {chain_id, url} <- [
+            {31_337, "http://127.0.0.1:8545"},
+            {11_155_111, "https://rpc.example/v3/SECRET"}
+          ] do
+        put_chain(chain_id: chain_id, rpc_url: url, contracts: [])
+        assert capture_log(fn -> Config.warn_withheld_rpc_url() end) == ""
+      end
+
+      put_chain(chain_id: 31_337, rpc_url: "https://rpc.example/v3/SECRET", contracts: [])
+      Application.put_env(:annuart, :public_rpc_url, "https://public.example")
+      assert capture_log(fn -> Config.warn_withheld_rpc_url() end) == ""
+    end
+
+    test "poll_ms is 4 s on the local chain and with no chain, 12 s elsewhere, and can be set" do
+      put_chain(chain_id: 31_337, contracts: [])
+      assert Config.poll_ms() == 4_000
+      put_chain(chain_id: 0, contracts: [])
+      assert Config.poll_ms() == 4_000
+      put_chain(chain_id: 11_155_111, contracts: [])
+      assert Config.poll_ms() == 12_000
+      Application.put_env(:annuart, :indexer_interval_ms, 2_500)
+      assert Config.poll_ms() == 2_500
+      put_chain(chain_id: 31_337, contracts: [])
+      assert Config.poll_ms() == 2_500
+    end
+
+    test "index_wait_ms adds one poll interval off the local chain only" do
+      put_chain(chain_id: 31_337, contracts: [])
+      assert Config.index_wait_ms() == 20_000
+      put_chain(chain_id: 11_155_111, contracts: [])
+      assert Config.index_wait_ms() == 20_000 + 2 * 15_000 + 12_000
+      Application.put_env(:annuart, :indexer_interval_ms, 30_000)
+      assert Config.index_wait_ms() == 20_000 + 2 * 15_000 + 30_000
+    end
+
     test "public/0 prefers an explicit public RPC URL" do
       put_chain(chain_id: 11_155_111, rpc_url: "https://rpc.example/v3/SECRET", contracts: [])
       Application.put_env(:annuart, :public_rpc_url, "https://public.example")
@@ -127,7 +199,7 @@ defmodule Annuart.Chain.ConfigTest do
       assert Config.confirmations() == 2
       Application.put_env(:annuart, :indexer_confirmations, 5)
       assert Config.confirmations() == 5
-      assert Config.index_wait_ms() == 95_000
+      assert Config.index_wait_ms() == 95_000 + 12_000
     end
 
     test "a bad confirmations setting falls back to the default" do
@@ -142,6 +214,40 @@ defmodule Annuart.Chain.ConfigTest do
       assert Config.log_chunk() == 2_000
       Application.put_env(:annuart, :indexer_chunk, 10)
       assert Config.log_chunk() == 10
+    end
+  end
+
+  describe "runtime.exs" do
+    setup do
+      previous = System.get_env("ANNUART_POLL_MS")
+
+      on_exit(fn ->
+        if previous,
+          do: System.put_env("ANNUART_POLL_MS", previous),
+          else: System.delete_env("ANNUART_POLL_MS")
+      end)
+    end
+
+    defp runtime_annuart do
+      "config/runtime.exs" |> Elixir.Config.Reader.read!(env: :test) |> Keyword.get(:annuart, [])
+    end
+
+    test "ANNUART_POLL_MS sets the indexer interval" do
+      System.put_env("ANNUART_POLL_MS", " 30000 ")
+      assert runtime_annuart()[:indexer_interval_ms] == 30_000
+    end
+
+    test "ANNUART_POLL_MS below 1000 or not a whole number is ignored with a warning" do
+      for raw <- ["999", "12s", "-5"] do
+        System.put_env("ANNUART_POLL_MS", raw)
+        log = capture_log(fn -> assert runtime_annuart()[:indexer_interval_ms] == nil end)
+        assert log =~ "ignoring ANNUART_POLL_MS: expected a whole number of at least 1000"
+      end
+    end
+
+    test "ANNUART_POLL_MS unset leaves the default in force" do
+      System.delete_env("ANNUART_POLL_MS")
+      assert runtime_annuart()[:indexer_interval_ms] == nil
     end
   end
 
@@ -177,12 +283,23 @@ defmodule Annuart.Chain.ConfigTest do
 
     test "a valid file yields its contracts", %{dir: dir} do
       Application.put_env(:annuart, :deployments_path, write_tmp!(dir, deployment("mock")))
-      Application.put_env(:annuart, :rpc_url, "http://rpc.test")
+      Application.put_env(:annuart, :rpc_url, "http://127.0.0.1:9545")
 
       assert capture_log(fn -> Config.init() end) == ""
       assert Config.chain_id() == 31337
+      assert Config.rpc_url() == "http://127.0.0.1:9545"
       assert [%Config.Contract{label: "mock"}] = Config.contracts()
       assert Config.contract("mock").deploy_block == 8
+    end
+
+    test "a chain 31337 file with a non-loopback RPC URL warns at start", %{dir: dir} do
+      Application.put_env(:annuart, :deployments_path, write_tmp!(dir, deployment("mock")))
+      Application.put_env(:annuart, :rpc_url, "https://rpc.example/v3/SECRET")
+
+      log = capture_log(fn -> Config.init() end)
+      assert log =~ "the dev login needs a loopback RPC URL"
+      refute log =~ "SECRET"
+      assert Config.public().rpcUrl == nil
     end
 
     test "chain_id is 0 when nothing is configured" do

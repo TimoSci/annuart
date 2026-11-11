@@ -145,7 +145,7 @@ defmodule Annuart.Chain.Config do
   def confirmations do
     case Application.get_env(:annuart, :indexer_confirmations) do
       n when is_integer(n) and n >= 0 -> n
-      _ -> if chain_id() in [@local_chain, @no_chain_id], do: 0, else: 2
+      _ -> if local_or_none?(), do: 0, else: 2
     end
   end
 
@@ -158,9 +158,33 @@ defmodule Annuart.Chain.Config do
     end
   end
 
-  @doc "How long a creator waits for the indexer to show a new ENFT, in milliseconds."
+  @local_poll_ms 4_000
+  @remote_poll_ms 12_000
+
+  @doc """
+  How often the indexer polls the chain, in milliseconds: `:indexer_interval_ms`
+  when set (`ANNUART_POLL_MS`), else 4 s on the local chain (and when no chain
+  is configured) and 12 s elsewhere, where the provider is usually metered.
+  """
+  @spec poll_ms() :: pos_integer
+  def poll_ms do
+    case Application.get_env(:annuart, :indexer_interval_ms) do
+      n when is_integer(n) and n >= 1 -> n
+      _ -> if local_or_none?(), do: @local_poll_ms, else: @remote_poll_ms
+    end
+  end
+
+  @doc """
+  How long a creator waits for the indexer to show a new ENFT, in milliseconds.
+  Off the local chain it also covers one poll interval.
+  """
   @spec index_wait_ms() :: pos_integer
-  def index_wait_ms, do: 20_000 + confirmations() * 15_000
+  def index_wait_ms do
+    base = 20_000 + confirmations() * 15_000
+    if local_or_none?(), do: base, else: base + poll_ms()
+  end
+
+  defp local_or_none?, do: chain_id() in [@local_chain, @no_chain_id]
 
   @doc """
   Loads the deployment file named by the `:deployments_path` and `:rpc_url`
@@ -173,6 +197,24 @@ defmodule Annuart.Chain.Config do
       path = Application.get_env(:annuart, :deployments_path, "../deployments/localhost.json")
       rpc_url = Application.get_env(:annuart, :rpc_url, @default_rpc_url)
       Application.put_env(:annuart, :chain, env_from_file(path, rpc_url))
+      warn_withheld_rpc_url()
+    end
+
+    :ok
+  end
+
+  @doc """
+  Logs a warning when the page will carry no RPC URL on chain 31337 because the
+  server's URL is not a loopback one (the dev login reads the chain through it).
+  The URL itself is not logged. Called by `init/0`.
+  """
+  @spec warn_withheld_rpc_url() :: :ok
+  def warn_withheld_rpc_url do
+    if chain_id() == @local_chain and public_rpc_url() == nil and not loopback?(rpc_url()) do
+      Logger.warning(
+        "chain 31337 with a server RPC URL that is not a loopback address: the page gets no RPC URL, " <>
+          "and the dev login needs a loopback RPC URL (localhost, 127.0.0.1 or [::1])"
+      )
     end
 
     :ok
@@ -214,15 +256,30 @@ defmodule Annuart.Chain.Config do
     }
   end
 
-  # The server URL only reaches the page on the local chain, where it is
-  # a loopback address and carries no key.
+  # The server URL only reaches the page on the local chain, and only when it
+  # is a loopback address, so it carries no provider key. The chain id comes
+  # from the deployment file, not from the RPC, so it alone proves nothing.
   defp browser_rpc_url do
     cond do
       url = public_rpc_url() -> url
-      chain_id() == @local_chain -> rpc_url()
+      chain_id() == @local_chain and loopback?(rpc_url()) -> rpc_url()
       true -> nil
     end
   end
+
+  @loopback_hosts ["localhost", "127.0.0.1", "::1", "[::1]"]
+
+  defp loopback?(url) when is_binary(url) do
+    case URI.parse(url) do
+      %URI{scheme: scheme, host: host} when scheme in ["http", "https", "ws", "wss"] ->
+        is_binary(host) and String.downcase(host) in @loopback_hosts
+
+      _ ->
+        false
+    end
+  end
+
+  defp loopback?(_), do: false
 
   defp chain_env, do: Application.get_env(:annuart, :chain, [])
 end

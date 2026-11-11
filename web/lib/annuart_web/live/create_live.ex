@@ -24,7 +24,8 @@ defmodule AnnuartWeb.CreateLive do
   # The browser reports a mined creation. Only these four public values are read
   # from the event; anything else in it is ignored, never stored, and an event
   # whose hash is not a transaction hash is ignored whole. The ENFT may not be
-  # indexed yet, so navigation waits until it is (see `arrived/3`).
+  # indexed yet, so navigation waits until it is (see `arrived/3`), however long
+  # that takes; after `wait_ms/0` the page only says it is taking longer.
   def handle_event(
         "tx:confirmed",
         %{"action" => "createEnft", "label" => label, "tokenId" => token_id, "hash" => hash},
@@ -70,9 +71,11 @@ defmodule AnnuartWeb.CreateLive do
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
+  # Also after the wait has timed out: the page keeps waiting, so an ENFT the
+  # indexer shows late is still opened.
   defp arrived(socket, label, id) do
     case socket.assigns.created do
-      %{label: ^label, id: ^id, timed_out: false} ->
+      %{label: ^label, id: ^id} ->
         if Enfts.get_enft(label, id),
           do: push_navigate(socket, to: ~p"/enft/#{label}/#{id}"),
           else: socket
@@ -115,8 +118,7 @@ defmodule AnnuartWeb.CreateLive do
       <p :if={@created && !@created.timed_out} class="note">Created. Waiting for it to appear…</p>
       <p :if={@created && @created.timed_out} class="note">
         Your ENFT was created. It is taking longer than usual to appear.
-        Transaction {@created.hash}.
-        <.link navigate={~p"/enft/#{@created.label}/#{@created.id}"}>Open the ENFT page</.link>
+        Transaction {@created.hash}. This page opens it as soon as it appears.
       </p>
       <p :if={@address != nil and @tokens == []}>No ENFT contracts are configured.</p>
 

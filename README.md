@@ -348,9 +348,10 @@ when the chain is 31337, and then beside a `Connect wallet` button.
 |---|---|---|
 | `ANNUART_RPC_URL` | `http://127.0.0.1:8545` | The chain's JSON-RPC endpoint. One running instance talks to one chain. |
 | `ANNUART_DEPLOYMENTS` | `../deployments/localhost.json` (relative to `web/`) | The deployment file written by `scripts/deploy.ts`. |
-| `ANNUART_PUBLIC_RPC_URL` | unset | An RPC URL the browser may see and use. Unset, the page carries no RPC URL off chain 31337 (the server's own URL stays on the server). |
+| `ANNUART_PUBLIC_RPC_URL` | unset | An RPC URL the browser may see and use. Unset, the page carries the server's own URL only on chain 31337 and only when its host is a loopback address (`localhost`, `127.0.0.1`, `[::1]`); otherwise no RPC URL, and the server's URL stays on the server. |
 | `ANNUART_CONFIRMATIONS` | `0` on chain 31337, `2` elsewhere | Blocks the indexer stays behind the chain head. |
 | `ANNUART_LOG_CHUNK` | `2000` | Most blocks asked of the node in one `eth_getLogs` call; lower it on RPC plans that limit the range. |
+| `ANNUART_POLL_MS` | `4000` on chain 31337, `12000` elsewhere | How often the indexer reads the chain, in milliseconds (at least 1000). Each poll costs RPC requests, which matters on a metered plan. |
 | `PORT` | `4000` | HTTP port. |
 | `ANNUART_LIVE_RELOAD` | on | Dev only: `false` turns off browser live reload (the e2e run does). |
 | `DATABASE_PATH`, `SECRET_KEY_BASE`, `PHX_HOST`, `PHX_SERVER` | | Production, as usual for Phoenix. |

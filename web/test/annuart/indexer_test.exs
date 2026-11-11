@@ -40,9 +40,9 @@ defmodule Annuart.IndexerTest do
       deploy_block: deploy_block
     }
 
-  defp put_contracts(contracts) do
+  defp put_contracts(contracts, chain_id \\ 31337) do
     Application.put_env(:annuart, :chain,
-      chain_id: 31337,
+      chain_id: chain_id,
       rpc_url: "http://127.0.0.1:8545",
       contracts: contracts
     )
@@ -453,6 +453,98 @@ defmodule Annuart.IndexerTest do
       RpcStub.clear_log_errors()
       assert :ok = Indexer.sync_once()
       assert Enfts.cursor(@nft).last_block == 115
+    end
+  end
+
+  describe "a chain that no longer matches the cursor" do
+    # Confirmations 0 on both chains, so the cursor is at the head (block 20).
+    setup do
+      previous = Application.fetch_env(:annuart, :indexer_confirmations)
+      Application.put_env(:annuart, :indexer_confirmations, 0)
+
+      on_exit(fn ->
+        case previous do
+          {:ok, v} -> Application.put_env(:annuart, :indexer_confirmations, v)
+          :error -> Application.delete_env(:annuart, :indexer_confirmations)
+        end
+      end)
+    end
+
+    defp indexed_on(chain_id) do
+      put_contracts([contract("mock", @nft, 5)], chain_id)
+      seed_basic()
+      Indexer.sync_once()
+      assert Enfts.get_enft("mock", 1)
+      assert Enfts.cursor(@nft).last_block == 20
+      Phoenix.PubSub.subscribe(Annuart.PubSub, "enfts")
+    end
+
+    defp break_chain(:head_below_cursor), do: RpcStub.put_head(8)
+    defp break_chain(:cursor_block_missing), do: RpcStub.put_error(:block, :not_found)
+    defp break_chain(:cursor_hash_changed), do: put_block(20, "0xother")
+
+    for {name, change} <- [
+          {"head below the cursor", :head_below_cursor},
+          {"cursor block not found", :cursor_block_missing},
+          {"block hash at the cursor changed", :cursor_hash_changed}
+        ] do
+      test "on chain 31337, #{name} wipes and rebuilds" do
+        indexed_on(31_337)
+        break_chain(unquote(change))
+        # The new chain has none of the old history.
+        RpcStub.put_logs([])
+        log = capture_log(fn -> Indexer.sync_once() end)
+
+        assert log =~ "rebuilding"
+        assert Enfts.get_enft("mock", 1) == nil
+      end
+    end
+
+    for {name, change} <- [
+          {"head below the cursor", :head_below_cursor},
+          {"cursor block not found", :cursor_block_missing}
+        ] do
+      test "on another chain, #{name} skips the pass and wipes nothing" do
+        indexed_on(11_155_111)
+        before = {Repo.all(Annuart.Enfts.Enft), Enfts.cursor(@nft)}
+        break_chain(unquote(change))
+
+        log = capture_log(fn -> assert :ok = Indexer.sync_once() end)
+
+        assert log =~ "mock: provider is behind the cursor, skipping"
+        refute log =~ "rebuilding"
+        assert {Repo.all(Annuart.Enfts.Enft), Enfts.cursor(@nft)} == before
+        assert drain_enft_messages() == []
+      end
+    end
+
+    test "on another chain, a block hash mismatch at the cursor wipes and rebuilds" do
+      indexed_on(11_155_111)
+      break_chain(:cursor_hash_changed)
+      put_schedule(@nft, 2, [{5, 5}])
+      RpcStub.put_logs([mint_log(@nft, 2, @bob, 7, 0)])
+
+      log = capture_log(fn -> Indexer.sync_once() end)
+
+      assert log =~ "block hash at the cursor changed, rebuilding"
+      assert Enfts.get_enft("mock", 1) == nil
+      assert Enfts.get_enft("mock", 2)
+      assert [{:enft_changed, "mock", 2}, :enfts_reset] = drain_enft_messages()
+    end
+
+    test "on another chain, the pass after a lagging provider catches up continues from the cursor" do
+      indexed_on(11_155_111)
+      break_chain(:head_below_cursor)
+      capture_log(fn -> Indexer.sync_once() end)
+      queried = length(RpcStub.log_queries())
+
+      put_blocks(21..22)
+      RpcStub.put_head(22)
+      Indexer.sync_once()
+
+      assert Enfts.get_enft("mock", 1)
+      assert Enfts.cursor(@nft).last_block == 22
+      assert [{21, 22}] = Enum.drop(RpcStub.log_queries(), queried)
     end
   end
 

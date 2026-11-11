@@ -18,6 +18,7 @@ defmodule Annuart.Indexer do
   alias Annuart.Enfts
 
   @topic "enfts"
+  @local_chain 31_337
   @zero "0x0000000000000000000000000000000000000000"
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -65,7 +66,7 @@ defmodule Annuart.Indexer do
   @impl true
   def handle_info(:poll, state) do
     sync_once()
-    Process.send_after(self(), :poll, Application.get_env(:annuart, :indexer_interval_ms, 4_000))
+    Process.send_after(self(), :poll, Config.poll_ms())
     {:noreply, state}
   end
 
@@ -98,34 +99,51 @@ defmodule Annuart.Indexer do
           )
 
         true ->
-          with {:ok, cursor} <- check_reset(contract, head) do
-            from = if cursor, do: cursor.last_block + 1, else: contract.deploy_block
-            # Stay behind the head so a short reorg cannot reach what is stored.
-            target = head - Config.confirmations()
-            with :ok <- sync_range(contract, from, target), do: announce_reset(contract)
+          case check_reset(contract, head) do
+            {:ok, cursor} ->
+              from = if cursor, do: cursor.last_block + 1, else: contract.deploy_block
+              # Stay behind the head so a short reorg cannot reach what is stored.
+              target = head - Config.confirmations()
+              with :ok <- sync_range(contract, from, target), do: announce_reset(contract)
+
+            :behind ->
+              Logger.warning(
+                "indexer: #{contract.label}: provider is behind the cursor, skipping"
+              )
+
+            {:error, _} = error ->
+              error
           end
       end
     end
   end
 
   # Returns the cursor to continue from, or nil after wiping a contract that
-  # no longer matches the chain (restart, or a chain that is shorter).
+  # no longer matches the chain. On the local chain a head below the cursor or
+  # a missing cursor block means the node restarted. Elsewhere they are what a
+  # load-balanced provider with a node a few blocks behind looks like, so the
+  # pass is skipped (:behind) and only a different block hash at the cursor
+  # (a reorg past it) wipes.
   defp check_reset(contract, head) do
     case Enfts.cursor(contract.nft) do
       nil ->
         {:ok, nil}
 
       cursor when head < cursor.last_block ->
-        reset(contract, "head #{head} is below the cursor #{cursor.last_block}")
+        behind_or_reset(contract, "head #{head} is below the cursor #{cursor.last_block}")
 
       cursor ->
         case rpc().block(cursor.last_block) do
           {:ok, %{hash: hash}} when hash == cursor.last_block_hash -> {:ok, cursor}
           {:ok, _} -> reset(contract, "block hash at the cursor changed")
-          {:error, :not_found} -> reset(contract, "cursor block no longer exists")
+          {:error, :not_found} -> behind_or_reset(contract, "cursor block no longer exists")
           {:error, _} = error -> error
         end
     end
+  end
+
+  defp behind_or_reset(contract, why) do
+    if Config.chain_id() == @local_chain, do: reset(contract, why), else: :behind
   end
 
   defp reset(contract, why) do

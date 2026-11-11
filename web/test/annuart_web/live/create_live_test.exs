@@ -114,7 +114,7 @@ defmodule AnnuartWeb.CreateLiveTest do
     assert_redirect(view, ~p"/enft/mock/3")
   end
 
-  test "after the timeout it stops waiting and shows the hash and a link", %{conn: conn} do
+  test "after the timeout it shows the hash, offers no link yet, and keeps waiting", %{conn: conn} do
     Application.put_env(:annuart, :create_wait_ms, 20)
     on_exit(fn -> Application.delete_env(:annuart, :create_wait_ms) end)
     {view, _} = connected(conn)
@@ -123,9 +123,24 @@ defmodule AnnuartWeb.CreateLiveTest do
     html = render(view)
     assert html =~ "Your ENFT was created. It is taking longer than usual to appear."
     assert html =~ @hash
-    assert html =~ ~s(href="/enft/mock/3")
+    assert html =~ "This page opens it as soon as it appears."
+    # The ENFT page would be a 404 until it is indexed.
+    refute html =~ ~s(href="/enft/mock/3")
     refute html =~ "Waiting for it to appear"
     refute_redirected(view)
+  end
+
+  test "an ENFT that arrives after the timeout is still navigated to", %{conn: conn} do
+    Application.put_env(:annuart, :create_wait_ms, 20)
+    on_exit(fn -> Application.delete_env(:annuart, :create_wait_ms) end)
+    {view, _} = connected(conn)
+    confirmed(view, "3")
+    Process.sleep(80)
+    assert render(view) =~ "It is taking longer than usual to appear."
+
+    mint(token_id: 3)
+    send(view.pid, {:enft_changed, "mock", 3})
+    assert_redirect(view, ~p"/enft/mock/3")
   end
 
   test "tx:confirmed ignores unusable token ids without crashing", %{conn: conn} do
