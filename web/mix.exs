@@ -77,10 +77,13 @@ defmodule Annuart.MixProject do
   # The dev bundle (dev wallet, mock FHE) is never built for production.
   defp dev_bundle, do: if(Mix.env() == :prod, do: [], else: ["esbuild dev"])
 
-  # Removes a stale dev.js (and digested/gzipped variants) left by a dev build,
-  # so phx.digest cannot digest it and Plug.Static cannot serve it in production.
-  defp remove_dev_bundle(_args) do
-    "priv/static/assets/dev{,-*}.js*" |> Path.wildcard() |> Enum.each(&File.rm!/1)
+  # Empties priv/static/assets/ before a production build. Plug.Static serves
+  # everything in it, so anything a dev build or a stray copy left there (the
+  # dev bundle carries the Hardhat mnemonic) must not survive into a release:
+  # the build then holds only what it has just made.
+  defp clean_assets(_args) do
+    File.rm_rf!("priv/static/assets")
+    File.mkdir_p!("priv/static/assets")
   end
 
   defp aliases do
@@ -93,7 +96,7 @@ defmodule Annuart.MixProject do
       "assets.build": ["compile", "tailwind annuart", "esbuild annuart"] ++ dev_bundle(),
       "assets.deploy": [
         "compile",
-        &remove_dev_bundle/1,
+        &clean_assets/1,
         "tailwind annuart --minify",
         "esbuild annuart --minify",
         "phx.digest"
