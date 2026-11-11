@@ -273,6 +273,8 @@ and any attempt to user-decrypt the endowment handle is rejected by the FHEVM AC
   the owner's claimable distribution and marks the token settled.
 - Top-ups are rejected after that end.
 - A final segment with `duration = 2^64 - 1` is indefinite and must have a non-zero rate.
+- `scheduleStart` plus all fixed (non-indefinite) durations must stay below `2^64 - 1`, else
+  `mint` reverts `ScheduleTooLong`.
 - cWETH has 9 decimals.
 
 For ad-hoc exploration, `npx hardhat console --network localhost` exposes `ethers` and

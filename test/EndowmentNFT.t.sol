@@ -8,6 +8,21 @@ import {MockConfidentialToken} from "../src/mocks/MockConfidentialToken.sol";
 import {EndowmentNFT} from "../src/EndowmentNFT.sol";
 import {Schedule, Segment, INDEFINITE} from "../src/libraries/Schedule.sol";
 import {IERC7984} from "@openzeppelin/confidential-contracts/interfaces/IERC7984.sol";
+import {Vm} from "forge-std/Vm.sol";
+
+/// @dev Receives an endowment NFT and immediately forwards it to `next`.
+contract ForwardingReceiver {
+    address internal immutable next;
+
+    constructor(address next_) {
+        next = next_;
+    }
+
+    function onERC721Received(address, address, uint256 tokenId, bytes calldata) external returns (bytes4) {
+        EndowmentNFT(msg.sender).transferFrom(address(this), next, tokenId);
+        return this.onERC721Received.selector;
+    }
+}
 
 contract EndowmentNFTTest is FhevmTest {
     MockConfidentialToken internal token;
@@ -89,7 +104,7 @@ contract EndowmentNFTTest is FhevmTest {
         assertEq(decrypt(nft.distributionHandle(id)), 1_000);
     }
 
-    // Review Focus 4
+    // A rate so large that integration saturates uint64 must cap at the endowment, not revert.
     function test_indefinite_saturatedIntegrationDoesNotRevert() public {
         uint256 id = _mintWith(alice, 1_000, false, _open(type(uint64).max), uint64(block.timestamp));
         vm.warp(block.timestamp + 365 days);
@@ -413,6 +428,134 @@ contract EndowmentNFTTest is FhevmTest {
         uint256 id = _mintWith(alice, 500, true, _open(1), uint64(block.timestamp));
         vm.warp(block.timestamp + 10 * 365 days);
         _topUp(id, bob, 10); // must not revert
+        assertFalse(nft.settledOf(id));
+    }
+
+    // --- F1: schedules that would lock the endowment forever are rejected ---
+
+    function _expectMintRevert(Segment[] memory s, uint64 start, bytes4 selector) internal {
+        token.mint(creator, 10);
+        vm.prank(creator);
+        token.setOperator(address(nft), uint48(block.timestamp + 365 days));
+        (externalEuint64 h, bytes memory p) = encryptUint64(10, creator, address(nft));
+        vm.expectRevert(selector);
+        vm.prank(creator);
+        nft.mint(alice, h, p, s, start, false);
+    }
+
+    function test_mint_revertsWhenFixedScheduleSaturates() public {
+        Segment[] memory s = new Segment[](1);
+        s[0] = Segment({duration: type(uint64).max - 1, ratePerSec: 0});
+        _expectMintRevert(s, uint64(block.timestamp), EndowmentNFT.ScheduleTooLong.selector);
+    }
+
+    function test_mint_revertsWhenIndefiniteTailUnreachable() public {
+        Segment[] memory s = new Segment[](2);
+        s[0] = Segment({duration: type(uint64).max - 1, ratePerSec: 0});
+        s[1] = Segment({duration: INDEFINITE, ratePerSec: 1});
+        _expectMintRevert(s, uint64(block.timestamp), EndowmentNFT.ScheduleTooLong.selector);
+    }
+
+    function test_mint_revertsWhenIndefiniteTailUnreachableAcrossSegments() public {
+        Segment[] memory s = new Segment[](3);
+        s[0] = Segment({duration: uint64(1) << 63, ratePerSec: 0});
+        s[1] = Segment({duration: uint64(1) << 63, ratePerSec: 0});
+        s[2] = Segment({duration: INDEFINITE, ratePerSec: 1});
+        _expectMintRevert(s, uint64(block.timestamp), EndowmentNFT.ScheduleTooLong.selector);
+    }
+
+    function test_mint_revertsWhenStartAtMaxWithFixedSchedule() public {
+        _expectMintRevert(_segments(), type(uint64).max - 1, EndowmentNFT.ScheduleTooLong.selector);
+    }
+
+    function test_mint_revertsWhenStartAtMaxWithIndefiniteSchedule() public {
+        Segment[] memory s = new Segment[](1);
+        s[0] = Segment({duration: INDEFINITE, ratePerSec: 1});
+        _expectMintRevert(s, type(uint64).max, EndowmentNFT.ScheduleTooLong.selector);
+    }
+
+    function test_mint_acceptsScheduleEndingOneBelowMax() public {
+        uint64 start = uint64(block.timestamp);
+        Segment[] memory s = new Segment[](2);
+        s[0] = Segment({duration: 100, ratePerSec: 1});
+        s[1] = Segment({duration: type(uint64).max - 1 - start - 100, ratePerSec: 1});
+        uint256 id = _mintWith(alice, 500, false, s, start);
+        assertEq(nft.scheduleEndOf(id), type(uint64).max - 1);
+        assertEq(nft.ownerOf(id), alice);
+    }
+
+    // --- F3: EndowmentMinted is logged before the receiver callback runs ---
+
+    function test_mint_eventPrecedesReceiverForwarding() public {
+        ForwardingReceiver recv = new ForwardingReceiver(bob);
+        vm.recordLogs();
+        uint256 id = _mintWith(address(recv), 500, false, _segments(), uint64(block.timestamp));
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(nft.ownerOf(id), bob);
+
+        bytes32 transferSig = keccak256("Transfer(address,address,uint256)");
+        bytes32 mintedSig = EndowmentNFT.EndowmentMinted.selector;
+        uint256 mintedAt = type(uint256).max;
+        uint256 firstTransferAt = type(uint256).max;
+        uint256 forwardAt = type(uint256).max;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].emitter != address(nft)) continue;
+            bytes32 sig = logs[i].topics[0];
+            if (sig == mintedSig && uint256(logs[i].topics[1]) == id) {
+                mintedAt = i;
+            } else if (sig == transferSig && uint256(logs[i].topics[3]) == id) {
+                if (firstTransferAt == type(uint256).max) firstTransferAt = i;
+                if (address(uint160(uint256(logs[i].topics[1]))) == address(recv)) forwardAt = i;
+            }
+        }
+        assertTrue(mintedAt != type(uint256).max, "EndowmentMinted not logged");
+        assertTrue(forwardAt != type(uint256).max, "forwarding Transfer not logged");
+        assertLt(mintedAt, firstTransferAt, "EndowmentMinted must precede the mint Transfer");
+        assertLt(mintedAt, forwardAt, "EndowmentMinted must precede the forwarding Transfer");
+    }
+
+    // --- F4: a sweep triggered by claim never leaves the owner allowed on the remainder ---
+
+    function test_sweep_viaClaimEndowmentHandleStaysSecret() public {
+        uint256 id = _mintEndowment(alice, 5_000, false);
+        vm.warp(block.timestamp + 2_000);
+        vm.prank(alice);
+        nft.claim(id);
+        assertTrue(nft.settledOf(id));
+        euint64 endow = nft.endowmentHandle(id);
+        assertTrue(
+            euint64.unwrap(endow) != euint64.unwrap(nft.distributionHandle(id)), "endowment handle == distribution handle"
+        );
+        assertFalse(_acl.isAllowed(euint64.unwrap(endow), alice), "owner allowed on endowment handle");
+        assertTrue(_acl.isAllowed(euint64.unwrap(endow), address(nft)), "contract not allowed on endowment handle");
+        assertEq(decrypt(endow), 0); // test-only: decrypt() bypasses ACL
+    }
+
+    // --- F5: a self-minting creator gets no ACL on the remaining endowment ---
+
+    function test_mint_selfMintCreatorCannotReadEndowment() public {
+        uint256 id = _mintEndowment(creator, 500, false);
+        assertEq(nft.ownerOf(id), creator);
+        euint64 endow = nft.endowmentHandle(id);
+        assertFalse(_acl.isAllowed(euint64.unwrap(endow), creator), "creator allowed on endowment handle");
+        assertTrue(_acl.isAllowed(euint64.unwrap(endow), address(nft)), "contract not allowed on endowment handle");
+        assertEq(decrypt(endow), 500); // test-only: decrypt() bypasses ACL
+    }
+
+    // --- F7: a schedule made of a single indefinite segment ---
+
+    function test_indefinite_singleSegmentAccruesForever() public {
+        Segment[] memory s = new Segment[](1);
+        s[0] = Segment({duration: INDEFINITE, ratePerSec: 3});
+        uint64 t0 = uint64(block.timestamp);
+        uint256 id = _mintWith(alice, 1_000_000, false, s, t0);
+        assertEq(nft.scheduleEndOf(id), type(uint64).max);
+        vm.warp(t0 + 100);
+        nft.accrue(id);
+        assertEq(decrypt(nft.distributionHandle(id)), 300);
+        vm.warp(t0 + 1_000);
+        nft.accrue(id);
+        assertEq(decrypt(nft.distributionHandle(id)), 3_000);
         assertFalse(nft.settledOf(id));
     }
 }
