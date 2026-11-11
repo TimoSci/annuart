@@ -68,7 +68,7 @@ defmodule AnnuartWeb.Layouts do
           Market<span class="soon">soon</span>
         </.link>
         <.link
-          href="/tokens"
+          navigate={~p"/tokens"}
           class={["nav-item", @current == :tokens && "current"]}
           data-activity-id="nav:tokens"
         >

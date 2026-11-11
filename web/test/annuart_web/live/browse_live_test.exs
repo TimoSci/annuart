@@ -42,6 +42,26 @@ defmodule AnnuartWeb.BrowseLiveTest do
     assert html =~ "Clear my activity history"
   end
 
+  # Each nav item is a live navigation, so the wallet session, revealed values
+  # and FHE permits held in the page survive moving between pages.
+  test "every navigation item navigates live", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    for {id, path} <- [
+          {"nav:browse", "/"},
+          {"nav:create", "/create"},
+          {"nav:mine", "/mine"},
+          {"nav:market", "/market"},
+          {"nav:tokens", "/tokens"}
+        ] do
+      assert has_element?(
+               view,
+               ~s([data-activity-id="#{id}"][href="#{path}"][data-phx-link="redirect"])
+             ),
+             "#{id} is not a live navigation link to #{path}"
+    end
+  end
+
   test "filters by donations on/off", %{conn: conn} do
     mint(token_id: 1, top_ups_allowed: true)
     mint(token_id: 2, top_ups_allowed: false)
