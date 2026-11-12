@@ -76,11 +76,13 @@ const click = node => node.dispatchEvent(new node.ownerDocument.defaultView.Even
 const rows = el => [...el.querySelectorAll("[data-role=period]")];
 
 function fillRow(row, {length, unit = "months", rate, per = "day", indefinite = false}) {
-  if (indefinite) {
-    const box = q(row, "indefinite");
-    box.checked = true;
+  // The last row's box starts ticked, so a fixed length has to untick it.
+  const box = q(row, "indefinite");
+  if (box && box.checked !== indefinite) {
+    box.checked = indefinite;
     box.dispatchEvent(new row.ownerDocument.defaultView.Event("change", {bubbles: true}));
-  } else {
+  }
+  if (!indefinite) {
     type(q(row, "length"), String(length));
     pick(q(row, "unit"), unit);
   }
@@ -161,8 +163,11 @@ test("shows the total line, per-row effective rate and up-to, and the chart", ()
   assert.match(q(second, "upto").textContent, /until the endowment runs out/i);
   assert.equal(q(t.el, "total").textContent, "Schedule pays until the endowment runs out.");
   assert.equal(t.el.querySelectorAll("[data-role=chart] [data-role=bar]").length, 2);
-  // A fixed schedule gives a total and a length.
+  // A fixed schedule gives a total and a length. The remaining row turns
+  // indefinite when it becomes the last, so it is unticked again.
   click(q(second, "remove-period"));
+  assert.equal(q(t.el, "total").textContent, "Schedule pays until the endowment runs out.");
+  fillRow(first, {length: 18, unit: "months", rate: "100"});
   assert.equal(q(t.el, "total").textContent, "Schedule pays up to 53,980.992 TKN in total over 18 months.");
 });
 
@@ -261,11 +266,28 @@ test("the Indefinitely checkbox is offered only on the last row", () => {
   assert.deepEqual(rows(t.el).map(r => q(r, "indefinite") !== null), [false, true]);
 });
 
+test("the last period is indefinite by default, also after adding or removing a period", () => {
+  const t = make();
+  const last = () => rows(t.el).at(-1);
+  assert.equal(q(last(), "indefinite").checked, true);
+  assert.equal(q(last(), "length").hidden, true);
+  // Unticked, then a period is added: the old row keeps a length, the new last row is indefinite.
+  fillRow(last(), {length: 6, rate: "10"});
+  click(q(t.el, "add-period"));
+  assert.equal(q(rows(t.el)[0], "length").hidden, false);
+  assert.equal(q(rows(t.el)[0], "length").value, "6");
+  assert.equal(q(last(), "indefinite").checked, true);
+  assert.equal(q(last(), "length").hidden, true);
+  // Removing the last row makes the remaining one indefinite again; its length is kept for unticking.
+  click(q(last(), "remove-period"));
+  assert.equal(q(last(), "indefinite").checked, true);
+  assert.equal(q(last(), "length").hidden, true);
+  assert.equal(q(last(), "length").value, "6");
+});
+
 test("a checked Indefinitely replaces the length, and unchecking restores it", () => {
   const t = make();
   const [row] = rows(t.el);
-  q(row, "indefinite").checked = true;
-  q(row, "indefinite").dispatchEvent(new t.document.defaultView.Event("change", {bubbles: true}));
   assert.equal(q(row, "length").hidden, true);
   assert.equal(q(row, "unit").hidden, true);
   q(row, "indefinite").checked = false;
@@ -295,6 +317,13 @@ test("validation stops at the first failure, in order: amount, rows, recipient, 
   await submit(t);
   assert.equal(message(t.el), "Enter an amount.");
   type(q(t.el, "amount"), "1000");
+  await submit(t);
+  // The lone period is indefinite by default, so only its rate is missing.
+  assert.equal(message(t.el), "Period 1: Enter an amount.");
+  const box = q(rows(t.el)[0], "indefinite");
+  box.checked = false;
+  box.dispatchEvent(new t.document.defaultView.Event("change", {bubbles: true}));
+  type(q(rows(t.el)[0], "rate"), "1");
   await submit(t);
   assert.match(message(t.el), /^Period 1: Every period needs a length\.$/);
   fillRow(rows(t.el)[0], {length: 1, unit: "months", rate: "1"});

@@ -206,7 +206,8 @@ export class CreateFormController {
     this.syncRows();
   }
 
-  // Only the last row can be indefinite; a lone row cannot be removed.
+  // Only the last row can be indefinite, and it starts out that way; a lone
+  // row cannot be removed.
   syncRows() {
     const rows = this.periods();
     rows.forEach((row, i) => {
@@ -218,6 +219,9 @@ export class CreateFormController {
         box = this.doc.createElement("input");
         box.type = "checkbox";
         box.dataset.role = "indefinite";
+        // The last period runs indefinitely unless the person unticks it.
+        box.checked = true;
+        box.setAttribute("checked", "");
         label.append(box, " Indefinitely");
         slot.append(label);
       } else if (!last && box) {

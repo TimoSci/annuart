@@ -41,8 +41,8 @@ deciding something failed.
 3. Tokens: on the wrapped card, wrap `0.01` ETH. Steps: Convert ETH to WETH, Approve WETH, Wrap,
    Done; the wallet asks for each. Reveal the balance (the wallet asks to sign once): it shows
    `0.01 cWETH`.
-4. Create: pick the wrapped token, amount `0.005`, one period of 1 month paying `0.001` per month,
-   donations on. Every amount field echoes the parsed value (`= 0.005 cWETH`).
+4. Create: pick the wrapped token, amount `0.005`. The single period starts with `Indefinitely`
+   ticked and no length field; untick it and make it 1 month paying `0.001` per month, donations on. Every amount field echoes the parsed value (`= 0.005 cWETH`).
 5. Click Create ENFT. A summary appears and nothing is sent yet. Cancel, change the amount, and
    check the summary is gone and comes back with the new amount.
 6. Confirm. Steps: Check your balance, Authorise the contract (first time only), Encrypt the amount, Confirm in your

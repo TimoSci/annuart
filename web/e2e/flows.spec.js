@@ -99,9 +99,12 @@ async function getTestTokens(page, index, runs = 1) {
   for (let i = 0; i < runs; i++) await runTx(faucet);
 }
 
-// Fills one period: `length` `unit` paying `rate` per `per`.
+// Fills one period: `length` `unit` paying `rate` per `per`. The last period
+// starts out indefinite, so its box is unticked first to give it a length.
 async function fillPeriod(form, {length = "1", unit = "days", rate = "1000", per = "day"} = {}) {
   const row = form.locator("[data-role=period]").last();
+  await expect(row.locator("[data-role=indefinite]")).toBeChecked();
+  await row.locator("[data-role=indefinite]").uncheck();
   await row.locator("[data-role=length]").fill(length);
   await row.locator("[data-role=unit]").selectOption(unit);
   await row.locator("[data-role=rate]").fill(rate);
@@ -442,10 +445,10 @@ test("create with a later start, two periods ending indefinitely, for another ad
   await fillPeriod(form, {length: "2", unit: "weeks", rate: "8.64", per: "day"});
   await form.locator("button[data-role=add-period]").click();
   await expect(form.locator("[data-role=period]")).toHaveCount(2);
-  // Only the last period offers "Indefinitely"; ticking it hides its length.
+  // Only the last period offers "Indefinitely". A new last period has it ticked, which hides its length.
   await expect(form.locator("[data-role=period]").first().locator("[data-role=indefinite]")).toHaveCount(0);
   const second = form.locator("[data-role=period]").last();
-  await second.locator("[data-role=indefinite]").check();
+  await expect(second.locator("[data-role=indefinite]")).toBeChecked();
   await expect(second.locator("[data-role=length]")).toBeHidden();
   await second.locator("[data-role=rate]").fill("0.864");
   await expect(second.locator("[data-role=upto]")).toHaveText("Pays until the endowment runs out");
