@@ -76,6 +76,39 @@ defmodule AnnuartWeb.MyEnftsLiveTest do
     refute has_element?(view, "#claim-mock-2")
   end
 
+  test "rows on a wrapped-ETH contract also offer Claim and convert to ETH", %{conn: conn} do
+    {:ok, view, _} = live(conn, ~p"/mine")
+    render_hook(view, "wallet:changed", %{"address" => @alice})
+    refute has_element?(view, "#claim-eth-mock-1")
+
+    # The same contract, as the wrapped-ETH kind. put_chain restores the config on exit.
+    chain = Application.fetch_env!(:annuart, :chain)
+
+    Application.put_env(
+      :annuart,
+      :chain,
+      Keyword.update!(chain, :contracts, fn [c] -> [%{c | token_kind: :wrapped}] end)
+    )
+
+    {:ok, view, _} = live(conn, ~p"/mine")
+    render_hook(view, "wallet:changed", %{"address" => @alice})
+
+    for id <- [1, 3] do
+      both = ~s(#mine-mock-#{id} #claim-eth-mock-#{id})
+
+      assert has_element?(
+               view,
+               both <> ~s([phx-hook="TxAction"][data-action="claimToEth"][data-token-id="#{id}"])
+             )
+
+      assert has_element?(view, both <> ~s([data-question*="becomes public"]))
+      assert has_element?(view, both <> " button[data-role=run]", "Claim and convert to ETH")
+      assert has_element?(view, ~s(#mine-mock-#{id} #claim-mock-#{id}))
+    end
+
+    refute has_element?(view, "#claim-eth-mock-2")
+  end
+
   test "a confirmed claim is accepted and the list stays", %{conn: conn} do
     {:ok, view, _} = live(conn, ~p"/mine")
     render_hook(view, "wallet:changed", %{"address" => @alice})

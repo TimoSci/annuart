@@ -251,24 +251,61 @@ export async function unwrap(session, contract, {amount, symbol, decimals}, onSt
     await checkBalance(steps, s, contract, {amount, symbol, decimals});
     const token = tokenOf(contract, s.signer);
     const enc = await steps.step("encrypt", async () => (await getFhe(s)).encrypt64(contract.token, s.address, amount));
-    const requestId = await steps.sendAndWait("request",
-      () => token.unwrap(s.address, s.address, enc.handle, enc.inputProof),
-      receipt => {
-        const {unwrapRequestId, amount: amountHandle} = findEvent(receipt, token, "UnwrapRequested").args;
-        rememberUnwrap(s, contract, {requestId: unwrapRequestId, amountHandle, block: receipt.blockNumber});
-        return unwrapRequestId;
-      },
-      id => ({requestId: id}));
-    try {
-      return await completeUnwrap(steps, s, contract, requestId);
-    } catch (err) {
-      if (err && typeof err === "object") err.requestId = requestId;
-      throw err;
-    }
+    return requestAndComplete(steps, s, contract,
+      () => token[UNWRAP_ENCRYPTED](s.address, s.address, enc.handle, enc.inputProof));
+  });
+}
+
+// The wrapper's two unwraps share a name: one takes a freshly encrypted amount
+// with its proof, the other an encrypted amount the caller may already use.
+const UNWRAP_ENCRYPTED = "unwrap(address,address,bytes32,bytes)";
+const UNWRAP_HANDLE = "unwrap(address,address,bytes32)";
+
+// Sends an unwrap request (step "request"), remembers it, and finishes it.
+async function requestAndComplete(steps, s, contract, sendRequest) {
+  const token = tokenOf(contract, s.signer);
+  const requestId = await steps.sendAndWait("request", sendRequest,
+    receipt => {
+      const {unwrapRequestId, amount: amountHandle} = findEvent(receipt, token, "UnwrapRequested").args;
+      rememberUnwrap(s, contract, {requestId: unwrapRequestId, amountHandle, block: receipt.blockNumber});
+      return unwrapRequestId;
+    },
+    id => ({requestId: id}));
+  try {
+    return await completeUnwrap(steps, s, contract, requestId);
+  } catch (err) {
+    if (err && typeof err === "object") err.requestId = requestId;
+    throw err;
+  }
+}
+
+// Claim, then turn exactly what was claimed into ETH: steps "claim",
+// "request", "decrypt", "finalise", "withdraw", "mined". The claim pays the
+// owner an encrypted amount the owner may use, so it is unwrapped as it is:
+// nothing is decrypted or encrypted in between, and no other confidential
+// balance is touched. Unwrapping makes the amount public. Once "claim" is
+// mined the payout is in the wallet as the confidential token whatever
+// happens next; from "request" on, a failure carries err.requestId as unwrap's
+// does. The result carries `note`, a sentence saying how much ETH arrived.
+export async function claimToEth(session, contract, {tokenId}, onStep) {
+  requireKind(contract, "wrapped", "Only payouts in wrapped ETH can be converted to ETH.");
+  return withSteps(onStep, "claim", async steps => {
+    const s = await ensureChain(session);
+    const token = tokenOf(contract, s.signer);
+    const claimed = await steps.sendAndWait("claim",
+      () => nftOf(contract, s.signer).claim(tokenId),
+      receipt => findEvent(receipt, token, "ConfidentialTransfer").args.amount);
+    const result = await requestAndComplete(steps, s, contract,
+      () => token[UNWRAP_HANDLE](s.address, s.address, claimed));
+    const note = result.wei === 0n
+      ? "There was nothing to claim, so no ETH was converted."
+      : `${formatAmount(result.wei, 18, {grouping: false})} ETH was sent to your wallet.`;
+    return {...result, note};
   });
 }
 
 // Finishes a pending unwrap request: steps "decrypt", "finalise", "withdraw", "mined".
+// The result carries `wei`, the ETH paid out.
 export async function finaliseUnwrap(session, contract, {requestId}, onStep) {
   requireKind(contract, "wrapped", "Only a wrapped token can be unwrapped.");
   return withSteps(onStep, "decrypt", async steps => completeUnwrap(steps, await ensureChain(session), contract, requestId));
@@ -289,10 +326,16 @@ async function completeUnwrap(steps, s, contract, requestId) {
     }
     return {clear, proof};
   });
-  await steps.sendAndWait("finalise", () => token.finalizeUnwrap(requestId, clear, proof));
-  const receipt = await steps.send("withdraw", "mined",
-    async () => wethOf(contract, s.signer).withdraw(clear * (await token.rate())));
-  return {hash: receipt.hash};
+  const finalised = await steps.sendAndWait("finalise", () => token.finalizeUnwrap(requestId, clear, proof));
+  // An unwrap of nothing pays out nothing: there is no WETH to convert.
+  if (clear === 0n) {
+    steps.skip("withdraw");
+    await steps.step("mined", async () => {});
+    return {hash: finalised.hash, wei: 0n};
+  }
+  const wei = clear * (await token.rate());
+  const receipt = await steps.send("withdraw", "mined", () => wethOf(contract, s.signer).withdraw(wei));
+  return {hash: receipt.hash, wei};
 }
 
 // WETH -> ETH, for WETH left behind by an unwrap whose withdraw failed.

@@ -30,6 +30,9 @@ export const TOKEN_ABI = [
   "function mint(address to, uint64 amount)",
   "function wrap(address to, uint256 amount)",
   "function unwrap(address from, address to, bytes32 encAmount, bytes inputProof) returns (bytes32)",
+  // The same, for an encrypted amount the caller already has access to.
+  "function unwrap(address from, address to, bytes32 amount) returns (bytes32)",
+  "event ConfidentialTransfer(address indexed from, address indexed to, bytes32 indexed amount)",
   "function finalizeUnwrap(bytes32 unwrapRequestId, uint64 unwrapAmountCleartext, bytes decryptionProof)",
   "function rate() view returns (uint256)",
   "function unwrapRequester(bytes32 unwrapRequestId) view returns (address)",

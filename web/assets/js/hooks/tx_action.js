@@ -16,6 +16,7 @@ const LABELS = {
   encrypt: "Encrypt the amount",
   confirm: "Confirm in your wallet",
   mined: "Done",
+  claim: "Claim the payout",
   deposit: "Convert ETH to WETH",
   approve: "Approve WETH",
   wrap: "Wrap",
@@ -34,10 +35,15 @@ const PLANS = {
   donate: WITH_ENCRYPT,
   wrap: ["deposit", "approve", "wrap", "mined"],
   unwrap: ["balance", "encrypt", "request", ...FINISH],
+  claimToEth: ["claim", "request", ...FINISH],
   finaliseUnwrap: FINISH,
 };
 // Steps that are done once their transaction has been broadcast.
-const SENDING = new Set(["authorise", "confirm", "deposit", "approve", "wrap", "request", "finalise", "withdraw"]);
+const SENDING = new Set(["authorise", "confirm", "claim", "deposit", "approve", "wrap", "request", "finalise", "withdraw"]);
+
+// Actions that make an unwrap request: once it is on chain, a failure is
+// recovered by finishing that request, never by running the action again.
+const UNWRAPPING = new Set(["unwrap", "claimToEth"]);
 
 // A transaction pending this long may have been dropped by the wallet.
 export const STILL_WAITING_MS = 180_000;
@@ -323,13 +329,15 @@ export class TxActionController {
       const result = await run(session, contract, args, report);
       this.recovery = null;
       this.finishing = null;
+      // What the action has to say about its outcome; shown in the browser only.
+      if (result?.note) this.say(result.note);
       this.deps.push("tx:confirmed", {action, label, tokenId: this.el.dataset.tokenId ?? null, hash: result?.hash ?? null});
       this.deps.announce();
     } catch (err) {
       this.recovery = this.stepList.fail(err);
       // An unwrap whose request is on chain is finished from then on, never
       // requested again: finishing sends nothing the request already did.
-      if (action === "unwrap" && err?.requestId) {
+      if (UNWRAPPING.has(action) && err?.requestId) {
         this.finishing = err.requestId;
         this.recovery = this.stepList.offer({kind: "retry"});
       }

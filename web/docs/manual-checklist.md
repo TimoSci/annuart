@@ -55,6 +55,12 @@ deciding something failed.
    that transaction.
 2. Reveal Claimable: a positive amount. Claim; after Done the value is hidden again. Reveal: `0`.
 3. My ENFTs lists the ENFT; its reveal shows the same claimable.
+3a. Wait a while again, then click `Claim and convert to ETH` (wrapped ENFTs only; the mock ENFT
+   in 3b has no such button). The page first asks to confirm that the amount becomes public.
+   Steps: Claim the payout, Request unwrap, Wait for decryption, Finalise unwrap, Convert WETH to
+   ETH, Done; the wallet asks four times. Afterwards a line says how much ETH was sent to your
+   wallet, the wallet's ETH balance has grown by that less gas, Claimable reveals `0`, and the
+   `cWETH` balance under Tokens is unchanged.
 4. Switch the wallet to account B. Every revealed value on screen goes back to `•••••`; the Yours
    panel goes. Donate `0.001`: Authorise, Encrypt, Confirm, Done.
 5. Switch back to A. Transfer to B's address: the page first asks to confirm that the unclaimed

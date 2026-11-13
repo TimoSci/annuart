@@ -25,7 +25,7 @@ function controller(el, {run, finish, session = SESSION, confirm = () => true, t
     push: (name, payload) => pushed.push([name, payload]),
     session: () => session,
     contract: label => (label === "mock" ? CONTRACT : undefined),
-    actions: {donate: run, claim: run, transfer: run, unwrap: run, finaliseUnwrap: finish},
+    actions: {donate: run, claim: run, transfer: run, unwrap: run, claimToEth: run, finaliseUnwrap: finish},
     confirm,
     announce: () => events.push("annuart:tx"),
     failed: () => failures.push("annuart:tx-failed"),
@@ -433,6 +433,77 @@ test("an unwrap that fails after its request retries by finishing that request",
   assert.deepEqual(states(el), [["decrypt", "done"], ["finalise", "done"], ["withdraw", "done"], ["mined", "done"]]);
   assert.equal(pushed.length, 1);
   assert.doesNotMatch(JSON.stringify(pushed), /150000|1500/);
+});
+
+test("claim and convert shows its steps, then the action's note, and pushes no amount", async () => {
+  const {el} = setup({action: "claimToEth"});
+  let seen;
+  const {ctl, pushed} = controller(el, {
+    run: async (_s, _c, args, onStep) => {
+      assert.deepEqual(args, {tokenId: 7n});
+      onStep("claim", "active");
+      seen = states(el);
+      for (const id of ["claim", "request", "decrypt", "finalise", "withdraw", "mined"]) onStep(id, "done");
+      return {hash: "0xh", wei: 1500n, note: "0.0000000000000015 ETH was sent to your wallet."};
+    },
+  });
+  await ctl.run();
+  assert.deepEqual(seen, [["claim", "active"], ["request", "waiting"], ["decrypt", "waiting"],
+    ["finalise", "waiting"], ["withdraw", "waiting"], ["mined", "waiting"]]);
+  assert.match(el.querySelector("ol.steps li").textContent, /^Claim the payout: done$/);
+  assert.equal(el.querySelector(".tx-message").textContent, "0.0000000000000015 ETH was sent to your wallet.");
+  assert.deepEqual(pushed, [["tx:confirmed", {action: "claimToEth", label: "mock", tokenId: "7", hash: "0xh"}]]);
+});
+
+test("claim and convert that fails after the claim offers Start over, naming the sent transaction", async () => {
+  const {el} = setup({action: "claimToEth"});
+  let runs = 0;
+  const asked = [];
+  const {ctl} = controller(el, {
+    confirm: text => { asked.push(text); return false; },
+    run: async (_s, _c, _a, onStep) => {
+      runs += 1;
+      onStep("claim", "done");
+      onStep("request", "failed", "You cancelled the request in your wallet.");
+      throw Object.assign(new Error("rejected"), {sentHash: HASH});
+    },
+  });
+  await ctl.run();
+  const again = el.querySelector("button[data-role=start-over]");
+  assert.ok(again);
+  assert.match(el.querySelector("li[data-step=request]").textContent, /A transaction was already sent/);
+  again.click();
+  await ctl.pending;
+  assert.equal(asked.length, 1);
+  assert.equal(runs, 1, "a declined confirmation does not claim again");
+});
+
+test("claim and convert that fails after its unwrap request retries by finishing that request", async () => {
+  const requestId = "0x" + "88".repeat(32);
+  const {el} = setup({action: "claimToEth"});
+  let claims = 0;
+  const finishes = [];
+  const {ctl} = controller(el, {
+    run: async (_s, _c, _a, onStep) => {
+      claims += 1;
+      onStep("claim", "done");
+      onStep("request", "done", {requestId});
+      onStep("decrypt", "done");
+      onStep("finalise", "failed", "You cancelled the request in your wallet.");
+      throw Object.assign(new Error("rejected"), {requestId, sentHash: HASH});
+    },
+    finish: async (_s, _c, a, onStep) => {
+      finishes.push(a);
+      for (const id of ["decrypt", "finalise", "withdraw", "mined"]) onStep(id, "done");
+      return {hash: "0xfin", wei: 5n};
+    },
+  });
+  await ctl.run();
+  assert.equal(el.querySelector("button[data-role=start-over]"), null);
+  el.querySelector("button[data-role=retry]").click();
+  await ctl.pending;
+  assert.equal(claims, 1, "the payout is not claimed again");
+  assert.deepEqual(finishes, [{requestId}]);
 });
 
 test("an unwrap whose finishing fails again keeps finishing the same request", async () => {

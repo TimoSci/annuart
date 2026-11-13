@@ -46,4 +46,25 @@ defmodule AnnuartWeb.TxComponents do
     </div>
     """
   end
+
+  attr :id, :string, required: true
+  attr :contract_label, :string, required: true
+  attr :token_id, :integer, required: true
+
+  @doc """
+  Claims an ENFT's payout and pays it out as plain ETH. Only for ENFTs whose
+  token is wrapped ETH; the caller decides whether to render it.
+  """
+  def claim_to_eth(assigns) do
+    ~H"""
+    <.action
+      id={@id}
+      action="claimToEth"
+      label="Claim and convert to ETH"
+      contract_label={@contract_label}
+      token_id={@token_id}
+      confirm="Claim the payout and convert it to ETH? The amount converted becomes public. Your wallet will ask you to confirm four transactions."
+    />
+    """
+  end
 end

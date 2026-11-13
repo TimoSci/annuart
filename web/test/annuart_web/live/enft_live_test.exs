@@ -223,6 +223,47 @@ defmodule AnnuartWeb.EnftLiveTest do
              )
     end
 
+    test "claim and convert to ETH is offered to the owner on a wrapped-ETH contract only",
+         %{conn: conn} do
+      mint()
+      {:ok, view, _html} = live(conn, ~p"/enft/mock/1")
+      connect_as(view, owner())
+      refute has_element?(view, "#tx-claim-eth")
+
+      # The same contract, as the wrapped-ETH kind. put_chain restores the config on exit.
+      chain = Application.fetch_env!(:annuart, :chain)
+
+      Application.put_env(
+        :annuart,
+        :chain,
+        Keyword.update!(chain, :contracts, fn [c] -> [%{c | token_kind: :wrapped}] end)
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/enft/mock/1")
+      refute has_element?(view, "#tx-claim-eth")
+
+      html = connect_as(view, owner())
+
+      assert has_element?(
+               view,
+               ~s(#tx-claim-eth[phx-hook="TxAction"][data-action="claimToEth"][data-token-id="1"]),
+               "Claim and convert to ETH"
+             )
+
+      assert has_element?(
+               view,
+               ~s(#tx-claim-eth[data-question="Claim the payout and convert it to ETH? The amount converted becomes public. Your wallet will ask you to confirm four transactions."])
+             )
+
+      # The plain claim stays.
+      assert has_element?(view, ~s(#tx-claim[data-action="claim"]))
+      assert html =~ "The amount converted"
+      assert html =~ "is public."
+
+      connect_as(view, @stranger)
+      refute has_element?(view, "#tx-claim-eth")
+    end
+
     test "non-owner and anonymous visitors do not see Yours", %{conn: conn} do
       mint()
       {:ok, view, html} = live(conn, ~p"/enft/mock/1")

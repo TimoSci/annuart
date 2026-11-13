@@ -45,6 +45,9 @@ defmodule AnnuartWeb.MyEnftsLive do
 
   defp meta(metas, label), do: Map.get(metas, label)
 
+  # Only a payout in wrapped ETH can be converted to ETH.
+  defp wrapped?(label), do: match?(%Config.Contract{token_kind: :wrapped}, Config.contract(label))
+
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current={:mine}>
@@ -84,6 +87,12 @@ defmodule AnnuartWeb.MyEnftsLive do
             id={"claim-#{e.label}-#{e.token_id}"}
             action="claim"
             label="Claim"
+            contract_label={e.label}
+            token_id={e.token_id}
+          />
+          <TxComponents.claim_to_eth
+            :if={wrapped?(e.label)}
+            id={"claim-eth-#{e.label}-#{e.token_id}"}
             contract_label={e.label}
             token_id={e.token_id}
           />

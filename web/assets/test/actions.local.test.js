@@ -662,3 +662,102 @@ test("a remembered unwrap request is kept for 12 blocks after it reads as finish
   assert.equal(store.has(key), false);
   await cleanSlate(dave);
 });
+
+// Claim and convert to ETH. Dave again, on the wrapped token: 1 unit a second
+// for 1000 seconds out of an endowment of 2000 units.
+async function wrappedEnft(session, extra = {}) {
+  await actions.wrap(session, wrapped, {wei: 2_000n * UNIT}, steps());
+  const {tokenId} = await actions.createEnft(session, wrapped,
+    createArgs(session.address, {...WRAPPED_UNITS, ...extra}), steps());
+  return tokenId;
+}
+
+test("claimToEth pays exactly what was claimed as ETH and leaves the confidential balance alone", {skip}, async () => {
+  await cleanSlate(dave);
+  const tokenId = await wrappedEnft(dave);
+  await increaseTime(100);
+  const before = await snapshot(dave);
+
+  const st = steps();
+  const result = await actions.claimToEth(dave, wrapped, {tokenId}, st);
+  assert.deepEqual(st.ids(), ["claim", "request", "decrypt", "finalise", "withdraw", "mined"]);
+  assert.ok(st.finalStates().every(s => s === "done"));
+  assert.deepEqual(st.sentLog.map(e => e.id), ["claim", "request", "finalise", "mined"]);
+  assert.match(result.hash, /^0x[0-9a-f]{64}$/);
+  assert.ok(result.wei >= 100n * UNIT && result.wei <= 115n * UNIT, `paid ${result.wei}`);
+  assert.equal(result.note, `${formatAmount(result.wei, 18, {grouping: false})} ETH was sent to your wallet.`);
+
+  assert.equal(await actions.revealDistribution(dave, wrapped, tokenId), 0n);
+  assert.equal(await actions.revealBalance(dave, wrapped), before.conf);
+  assert.equal(await actions.wethBalance(dave, wrapped), 0n);
+  assert.deepEqual(await actions.pendingUnwraps(dave, wrapped), []);
+  assert.equal(await actions.ethBalance(dave), before.eth + result.wei - await feesSince(dave, before));
+});
+
+test("claimToEth with nothing to claim finishes the empty unwrap and converts nothing", {skip}, async () => {
+  await cleanSlate(dave);
+  // Payouts have not started, so the claim pays zero.
+  const tokenId = await wrappedEnft(dave, {start: BigInt(await chainNow()) + 100_000n});
+  const before = await snapshot(dave);
+
+  const st = steps();
+  const result = await actions.claimToEth(dave, wrapped, {tokenId}, st);
+  assert.deepEqual(st.ids(), ["claim", "request", "decrypt", "finalise", "withdraw", "mined"]);
+  assert.equal(st.state("withdraw"), "skipped");
+  assert.equal(st.state("mined"), "done");
+  assert.equal(result.wei, 0n);
+  assert.equal(result.note, "There was nothing to claim, so no ETH was converted.");
+  assert.deepEqual(await actions.pendingUnwraps(dave, wrapped), []);
+  assert.equal(await actions.revealBalance(dave, wrapped), before.conf);
+  assert.equal(await actions.ethBalance(dave), before.eth - await feesSince(dave, before));
+});
+
+test("claimToEth with the unwrap request rejected leaves the payout in the wallet as the confidential token", {skip}, async () => {
+  await cleanSlate(dave);
+  const tokenId = await wrappedEnft(dave);
+  await increaseTime(100);
+  const before = await snapshot(dave);
+
+  const st = steps();
+  await assert.rejects(
+    () => actions.claimToEth(rejectingNth(dave, 2), wrapped, {tokenId}, st),
+    err => err.requestId === undefined && /^0x[0-9a-f]{64}$/.test(err.sentHash)
+      && explain(err) === "You cancelled the request in your wallet.",
+  );
+  assert.equal(st.state("claim"), "done");
+  assert.equal(st.state("request"), "failed");
+  const gained = await actions.revealBalance(dave, wrapped) - before.conf;
+  assert.ok(gained >= 100n && gained <= 115n, `claimed ${gained}`);
+  assert.deepEqual(await actions.pendingUnwraps(dave, wrapped), []);
+  // It can still be turned into ETH with the ordinary unwrap.
+  await actions.unwrap(dave, wrapped, {amount: gained, ...WRAPPED_UNITS}, steps());
+  assert.equal(await actions.revealBalance(dave, wrapped), before.conf);
+});
+
+test("claimToEth with finalise rejected carries the request id, and finaliseUnwrap pays the ETH", {skip}, async () => {
+  await cleanSlate(dave);
+  const tokenId = await wrappedEnft(dave);
+  await increaseTime(100);
+  const before = await snapshot(dave);
+
+  const st = steps();
+  let requestId;
+  await assert.rejects(
+    () => actions.claimToEth(rejectingNth(dave, 3), wrapped, {tokenId}, st),
+    err => { requestId = err.requestId; return explain(err) === "You cancelled the request in your wallet."; },
+  );
+  assert.match(requestId, /^0x[0-9a-f]{64}$/);
+  assert.equal(st.state("finalise"), "failed");
+  assert.deepEqual((await actions.pendingUnwraps(dave, wrapped)).map(p => p.requestId), [requestId]);
+
+  const {wei} = await actions.finaliseUnwrap(dave, wrapped, {requestId}, steps());
+  assert.ok(wei >= 100n * UNIT && wei <= 115n * UNIT, `paid ${wei}`);
+  assert.deepEqual(await actions.pendingUnwraps(dave, wrapped), []);
+  assert.equal(await actions.revealBalance(dave, wrapped), before.conf);
+  assert.equal(await actions.ethBalance(dave), before.eth + wei - await feesSince(dave, before));
+});
+
+test("claimToEth refuses a token that is not wrapped ETH", {skip}, async () => {
+  await assert.rejects(() => actions.claimToEth(alice, mock, {tokenId: 1n}, steps()),
+    /Only payouts in wrapped ETH can be converted to ETH\./);
+});

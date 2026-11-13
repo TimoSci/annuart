@@ -227,6 +227,17 @@ defmodule AnnuartWeb.EnftLive do
               contract_label={@label}
               token_id={@token_id}
             />
+            <div :if={@contract.token_kind == :wrapped} id="claim-to-eth">
+              <TxComponents.claim_to_eth
+                id="tx-claim-eth"
+                contract_label={@label}
+                token_id={@token_id}
+              />
+              <p class="note">
+                Claims the payout and pays it into your wallet as plain ETH. The amount converted
+                is public. If it stops part-way, the payout is safe: finish it under Tokens.
+              </p>
+            </div>
             <TxComponents.action
               id="tx-transfer"
               action="transfer"
