@@ -6,8 +6,8 @@
 // is the thin LiveView hook around it.
 import {isAddress} from "ethers";
 import {
-  parseAmount, formatAmount, effectiveRate, toSegments, scheduleTotal, amountWarning,
-  ScheduleError, U64_MAX,
+  parseAmount, formatAmount, intervalSeconds, intervalText, effectiveRate, toSegments, scheduleTotal, amountWarning,
+  ScheduleError, AmountError, U64_MAX,
 } from "../units.js";
 import {explainAmount} from "../errors.js";
 import {current, onChange, chainInfo} from "../chain/signer.js";
@@ -23,6 +23,10 @@ const PERS = ["day", "month", "year"];
 const LENGTH_UNITS = [["year", 31536000n], ["month", 2592000n], ["day", 86400n]];
 const INDEFINITE_SHARE = 30;
 const MIN_BAR_HEIGHT = 4;
+// The wrapped token has 9 decimals, so one of its base units is 1e9 wei; fees are typed in ETH.
+const WEI_PER_UNIT = 1_000_000_000n;
+const ETH_DECIMALS = 18;
+const FEE_CAP_DIVISOR = 10n;
 // Dates beyond this are outside what a JavaScript Date can show.
 const MAX_DATE_SECONDS = 8_640_000_000_000n;
 // A start further off than this is called out in the summary (a year is 365 days).
@@ -64,6 +68,25 @@ function warningText(warning, {symbol, decimals}, format) {
     default:
       return `At these rates the endowment runs out around ${dateText(warning.at)}.`;
   }
+}
+
+// The fee in wei. Unlike an amount, zero is allowed (and is the default).
+function parseFee(text) {
+  try {
+    return parseAmount(text, ETH_DECIMALS);
+  } catch (err) {
+    if (err instanceof AmountError && err.code === "zero") return 0n;
+    throw err;
+  }
+}
+
+function autoText(auto) {
+  if (!auto) return "";
+  if (!auto.enabled) return "Automatic payouts are off.";
+  const fee = auto.fee === 0n
+    ? "with no fee"
+    : `with a fee of up to ${formatAmount(auto.fee, ETH_DECIMALS, TYPED)} ETH per payout, never more than 10% of it`;
+  return `Automatic payouts are on, at most once every ${intervalText(auto.interval)}, ${fee}.`;
 }
 
 export class CreateFormController {
@@ -136,7 +159,15 @@ export class CreateFormController {
     const label = source.dataset.label ?? source.value;
     const raw = source.dataset.decimals;
     const decimals = raw === undefined || raw === "" ? null : Number(raw);
-    return {label, symbol: source.dataset.symbol ?? "", decimals};
+    return {label, symbol: source.dataset.symbol ?? "", decimals, kind: source.dataset.nftKind ?? "standard"};
+  }
+
+  // The automatic payout settings apply only to an automatic contract.
+  isAuto() { return this.token().kind === "auto"; }
+
+  // The interval as seconds, or throws ScheduleError("bad_interval").
+  autoInterval() {
+    return intervalSeconds(this.role("auto-interval").value, this.role("auto-interval-unit").value);
   }
 
   tokenChanged({announce = true} = {}) {
@@ -150,6 +181,8 @@ export class CreateFormController {
       if (announce) this.deps.announce();
     }
     this.tokenSymbols();
+    const auto = this.role("auto");
+    if (auto) setHidden(auto, !this.isAuto());
   }
 
   // Schedule rows
@@ -281,6 +314,8 @@ export class CreateFormController {
       }
     }
 
+    this.refreshFee(rows, decimals);
+
     const nameHint = this.role("name-hint");
     if (nameHint) nameHint.textContent = nameProblem(this.typedName()) ?? "";
 
@@ -327,6 +362,37 @@ export class CreateFormController {
       const start = this.chosenStart() ?? now;
       this.role("warning").textContent = warningText(amountWarning(segments, start, amount), {symbol, decimals});
     }
+  }
+
+  // The fee echo: the parsed fee, or why it is not valid, or that it exceeds the
+  // 10% the contract would pay out of one interval's scheduled payout (the first
+  // period's rate over the interval). Without a valid rate there is no such note.
+  refreshFee(rows, decimals) {
+    const echo = this.role("auto-fee-echo");
+    if (!echo) return;
+    echo.textContent = "";
+    if (!this.isAuto()) return;
+    const text = this.role("auto-fee").value;
+    let fee;
+    try {
+      fee = parseFee(text);
+    } catch (err) {
+      echo.textContent = explainAmount(err, "ETH");
+      return;
+    }
+    if (text.trim() === "") return;
+    if (fee === 0n) return;
+    echo.textContent = `= ${formatAmount(fee, ETH_DECIMALS, TYPED)} ETH`;
+    if (decimals === null) return;
+    let seconds, rate;
+    try {
+      seconds = this.autoInterval();
+      rate = toSegments([rows[0]], decimals)[0].ratePerSec;
+    } catch {
+      return;
+    }
+    const payout = rate * BigInt(seconds) * WEI_PER_UNIT;
+    if (fee > payout / FEE_CAP_DIVISOR) echo.textContent += ". The fee is capped at 10% of each payout.";
   }
 
   fixedSeconds(segments) {
@@ -411,8 +477,17 @@ export class CreateFormController {
       throw new InputError(explainAmount(new ScheduleError("too_long"), symbol));
     }
 
+    let auto;
+    if (this.isAuto()) {
+      let interval;
+      try { interval = this.autoInterval(); } catch (err) { throw new InputError(explainAmount(err, symbol)); }
+      let fee;
+      try { fee = parseFee(this.role("auto-fee").value); } catch (err) { throw new InputError(explainAmount(err, "ETH")); }
+      auto = {enabled: isChecked(this.role("auto-enabled")), interval, fee};
+    }
+
     return {
-      args: {to, amount, segments, start: start ?? 0n, topUps: isChecked(this.role("donations")), name, symbol, decimals},
+      args: {to, amount, segments, start: start ?? 0n, topUps: isChecked(this.role("donations")), name, symbol, decimals, auto},
       label, symbol, decimals, contract, rows, other, now,
     };
   }
@@ -444,6 +519,7 @@ export class CreateFormController {
       farStart,
       `${donations}, and this cannot be changed later.`,
       `The schedule is ${words}.`,
+      autoText(args.auto),
       warning,
       "The endowment cannot be taken back and the schedule cannot be changed.",
     ].filter(Boolean).join(" ");

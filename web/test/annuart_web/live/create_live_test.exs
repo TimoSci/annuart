@@ -62,6 +62,44 @@ defmodule AnnuartWeb.CreateLiveTest do
     assert html =~ "other (TKN)"
   end
 
+  test "an automatic contract's option is marked and the automatic payout group is rendered", %{
+    conn: conn
+  } do
+    [first] = Application.get_env(:annuart, :chain)[:contracts]
+    auto = %{first | label: "auto", nft_kind: :auto}
+    chain = Application.get_env(:annuart, :chain)
+    Application.put_env(:annuart, :chain, Keyword.put(chain, :contracts, [first, auto]))
+
+    {_view, html} = connected(conn)
+    assert html =~ "auto (TKN, automatic payouts)"
+    assert html =~ ~s(data-nft-kind="auto")
+    assert html =~ ~s(data-nft-kind="standard")
+    refute html =~ "mock (TKN, automatic payouts)"
+
+    for role <- ~w(auto auto-enabled auto-interval auto-interval-unit auto-fee auto-fee-echo),
+        do: assert(html =~ ~s(data-role="#{role}"))
+
+    assert html =~
+             "Anyone can trigger these payouts, and you receive them as plain ETH. Each automatic payout amount is public. If the ENFT ever runs out, that reveals how much it held in total."
+
+    # Still no named inputs.
+    refute html =~ ~r/<input[^>]*\bname=/
+  end
+
+  test "a single automatic contract carries its kind on the token span", %{conn: conn} do
+    [first] = Application.get_env(:annuart, :chain)[:contracts]
+    chain = Application.get_env(:annuart, :chain)
+
+    Application.put_env(
+      :annuart,
+      :chain,
+      Keyword.put(chain, :contracts, [%{first | nft_kind: :auto}])
+    )
+
+    {_view, html} = connected(conn)
+    assert html =~ ~r/<span[^>]*data-role="token"[^>]*data-nft-kind="auto"/
+  end
+
   test "no amount input has a name and the form has no phx-change or phx-submit", %{conn: conn} do
     {_view, html} = connected(conn)
     assert html =~ ~s(data-role="amount")

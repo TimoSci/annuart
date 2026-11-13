@@ -101,16 +101,19 @@ defmodule AnnuartWeb.CreateLive do
   # Symbol and decimals of each configured token, for the hook to parse and show
   # amounts with. `nil` when the chain cannot be read; the hook then refuses.
   defp tokens do
-    for %Config.Contract{label: label, token: token} <- Config.contracts() do
+    for %Config.Contract{label: label, token: token, nft_kind: kind} <- Config.contracts() do
       case Reader.token_meta(token) do
         {:ok, %{symbol: symbol, decimals: decimals}} ->
-          %{label: label, symbol: symbol, decimals: decimals}
+          %{label: label, symbol: symbol, decimals: decimals, kind: kind}
 
         _ ->
-          %{label: label, symbol: nil, decimals: nil}
+          %{label: label, symbol: nil, decimals: nil, kind: kind}
       end
     end
   end
+
+  defp option_text(%{kind: :auto} = t), do: "#{t.label} (#{t.symbol}, automatic payouts)"
+  defp option_text(t), do: "#{t.label} (#{t.symbol})"
 
   def render(assigns) do
     ~H"""
@@ -144,8 +147,9 @@ defmodule AnnuartWeb.CreateLive do
                   data-label={t.label}
                   data-symbol={t.symbol}
                   data-decimals={t.decimals}
+                  data-nft-kind={t.kind}
                 >
-                  {t.label} ({t.symbol})
+                  {option_text(t)}
                 </option>
               </select>
             <% else %>
@@ -155,6 +159,7 @@ defmodule AnnuartWeb.CreateLive do
                 data-label={t.label}
                 data-symbol={t.symbol}
                 data-decimals={t.decimals}
+                data-nft-kind={t.kind}
               >
                 {t.symbol}
               </span>
@@ -234,6 +239,42 @@ defmodule AnnuartWeb.CreateLive do
               autocomplete="off"
               hidden
             />
+          </div>
+          <div data-role="auto" hidden>
+            <div class="field">
+              <label>Automatic payouts</label>
+              <input type="checkbox" data-role="auto-enabled" checked />
+              <span class="note">Cannot be changed later.</span>
+            </div>
+            <div class="field">
+              <label>At most once every</label>
+              <input
+                type="text"
+                inputmode="numeric"
+                data-role="auto-interval"
+                value="1"
+                autocomplete="off"
+              />
+              <select data-role="auto-interval-unit">
+                <option value="hours">hours</option>
+                <option value="days" selected>days</option>
+                <option value="weeks">weeks</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Fee per payout (ETH)</label>
+              <input
+                type="text"
+                inputmode="decimal"
+                data-role="auto-fee"
+                value="0"
+                autocomplete="off"
+              />
+              <span data-role="auto-fee-echo" class="amount-echo"></span>
+            </div>
+            <p class="note">
+              Anyone can trigger these payouts, and you receive them as plain ETH. Each automatic payout amount is public. If the ENFT ever runs out, that reveals how much it held in total.
+            </p>
           </div>
         </div>
 

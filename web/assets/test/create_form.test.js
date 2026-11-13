@@ -18,8 +18,8 @@ const CONTRACT = {label: "mock", nft: "0xnft", token: "0xtok", tokenKind: "mock"
 // The static markup CreateLive renders; the hook fills in the rows.
 function page({tokens = [["mock", "TKN", 6]]} = {}) {
   const token = tokens.length > 1
-    ? `<select data-role="token">${tokens.map(([l, s, d], i) => `<option value="${l}"${i === 0 ? " selected" : ""} data-symbol="${s}" data-decimals="${d}">${l} (${s})</option>`).join("")}</select>`
-    : `<span data-role="token" data-label="${tokens[0][0]}" data-symbol="${tokens[0][1]}" data-decimals="${tokens[0][2]}"></span>`;
+    ? `<select data-role="token">${tokens.map(([l, s, d, k = "standard"], i) => `<option value="${l}"${i === 0 ? " selected" : ""} data-symbol="${s}" data-decimals="${d}" data-nft-kind="${k}">${l} (${s})</option>`).join("")}</select>`
+    : `<span data-role="token" data-label="${tokens[0][0]}" data-symbol="${tokens[0][1]}" data-decimals="${tokens[0][2]}" data-nft-kind="${tokens[0][3] ?? "standard"}"></span>`;
   const {document, window} = parseHTML(`<html><body>
     <form id="create-form">
       ${token}
@@ -36,6 +36,13 @@ function page({tokens = [["mock", "TKN", 6]]} = {}) {
       <input data-role="donations" type="checkbox" checked>
       <select data-role="recipient-mode"><option value="me" selected>Me</option><option value="other">Another address</option></select>
       <input data-role="recipient" type="text" hidden>
+      <div data-role="auto" hidden>
+        <input data-role="auto-enabled" type="checkbox" checked>
+        <input data-role="auto-interval" type="text" value="1">
+        <select data-role="auto-interval-unit"><option value="hours">hours</option><option value="days" selected>days</option><option value="weeks">weeks</option></select>
+        <input data-role="auto-fee" type="text" value="0">
+        <span data-role="auto-fee-echo"></span>
+      </div>
       <p data-role="warning"></p>
       <p data-role="message" role="alert"></p>
       <div data-role="summary" hidden></div>
@@ -57,7 +64,7 @@ function make({run, session = SESSION, tokens, now = NOW, confirm = () => true} 
     push: (name, payload) => pushed.push([name, payload]),
     session: () => state.session,
     onSession: fn => { listeners.push(fn); return () => {}; },
-    contract: label => (label === "mock" ? CONTRACT : undefined),
+    contract: label => (label === "mock" ? CONTRACT : label === "auto" ? {...CONTRACT, label: "auto", nftKind: "auto"} : undefined),
     createEnft: run ?? (async (s, c, args, onStep) => { calls.push({s, c, args}); onStep("mined", "done"); return {hash: "0xh", tokenId: 3n}; }),
     announce: () => announced.push(1),
     now: () => state.now,
@@ -657,4 +664,112 @@ test("the summary warns when payouts start more than ten years from now", () => 
   type(q(t.el, "start-at"), "2039-12-01T00:00");
   click(q(t.el, "run"));
   assert.doesNotMatch(q(t.el, "summary").textContent, /more than ten years/);
+});
+
+// Automatic payouts
+
+const AUTO_TOKENS = [["mock", "TKN", 6], ["auto", "TKN", 6, "auto"]];
+const autoPage = opts => {
+  const t = make({tokens: AUTO_TOKENS, ...opts});
+  pick(q(t.el, "token"), "auto");
+  return t;
+};
+const hidden = (el, role) => q(el, role).hasAttribute("hidden");
+
+test("the automatic payout group is hidden for a standard contract and nothing is sent", async () => {
+  const t = make({tokens: AUTO_TOKENS});
+  assert.equal(hidden(t.el, "auto"), true);
+  fillDefault(t.el);
+  await submit(t);
+  assert.equal(t.calls[0].args.auto, undefined);
+});
+
+test("the group shows for an automatic contract (single-token span too) and hides again", () => {
+  const single = make({tokens: [["auto", "TKN", 6, "auto"]]});
+  assert.equal(hidden(single.el, "auto"), false);
+  const t = autoPage();
+  assert.equal(hidden(t.el, "auto"), false);
+  pick(q(t.el, "token"), "mock");
+  assert.equal(hidden(t.el, "auto"), true);
+});
+
+test("the defaults give enabled, one day and no fee", async () => {
+  const t = autoPage();
+  fillDefault(t.el);
+  await submit(t);
+  assert.deepEqual(t.calls[0].args.auto, {enabled: true, interval: 86400, fee: 0n});
+});
+
+test("a typed interval and fee are sent in seconds and wei", async () => {
+  const t = autoPage();
+  fillDefault(t.el);
+  type(q(t.el, "auto-interval"), "36");
+  pick(q(t.el, "auto-interval-unit"), "hours");
+  type(q(t.el, "auto-fee"), "0.001");
+  await submit(t);
+  assert.deepEqual(t.calls[0].args.auto, {enabled: true, interval: 129600, fee: 1_000_000_000_000_000n});
+});
+
+test("unticking sends enabled: false", async () => {
+  const t = autoPage();
+  fillDefault(t.el);
+  const box = q(t.el, "auto-enabled");
+  box.checked = false;
+  box.dispatchEvent(new box.ownerDocument.defaultView.Event("change", {bubbles: true}));
+  click(q(t.el, "run"));
+  assert.match(q(t.el, "summary").textContent, /Automatic payouts are off\./);
+  click(q(t.el, "confirm"));
+  await t.ctl.pending;
+  assert.equal(t.calls[0].args.auto.enabled, false);
+});
+
+test("a bad interval stops validation with the interval message", async () => {
+  for (const [value, unit] of [["0", "days"], ["400", "days"]]) {
+    const t = autoPage();
+    fillDefault(t.el);
+    type(q(t.el, "auto-interval"), value);
+    pick(q(t.el, "auto-interval-unit"), unit);
+    click(q(t.el, "run"));
+    await t.ctl.pending;
+    assert.equal(message(t.el), "The interval must be between 1 hour and 365 days.");
+    assert.equal(t.calls.length, 0);
+  }
+});
+
+test("a fee typed with a separator stops with the amount message", async () => {
+  const t = autoPage();
+  fillDefault(t.el);
+  type(q(t.el, "auto-fee"), "1,5");
+  click(q(t.el, "run"));
+  await t.ctl.pending;
+  assert.match(message(t.el), /separator|decimal|digits|\./i);
+  assert.notEqual(message(t.el), "");
+  assert.equal(t.calls.length, 0);
+});
+
+test("the summary states the interval and the fee", () => {
+  const t = autoPage();
+  fillDefault(t.el);
+  click(q(t.el, "run"));
+  assert.match(q(t.el, "summary").textContent, /Automatic payouts are on, at most once every 1 day, with no fee\./);
+  type(q(t.el, "auto-fee"), "0.001");
+  click(q(t.el, "run"));
+  assert.match(q(t.el, "summary").textContent, /Automatic payouts are on, at most once every 1 day, with a fee of up to 0\.001 ETH per payout, never more than 10% of it\./);
+});
+
+test("a standard contract's summary says nothing about automatic payouts", () => {
+  const t = make();
+  fillDefault(t.el);
+  click(q(t.el, "run"));
+  assert.doesNotMatch(q(t.el, "summary").textContent, /Automatic payouts/);
+});
+
+test("a fee above 10% of one interval's payout is called out", () => {
+  const t = autoPage();
+  fillDefault(t.el);
+  // About 100 TKN per day: one day's payout is just under 0.1 ETH, so 10% is just under 0.01.
+  type(q(t.el, "auto-fee"), "0.009");
+  assert.equal(q(t.el, "auto-fee-echo").textContent.includes("capped"), false);
+  type(q(t.el, "auto-fee"), "0.011");
+  assert.match(q(t.el, "auto-fee-echo").textContent, /The fee is capped at 10% of each payout\./);
 });
