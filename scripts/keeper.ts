@@ -35,6 +35,8 @@ async function main() {
     })),
   );
 
+  // Outside the test runner the FHEVM plugin must be initialised before it can decrypt.
+  await fhevm.initializeCLIApi();
   const result = await runKeeperPass({
     contracts,
     publicDecrypt: (handles) => fhevm.publicDecrypt(handles as `0x${string}`[]) as unknown as ReturnType<PublicDecrypt>,
