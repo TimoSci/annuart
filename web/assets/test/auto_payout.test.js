@@ -18,11 +18,11 @@ const STATUS = {
 const PENDING = {requestId: "0x" + "77".repeat(32), recipient: ME, requester: "0x" + "cd".repeat(20), fee: 0n};
 
 // The markup EnftLive renders for the hook's region.
-function make({status = STATUS, owner = false, session = SESSION, actions = {}, confirm = () => true, read} = {}) {
+function make({status = STATUS, owner = false, session = SESSION, actions = {}, confirm = () => true, read, now = NOW} = {}) {
   const {document, window} = parseHTML(`<html><body>
-    <div id="auto-payout" data-label="auto" data-token-id="1" data-owner="${owner}"></div></body></html>`);
+    <div id="auto-payout" data-label="auto" data-token-id="1" data-owner="${owner}" data-rev="r1"></div></body></html>`);
   const el = document.getElementById("auto-payout");
-  const state = {session, status, calls: [], reads: 0, questions: [], answers: confirm};
+  const state = {session, status, calls: [], reads: 0, questions: [], answers: confirm, now, timers: []};
   const listeners = [];
   const pushed = [];
   const announced = [];
@@ -47,7 +47,9 @@ function make({status = STATUS, owner = false, session = SESSION, actions = {}, 
     announce: () => { announced.push(1); document.dispatchEvent(new window.Event("annuart:tx")); },
     failed: () => document.dispatchEvent(new window.Event("annuart:tx-failed")),
     confirm: text => { state.questions.push(text); return state.answers(text); },
-    now: () => NOW,
+    now: () => state.now,
+    schedule: (fn, ms) => { const t = {fn, ms, cancelled: false}; state.timers.push(t); return t; },
+    cancel: t => { t.cancelled = true; },
     target: document,
   });
   return {ctl, el, document, window, state, pushed, announced,
@@ -58,6 +60,8 @@ const q = (el, role) => el.querySelector(`[data-role=${role}]`);
 const click = node => node.dispatchEvent(new node.ownerDocument.defaultView.Event("click", {bubbles: true}));
 const type = (input, value) => { input.value = value; input.dispatchEvent(new input.ownerDocument.defaultView.Event("input", {bubbles: true})); };
 const stateLine = el => q(el, "state").textContent;
+const change = node => node.dispatchEvent(new node.ownerDocument.defaultView.Event("change", {bubbles: true}));
+const liveTimers = t => t.state.timers.filter(x => !x.cancelled);
 // Waits for the click's action and the refresh it causes.
 async function settle(t) {
   await Promise.all(t.ctl.pendingActions);
@@ -141,6 +145,7 @@ test("Save sends the interval in seconds and the fee in wei, and pushes only pub
   await t.ctl.pending;
   type(q(t.el, "set-interval"), "12");
   q(t.el, "set-interval-unit").querySelector("option[value=hours]").selected = true;
+  change(q(t.el, "set-interval-unit"));
   type(q(t.el, "set-fee"), "0.005");
   click(q(t.el, "save"));
   await settle(t);
@@ -158,6 +163,7 @@ test("switching on asks first; a declined question sends nothing", async () => {
   await t.ctl.pending;
   assert.equal(q(t.el, "set-enabled").checked, false);
   q(t.el, "set-enabled").checked = true;
+  change(q(t.el, "set-enabled"));
   click(q(t.el, "save"));
   await settle(t);
   assert.deepEqual(t.state.questions, ["Switch automatic payouts on? Each payout amount becomes public."]);
@@ -174,6 +180,7 @@ test("switching off asks nothing", async () => {
   const t = make({owner: true});
   await t.ctl.pending;
   q(t.el, "set-enabled").checked = false;
+  change(q(t.el, "set-enabled"));
   click(q(t.el, "save"));
   await settle(t);
   assert.deepEqual(t.state.questions, []);
@@ -315,16 +322,173 @@ test("the settings form follows data-owner", async () => {
   await t.ctl.pending;
   assert.equal(q(t.el, "set-enabled"), null);
   t.el.dataset.owner = "true";
-  t.ctl.ownerChanged();
+  t.ctl.attributesChanged();
   assert.ok(q(t.el, "set-enabled"));
   assert.equal(q(t.el, "settings").hasAttribute("hidden"), false);
   t.el.dataset.owner = "false";
-  t.ctl.ownerChanged();
+  t.ctl.attributesChanged();
   assert.equal(q(t.el, "settings").hasAttribute("hidden"), true);
+  // A change of owner alone is drawn from the status already read.
+  assert.equal(t.state.reads, 1);
 });
 
-test("chain data is rendered as text, never HTML", async () => {
-  const t = make({status: {...STATUS, due: false, pending: {...PENDING, requester: "<img src=x onerror=alert(1)>"}}});
+test("an action's note is shown as text, never as HTML", async () => {
+  const evil = "<img src=x onerror=alert(1)>";
+  const t = make({actions: {triggerPayout: async () => ({hash: "0xh", wei: 1n, feeWei: 0n, paidInWeth: false, note: evil})}});
   await t.ctl.pending;
+  click(q(t.el, "trigger"));
+  await settle(t);
   assert.equal(t.el.querySelector("img"), null);
+  assert.match(t.el.textContent, /<img src=x onerror=alert\(1\)>/);
+});
+
+test("a 129600 second interval is prefilled as 36 hours", async () => {
+  const t = make({owner: true, status: {...STATUS, interval: 129600}});
+  await t.ctl.pending;
+  assert.equal(q(t.el, "set-interval").value, "36");
+  assert.equal(q(t.el, "set-interval-unit").value, "hours");
+  assert.equal(q(t.el, "interval-note").textContent, "");
+});
+
+test("an interval of no whole hours leaves the box empty and says what it is", async () => {
+  const t = make({owner: true, status: {...STATUS, interval: 5400}});
+  await t.ctl.pending;
+  assert.equal(q(t.el, "set-interval").value, "");
+  assert.equal(q(t.el, "interval-note").textContent, "The interval is 5400 seconds.");
+  click(q(t.el, "save"));
+  await settle(t);
+  assert.equal(t.state.calls.length, 0, "a blank interval is refused, not guessed");
+});
+
+test("pending, then finished elsewhere: no dead Try again is left", async () => {
+  const data = {status: {...STATUS, due: false, lastRequestAt: NOW - 60, pending: PENDING}};
+  const t = make({
+    read: () => data.status,
+    actions: {
+      finishPayout: async (_s, _c, _args, onStep) => {
+        onStep("decrypt", "active");
+        // Someone else finished it in the meantime.
+        data.status = {...STATUS, due: false, lastRequestAt: NOW - 60, last: {paidAt: NOW, wei: ETH}};
+        throw new ActionError("This payout has already been finished.");
+      },
+    },
+  });
+  await t.ctl.pending;
+  click(q(t.el, "finish"));
+  await settle(t);
+  assert.equal(t.el.querySelector("button[data-role=retry]"), null);
+  assert.equal(t.el.querySelector("li[data-state=failed]"), null);
+  assert.equal(q(t.el, "finish"), null);
+  assert.equal(t.el.querySelectorAll("button").length, 0);
+  assert.equal(q(t.el, "finished-note").textContent, "This payout has already been finished.");
+  assert.match(stateLine(t.el), /^Next payout possible /);
+});
+
+test("a trigger left finishing, then finished elsewhere: the next read clears it", async () => {
+  const data = {status: STATUS};
+  const t = make({
+    read: () => data.status,
+    actions: {
+      triggerPayout: async (_s, _c, args, onStep) => {
+        onStep("requestPayout", "done", {hash: "0xreq"});
+        data.status = {...STATUS, due: false, lastRequestAt: NOW, pending: PENDING};
+        onStep("decrypt", "active");
+        throw Object.assign(new ActionError("not decryptable yet"), {resume: {action: "finishPayout", args: {tokenId: args.tokenId}}});
+      },
+    },
+  });
+  await t.ctl.pending;
+  click(q(t.el, "trigger"));
+  await settle(t);
+  assert.ok(q(t.el, "finish"));
+  // The index saw it paid by someone else: data-rev changes.
+  data.status = {...STATUS, due: false, lastRequestAt: NOW, last: {paidAt: NOW, wei: ETH}};
+  t.el.dataset.rev = "r2";
+  t.ctl.attributesChanged();
+  await t.ctl.pending;
+  assert.equal(q(t.el, "finish"), null);
+  assert.equal(t.el.querySelector("button[data-role=retry]"), null);
+  assert.equal(q(t.el, "finished-note").textContent, "This payout has already been finished.");
+});
+
+test("data-rev changing reads the status again", async () => {
+  const data = {status: STATUS};
+  const t = make({read: () => data.status});
+  await t.ctl.pending;
+  assert.equal(t.state.reads, 1);
+  t.ctl.attributesChanged();
+  assert.equal(t.state.reads, 1, "nothing changed, nothing is read");
+  data.status = {...STATUS, due: false, lastRequestAt: NOW - 10, pending: PENDING};
+  t.el.dataset.rev = "r2";
+  t.ctl.attributesChanged();
+  await t.ctl.pending;
+  assert.equal(t.state.reads, 2);
+  assert.equal(stateLine(t.el), "A payout is waiting to be finished.");
+  assert.ok(q(t.el, "finish"));
+});
+
+test("too soon, then the time passes: the timer reads again and Trigger payout appears", async () => {
+  const last = NOW - 3600;
+  const data = {status: {...STATUS, due: false, lastRequestAt: last}};
+  const t = make({read: () => data.status});
+  await t.ctl.pending;
+  assert.equal(q(t.el, "trigger"), null);
+  const timers = liveTimers(t);
+  assert.equal(timers.length, 1);
+  // Due at last + 1 day, a little after.
+  assert.equal(timers[0].ms, (last + 86400 - NOW) * 1000 + 1000);
+  t.state.now = last + 86400 + 1;
+  data.status = {...STATUS, due: true, lastRequestAt: last};
+  timers[0].fn();
+  await t.ctl.pending;
+  assert.equal(t.state.reads, 2);
+  assert.equal(q(t.el, "trigger").textContent, "Trigger payout");
+  assert.deepEqual(liveTimers(t).filter(x => x !== timers[0]), [], "nothing more to wait for");
+});
+
+test("a next payout far ahead arms the longest timer setTimeout allows, and destroy clears it", async () => {
+  const t = make({status: {...STATUS, interval: 31536000, due: false, lastRequestAt: NOW - 10}});
+  await t.ctl.pending;
+  assert.equal(liveTimers(t)[0].ms, 2 ** 31 - 1);
+  t.ctl.destroy();
+  assert.equal(liveTimers(t).length, 0);
+});
+
+test("only one timer is armed across reads", async () => {
+  const t = make({status: {...STATUS, due: false, lastRequestAt: NOW - 3600}});
+  await t.ctl.pending;
+  await t.ctl.refresh();
+  assert.equal(liveTimers(t).length, 1);
+});
+
+test("a refresh arriving mid-edit keeps the owner's edits", async () => {
+  const t = make({owner: true});
+  await t.ctl.pending;
+  type(q(t.el, "set-interval"), "3");
+  type(q(t.el, "set-fee"), "0.5");
+  t.document.dispatchEvent(new t.window.Event("annuart:tx"));
+  await t.ctl.pending;
+  assert.equal(t.state.reads, 2);
+  assert.equal(q(t.el, "set-interval").value, "3");
+  assert.equal(q(t.el, "set-fee").value, "0.5");
+});
+
+test("an account switch drops unsaved edits, so the form follows the chain again", async () => {
+  const t = make({owner: true});
+  await t.ctl.pending;
+  type(q(t.el, "set-interval"), "3");
+  t.setSession({address: "0x" + "ef".repeat(20)});
+  await t.ctl.pending;
+  t.setSession(SESSION);
+  await t.ctl.pending;
+  assert.equal(q(t.el, "set-interval").value, "1");
+});
+
+test("with a status from the chain the region is marked live; without one it is not", async () => {
+  const t = make({session: null});
+  await t.ctl.pending;
+  assert.equal(t.el.hasAttribute("data-live"), false);
+  t.setSession(SESSION);
+  await t.ctl.pending;
+  assert.equal(t.el.hasAttribute("data-live"), true);
 });

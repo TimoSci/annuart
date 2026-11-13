@@ -158,6 +158,9 @@ td.n, th.n { text-align: right; padding-right: 0; }
   vertical-align: middle; white-space: nowrap;
 }
 .auto-payout { margin-top: 14px; }
+.auto-index-state { margin: 14px 0 0; }
+/* Once the hook has read the chain, its own line replaces the index's. */
+#panel-auto:has(.auto-payout[data-live]) .auto-index-state { display: none; }
 .auto-payout .auto-state { margin: 0 0 10px; }
 .auto-payout .auto-state:empty { display: none; }
 .auto-payout [data-role=trigger-note] { margin: 0 0 8px; }

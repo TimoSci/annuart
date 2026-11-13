@@ -244,7 +244,7 @@ defmodule AnnuartWeb.CreateLive do
             <div class="field">
               <label>Automatic payouts</label>
               <input type="checkbox" data-role="auto-enabled" checked />
-              <span class="note">Cannot be changed later.</span>
+              <span class="note">The owner can change these settings later.</span>
             </div>
             <div class="field">
               <label>At most once every</label>

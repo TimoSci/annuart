@@ -70,7 +70,7 @@ defmodule AnnuartWeb.CreateLiveTest do
     chain = Application.get_env(:annuart, :chain)
     Application.put_env(:annuart, :chain, Keyword.put(chain, :contracts, [first, auto]))
 
-    {_view, html} = connected(conn)
+    {view, html} = connected(conn)
     assert html =~ "auto (TKN, automatic payouts)"
     assert html =~ ~s(data-nft-kind="auto")
     assert html =~ ~s(data-nft-kind="standard")
@@ -83,6 +83,15 @@ defmodule AnnuartWeb.CreateLiveTest do
 
     assert html =~
              "Anyone can trigger these payouts, and you receive them as plain ETH. Each automatic payout amount is public. If the ENFT ever runs out, that reveals how much it held in total."
+
+    # The owner can change the automatic payout settings, unlike the name and donations.
+    assert has_element?(
+             view,
+             ~s([data-role="auto"] .note),
+             "The owner can change these settings later."
+           )
+
+    refute has_element?(view, ~s([data-role="auto"] .note), "Cannot be changed later.")
 
     # Still no named inputs.
     refute html =~ ~r/<input[^>]*\bname=/

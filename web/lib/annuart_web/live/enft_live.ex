@@ -81,13 +81,16 @@ defmodule AnnuartWeb.EnftLive do
       enft ->
         transfers = Enum.reject(Enfts.history(enft), &(&1.from == @zero_address))
         auto? = contract.nft_kind == :auto
+        payouts = if auto?, do: Enfts.list_payouts(enft), else: []
 
         assign(socket,
           enft: enft,
           periods: periods(enft),
           auto?: auto?,
           last_payout: if(auto?, do: Enfts.last_payout(enft)),
-          history: history(transfers, if(auto?, do: Enfts.list_payouts(enft), else: [])),
+          history: history(transfers, payouts),
+          auto_index_state: auto? && index_state(enft, payouts),
+          auto_rev: auto? && rev(enft, payouts),
           token_meta: ok_or_nil(Reader.token_meta(contract.token)),
           last_accrual_at: ok_or_nil(Reader.last_accrual_at(contract.nft, token_id)),
           settled: ok_or_nil(Reader.settled(contract.nft, token_id))
@@ -103,6 +106,51 @@ defmodule AnnuartWeb.EnftLive do
     (Enum.map(transfers, &{&1.at, {:transfer, &1}}) ++ paid)
     |> Enum.sort_by(&elem(&1, 0), DateTime)
     |> Enum.map(&elem(&1, 1))
+  end
+
+  # Whether a payout is pending or when the next can be triggered, from the
+  # index, for visitors without a wallet. The hook's line, read from the chain,
+  # takes its place once a wallet is connected. `nil`: nothing to say.
+  defp index_state(%{pending_request_id: id}, _payouts) when is_binary(id),
+    do: {:text, "A payout is waiting to be finished."}
+
+  defp index_state(%{auto_enabled: true, auto_interval: interval} = enft, payouts)
+       when is_integer(interval) do
+    case payouts do
+      [%{requested_at: %DateTime{} = at} | _] ->
+        last = DateTime.to_unix(at)
+
+        cond do
+          schedule_ended_by?(enft, last) -> nil
+          last + interval > System.os_time(:second) -> {:next, last + interval}
+          true -> {:text, "A payout can be triggered now."}
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp index_state(_enft, _payouts), do: nil
+
+  # The contract pays nothing more once a request was made at or after the end
+  # of a fixed schedule. A hidden schedule cannot be checked here.
+  defp schedule_ended_by?(%{schedule: nil}, _last), do: false
+
+  defp schedule_ended_by?(%{schedule: schedule, schedule_start: start}, last) do
+    case Schedule.ends_at(schedule, start) do
+      :never -> false
+      ends -> last >= ends
+    end
+  end
+
+  # Changes whenever the index sees new settings or a payout requested or paid,
+  # so the hook knows to read the chain again. Only public, indexed values.
+  defp rev(enft, payouts) do
+    [enft.auto_enabled, enft.auto_interval, enft.auto_fee, enft.pending_request_id]
+    |> Enum.concat(Enum.map(payouts, &{&1.request_id, &1.paid_at}))
+    |> :erlang.phash2()
+    |> Integer.to_string()
   end
 
   # Wei as ETH, trimmed: "0.5", "1.25". Automatic payout amounts only.
@@ -249,6 +297,14 @@ defmodule AnnuartWeb.EnftLive do
                 <% end %>
               </span>
             </div>
+            <p :if={@auto_index_state} id="auto-index-state" class="auto-index-state">
+              <%= case @auto_index_state do %>
+                <% {:text, text} -> %>
+                  {text}
+                <% {:next, at} -> %>
+                  Next payout possible from <EnftComponents.datetime value={at} />
+              <% end %>
+            </p>
             <div
               id="auto-payout"
               class="auto-payout"
@@ -257,6 +313,7 @@ defmodule AnnuartWeb.EnftLive do
               data-label={@label}
               data-token-id={@token_id}
               data-owner={if(owner?(@address, @enft), do: "true", else: "false")}
+              data-rev={@auto_rev}
             >
             </div>
           </div>

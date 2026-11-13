@@ -27,6 +27,11 @@ const FEE_NOTE = "At most 10% of each payout is ever paid as a fee.";
 const NO_WALLET = "Connect a wallet to trigger a payout.";
 const UNAVAILABLE = "Automatic payout status is unavailable.";
 const WRONG_CHAIN = "Switch your wallet to the right network to see this.";
+const ALREADY_FINISHED = "This payout has already been finished.";
+// setTimeout runs at most this far ahead; a later next-payout time re-arms.
+const MAX_TIMER_MS = 2 ** 31 - 1;
+// Read again a moment after the next payout becomes possible, not before.
+const TIMER_MARGIN_MS = 1000;
 
 // The button each payout action is offered under.
 const BUTTONS = {
@@ -45,8 +50,9 @@ function dateTimeText(seconds) {
 }
 
 // An interval in seconds as the form's number and unit: the largest unit that
-// divides it evenly ("1" "days" for 86400). One set some other way that no
-// unit divides leaves the number blank, for the owner to enter.
+// divides it evenly ("1" "days" for 86400, "36" "hours" for 129600). One set
+// some other way that no unit divides leaves the number blank, for the owner
+// to enter, rather than prefilling a value that is not the chain's.
 function intervalFields(seconds) {
   const s = seconds > 0 ? seconds : DEFAULT_INTERVAL;
   const units = Object.entries(INTERVAL_UNITS).sort(([, a], [, b]) => b - a);
@@ -102,6 +108,12 @@ export class AutoPayoutController {
     // The owner has edited the form since it was last filled from the chain.
     this.dirty = false;
     this.owner = el.dataset.owner === "true";
+    // The server's digest of the indexed settings and payouts: when it changes,
+    // someone changed the chain, so the status is read again.
+    this.rev = el.dataset.rev;
+    this.timer = null;
+    this.schedule = deps.schedule ?? ((fn, ms) => globalThis.setTimeout(fn, ms));
+    this.cancel = deps.cancel ?? (t => globalThis.clearTimeout(t));
 
     this.stateLine = this.text("p", "", "auto-state");
     this.stateLine.dataset.role = "state";
@@ -109,6 +121,8 @@ export class AutoPayoutController {
     this.triggerNote.dataset.role = "trigger-note";
     this.slot = this.doc.createElement("div");
     this.slot.dataset.role = "payout";
+    this.finishedNote = this.text("p", ALREADY_FINISHED, "note");
+    this.finishedNote.dataset.role = "finished-note";
     el.replaceChildren(this.stateLine, this.slot);
 
     // A failed action may still have changed the chain (a request that was
@@ -116,7 +130,8 @@ export class AutoPayoutController {
     this.onTx = () => this.refresh();
     deps.target.addEventListener("annuart:tx", this.onTx);
     deps.target.addEventListener("annuart:tx-failed", this.onTx);
-    this.unsubscribe = deps.onSession?.(() => this.refresh());
+    // Another account's edits are not the owner's: the form is filled afresh.
+    this.unsubscribe = deps.onSession?.(() => { this.dirty = false; this.refresh(); });
     this.refresh();
   }
 
@@ -124,6 +139,7 @@ export class AutoPayoutController {
     this.deps.target.removeEventListener("annuart:tx", this.onTx);
     this.deps.target.removeEventListener("annuart:tx-failed", this.onTx);
     if (typeof this.unsubscribe === "function") this.unsubscribe();
+    this.stopTimer();
     this.payout?.destroy();
     this.settings?.action.destroy();
   }
@@ -168,18 +184,44 @@ export class AutoPayoutController {
     this.render();
   }
 
-  // data-owner changed (the wallet connected or switched): show or hide the form.
-  ownerChanged() {
+  // LiveView changed this region's data attributes. data-owner (the wallet
+  // connected or switched) shows or hides the form; data-rev (the index saw a
+  // new setting or payout) means the chain changed, so the status is read again.
+  attributesChanged() {
     const owner = this.el.dataset.owner === "true";
-    if (owner === this.owner) return;
-    this.owner = owner;
-    this.render();
+    const rev = this.el.dataset.rev;
+    if (rev !== this.rev) {
+      this.rev = rev;
+      this.owner = owner;
+      this.refresh();
+    } else if (owner !== this.owner) {
+      this.owner = owner;
+      this.render();
+    }
+  }
+
+  stopTimer() {
+    if (this.timer !== null) this.cancel(this.timer);
+    this.timer = null;
+  }
+
+  // Too soon for a payout: read again once the next one is possible.
+  armTimer(status) {
+    this.stopTimer();
+    if (!status || status.pending || !status.enabled || status.due || status.lastRequestAt === null) return;
+    const wait = (status.lastRequestAt + status.interval - this.deps.now()) * 1000;
+    if (wait <= 0) return;
+    this.timer = this.schedule(() => { this.timer = null; this.refresh(); }, Math.min(wait + TIMER_MARGIN_MS, MAX_TIMER_MS));
   }
 
   render() {
     if (!this.result) return;
     const status = this.result.kind === "ok" ? this.result.status : null;
+    // With a status read from the chain, this region's line replaces the
+    // server's line from the index (see app.css).
+    if (status) this.el.dataset.live = ""; else delete this.el.dataset.live;
     this.stateLine.textContent = this.stateText(this.result);
+    this.armTimer(status);
     this.renderPayout(status);
     this.renderSettings(status);
   }
@@ -245,6 +287,14 @@ export class AutoPayoutController {
     if (!status) return;
     const wanted = status.pending ? "finishPayout" : status.enabled && status.due ? "triggerPayout" : null;
     let c = this.payout;
+    let finished = false;
+    // Nothing due or pending: a failure left on screen has nothing to retry (a
+    // payout someone else finished), so it goes, with a line saying so.
+    if (c && !c.running && !wanted && c.recovery) {
+      finished = c.effective === "finishPayout";
+      this.dropPayout();
+      c = null;
+    }
     if (c && !c.running && (wanted ? c.effective !== wanted : !c.used)) { this.dropPayout(); c = null; }
     if (!c && wanted) {
       const {role, text} = BUTTONS[wanted];
@@ -252,7 +302,7 @@ export class AutoPayoutController {
       c = this.payout = new RoleAction(this.txBlock(wanted, button), this.txDeps());
       c.button = button;
     }
-    if (!c) { this.slot.replaceChildren(); return; }
+    if (!c) { this.slot.replaceChildren(...(finished ? [this.finishedNote] : [])); return; }
     const shown = c.running ? c.effective : wanted;
     if (shown) {
       c.button.dataset.role = BUTTONS[shown].role;
@@ -321,6 +371,8 @@ export class AutoPayoutController {
     const fee = this.input("set-fee", {inputmode: "decimal"});
     const echo = this.text("span", "", "amount-echo");
     echo.dataset.role = "set-fee-echo";
+    const intervalNote = this.text("span", "", "amount-echo");
+    intervalNote.dataset.role = "interval-note";
 
     const save = this.button("save", "Save");
     const block = this.txBlock("setAutoPayout", save);
@@ -328,7 +380,7 @@ export class AutoPayoutController {
       this.text("h3", "Your settings"),
       this.field(this.label("Automatic payouts", enabled), enabled),
       this.text("p", PRIVACY_NOTE, "note"),
-      this.field(this.label("At most once every", interval), interval, unit),
+      this.field(this.label("At most once every", interval), interval, unit, intervalNote),
       this.field(this.label("Fee per payout (ETH)", fee), fee, echo),
       this.text("p", FEE_NOTE, "note"),
       block,
@@ -347,7 +399,7 @@ export class AutoPayoutController {
     const action = new SaveAction(block, this.txDeps({
       announce: () => { this.dirty = false; this.deps.announce(); },
     }), () => this.prepare());
-    return {root, action, enabled, interval, unit, fee, echo};
+    return {root, action, enabled, interval, unit, intervalNote, fee, echo};
   }
 
   echoFee(input, echo) {
@@ -364,6 +416,8 @@ export class AutoPayoutController {
     f.enabled.checked = Boolean(status.enabled);
     const {value, unit} = intervalFields(status.interval);
     f.interval.value = value;
+    // A blank box says why: the chain's interval is no whole number of hours.
+    f.intervalNote.textContent = value === "" ? `The interval is ${status.interval} seconds.` : "";
     // Selecting one option of a single select deselects the others.
     const option = [...f.unit.querySelectorAll("option")].find(o => o.value === unit);
     if (option) option.selected = true;
@@ -411,9 +465,9 @@ export const AutoPayout = {
       target: window,
     });
   },
-  // LiveView updates data-owner on this ignored region when the wallet changes.
+  // Called by LiveView when this ignored region's data attributes change.
   updated() {
-    this.controller?.ownerChanged();
+    this.controller?.attributesChanged();
   },
   destroyed() {
     this.controller?.destroy();

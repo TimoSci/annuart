@@ -578,5 +578,110 @@ defmodule AnnuartWeb.EnftLiveTest do
                "2026-11-14 Automatic payout of 0.5 ETH, fee 0.01 ETH, triggered by 0x0000…f00d"
              ]
     end
+
+    test "a pending request: the index line says a payout is waiting", %{conn: conn} do
+      make_auto()
+      mint()
+      settings()
+      requested(1)
+      {:ok, view, _html} = live(conn, ~p"/enft/mock/1")
+
+      # Outside the hook's region, so a visitor without a wallet sees it.
+      assert has_element?(
+               view,
+               "#panel-auto > #auto-index-state",
+               "A payout is waiting to be finished."
+             )
+    end
+
+    test "requested recently: the index line says when the next one is possible", %{conn: conn} do
+      make_auto()
+      mint()
+      settings(interval: 365 * 86_400)
+      at = DateTime.utc_now() |> DateTime.truncate(:second)
+      requested(1, requested_at: at)
+      paid(1, paid_at: at)
+      {:ok, view, _html} = live(conn, ~p"/enft/mock/1")
+
+      next = at |> DateTime.add(365 * 86_400) |> Calendar.strftime("%Y-%m-%d %H:%M UTC")
+      assert has_element?(view, "#auto-index-state", "Next payout possible from #{next}")
+    end
+
+    test "requested long enough ago: the index line says one can be triggered now", %{conn: conn} do
+      make_auto()
+      # An indefinite schedule, so it has not ended.
+      mint(schedule: [%{"duration" => indefinite(), "rate_per_sec" => 1}])
+      settings(interval: 3_600)
+      requested(1, requested_at: ~U[2026-01-01 00:00:00Z])
+      paid(1, paid_at: ~U[2026-01-01 00:01:00Z])
+      {:ok, view, _html} = live(conn, ~p"/enft/mock/1")
+
+      assert has_element?(view, "#auto-index-state", "A payout can be triggered now.")
+    end
+
+    test "no index line when off, never requested, the request time is unknown, or the schedule ended",
+         %{conn: conn} do
+      make_auto()
+      mint(schedule: [%{"duration" => indefinite(), "rate_per_sec" => 1}])
+      settings()
+      {:ok, view, _html} = live(conn, ~p"/enft/mock/1")
+      refute has_element?(view, "#auto-index-state")
+
+      # Paid, indexed without its request: the request time is unknown.
+      paid(1, [])
+      {:ok, view, _html} = live(conn, ~p"/enft/mock/1")
+      refute has_element?(view, "#auto-index-state")
+
+      requested(2, requested_at: ~U[2026-01-01 00:00:00Z], requested_block: 50)
+      paid(2, paid_block: 51)
+      settings(enabled: false)
+      {:ok, view, _html} = live(conn, ~p"/enft/mock/1")
+      refute has_element?(view, "#auto-index-state")
+
+      # A fixed schedule (mint's default, ending 2026-12-01) and a request after it ended.
+      Annuart.Repo.delete_all(Annuart.Enfts.Payout)
+      Annuart.Repo.delete_all(Annuart.Enfts.Enft)
+      mint()
+      settings()
+      requested(3, requested_at: ~U[2026-12-05 00:00:00Z])
+      paid(3, paid_at: ~U[2026-12-05 00:01:00Z])
+      {:ok, view, _html} = live(conn, ~p"/enft/mock/1")
+      refute has_element?(view, "#auto-index-state")
+    end
+
+    test "data-rev changes when the index sees a new setting or payout", %{conn: conn} do
+      make_auto()
+      mint()
+      settings()
+      {:ok, view, _html} = live(conn, ~p"/enft/mock/1")
+
+      rev = fn ->
+        view
+        |> element("#auto-payout")
+        |> render()
+        |> then(&Regex.run(~r/data-rev="([^"]+)"/, &1))
+      end
+
+      [_, r1] = rev.()
+
+      requested(1)
+      send(view.pid, {:enft_changed, "mock", 1})
+      [_, r2] = rev.()
+      assert r2 != r1
+
+      paid(1, [])
+      send(view.pid, {:enft_changed, "mock", 1})
+      [_, r3] = rev.()
+      assert r3 != r2
+
+      settings(fee: 0)
+      send(view.pid, {:enft_changed, "mock", 1})
+      [_, r4] = rev.()
+      assert r4 != r3
+
+      # Unchanged index, unchanged rev.
+      send(view.pid, {:enft_changed, "mock", 1})
+      assert [_, ^r4] = rev.()
+    end
   end
 end
