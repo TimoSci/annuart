@@ -492,3 +492,44 @@ test("with a status from the chain the region is marked live; without one it is 
   await t.ctl.pending;
   assert.equal(t.el.hasAttribute("data-live"), true);
 });
+
+test("a read that resolves after destroy renders nothing and arms no timer", async () => {
+  let resolve;
+  const t = make({read: () => new Promise(r => { resolve = r; })});
+  const before = q(t.el, "state").textContent;
+  t.ctl.destroy();
+  resolve({...STATUS, due: false, lastRequestAt: NOW - 3600});
+  await t.ctl.pending;
+  assert.equal(q(t.el, "state").textContent, before);
+  assert.equal(t.el.hasAttribute("data-live"), false);
+  assert.equal(t.state.timers.length, 0);
+});
+
+test("the timer fires but the chain still says not due: retry in 15 seconds until it is due", async () => {
+  const last = NOW - 3600;
+  const data = {status: {...STATUS, due: false, lastRequestAt: last}};
+  const t = make({read: () => data.status});
+  await t.ctl.pending;
+  const [first] = liveTimers(t);
+  // The browser's clock is past the next time; the chain's block time is not.
+  t.state.now = last + 86400 + 2;
+  first.fn();
+  await t.ctl.pending;
+  assert.equal(q(t.el, "trigger"), null);
+  const retries = liveTimers(t).filter(x => x !== first);
+  assert.equal(retries.length, 1);
+  assert.equal(retries[0].ms, 15000);
+
+  data.status = {...STATUS, due: true, lastRequestAt: last};
+  t.state.now += 15;
+  retries[0].fn();
+  await t.ctl.pending;
+  assert.equal(q(t.el, "trigger").textContent, "Trigger payout");
+  assert.deepEqual(liveTimers(t).filter(x => x !== first && x !== retries[0]), [], "nothing more to wait for");
+});
+
+test("long past the next time and still not due (a schedule that ended): no endless retries", async () => {
+  const t = make({status: {...STATUS, due: false, lastRequestAt: NOW - 86400 - 3600}});
+  await t.ctl.pending;
+  assert.equal(liveTimers(t).length, 0);
+});

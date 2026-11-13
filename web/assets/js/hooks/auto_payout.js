@@ -32,6 +32,11 @@ const ALREADY_FINISHED = "This payout has already been finished.";
 const MAX_TIMER_MS = 2 ** 31 - 1;
 // Read again a moment after the next payout becomes possible, not before.
 const TIMER_MARGIN_MS = 1000;
+// The browser's clock may run ahead of the chain's block time, which decides
+// whether a payout is due: past the next-possible time, read again this often,
+// for this long, before waiting for something else to prompt a read.
+const RETRY_MS = 15_000;
+const RETRY_FOR_SECONDS = 600;
 
 // The button each payout action is offered under.
 const BUTTONS = {
@@ -139,6 +144,9 @@ export class AutoPayoutController {
     this.deps.target.removeEventListener("annuart:tx", this.onTx);
     this.deps.target.removeEventListener("annuart:tx-failed", this.onTx);
     if (typeof this.unsubscribe === "function") this.unsubscribe();
+    // A read still in flight is stale: it renders nothing and arms no timer.
+    this.destroyed = true;
+    this.generation += 1;
     this.stopTimer();
     this.payout?.destroy();
     this.settings?.action.destroy();
@@ -178,8 +186,8 @@ export class AutoPayoutController {
         result = {kind: "failed", wrongChain: err instanceof WrongChainError};
       }
     }
-    // A newer read has started: its result is the one to show.
-    if (generation !== this.generation) return;
+    // A newer read has started (or the controller is gone): that one decides.
+    if (generation !== this.generation || this.destroyed) return;
     this.result = result;
     this.render();
   }
@@ -205,13 +213,18 @@ export class AutoPayoutController {
     this.timer = null;
   }
 
-  // Too soon for a payout: read again once the next one is possible.
+  // Too soon for a payout: read again once the next one is possible, and, while
+  // the chain has not caught up with that time, every RETRY_MS for a while.
   armTimer(status) {
     this.stopTimer();
     if (!status || status.pending || !status.enabled || status.due || status.lastRequestAt === null) return;
-    const wait = (status.lastRequestAt + status.interval - this.deps.now()) * 1000;
-    if (wait <= 0) return;
-    this.timer = this.schedule(() => { this.timer = null; this.refresh(); }, Math.min(wait + TIMER_MARGIN_MS, MAX_TIMER_MS));
+    if (this.destroyed) return;
+    const late = this.deps.now() - (status.lastRequestAt + status.interval);
+    let ms;
+    if (late < 0) ms = Math.min(-late * 1000 + TIMER_MARGIN_MS, MAX_TIMER_MS);
+    else if (late <= RETRY_FOR_SECONDS) ms = RETRY_MS;
+    else return;
+    this.timer = this.schedule(() => { this.timer = null; this.refresh(); }, ms);
   }
 
   render() {
