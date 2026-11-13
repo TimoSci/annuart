@@ -1,5 +1,6 @@
 import { expect } from "chai";
-import { deployRefusal, reusedUnderlying, sentLine } from "../tasks/deployGuard";
+import { autoToken, deployRefusal, reusedUnderlying, sentLine } from "../tasks/deployGuard";
+import type { Deployment } from "../tasks/deployments";
 
 const base = { network: "sepolia", isLocal: false, chainId: 11155111, expectedChainId: 11155111,
                confirm: "sepolia", label: "mock", existingLabels: [] as string[], replace: false };
@@ -48,4 +49,26 @@ describe("sentLine", () => {
   it("names the contract, its address and the transaction before the wait", () =>
     expect(sentLine("EndowmentNFT", "0x" + "1".repeat(40), "0x" + "a".repeat(64)))
       .to.equal(`EndowmentNFT: 0x${"1".repeat(40)} (tx 0x${"a".repeat(64)}, waiting…)`));
+});
+
+describe("autoToken", () => {
+  const wrapped: Deployment = { label: "wrapped", nft: "0x" + "1".repeat(40), token: "0x" + "2".repeat(40),
+    tokenKind: "wrapped", underlying: "0x" + "3".repeat(40), deployBlock: 5 };
+  const mock: Deployment = { ...wrapped, label: "mock", token: "0x" + "4".repeat(40), tokenKind: "mock", underlying: null };
+  it("shares the token of the wrapped entry", () =>
+    expect(autoToken({ tokenKind: undefined, tokenAddress: undefined, contracts: [mock, wrapped] }))
+      .to.deep.equal({ token: wrapped.token }));
+  it("lets TOKEN_ADDRESS win over the wrapped entry", () => {
+    const t = "0x" + "9".repeat(40);
+    expect(autoToken({ tokenKind: "wrapped", tokenAddress: t, contracts: [wrapped] })).to.deep.equal({ token: t });
+  });
+  it("refuses a token kind other than wrapped", () =>
+    expect(autoToken({ tokenKind: "mock", tokenAddress: undefined, contracts: [wrapped] }))
+      .to.deep.equal({ refusal: "NFT_KIND=auto needs the wrapped token" }));
+  it("refuses a token kind other than wrapped even with TOKEN_ADDRESS", () =>
+    expect(autoToken({ tokenKind: "plain", tokenAddress: "0x" + "9".repeat(40), contracts: [] }))
+      .to.have.property("refusal"));
+  it("refuses when there is no wrapped entry", () =>
+    expect(autoToken({ tokenKind: undefined, tokenAddress: undefined, contracts: [mock] }))
+      .to.deep.equal({ refusal: 'No "wrapped" entry to share a token with. Deploy it first, or set TOKEN_ADDRESS.' }));
 });

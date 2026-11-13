@@ -37,15 +37,19 @@ You need three terminals.
 npx hardhat node
 ```
 
-**Terminal 2, repo root: deploy both contract variants to it.**
+**Terminal 2, repo root: deploy the three contract variants to it.**
 
 ```bash
 npx hardhat run scripts/deploy.ts --network localhost
 TOKEN_KIND=wrapped npx hardhat run scripts/deploy.ts --network localhost
+NFT_KIND=auto npx hardhat run scripts/deploy.ts --network localhost
 ```
 
+The third one is the automatic-payout variant. It reuses the wrapped variant's token, so
+run it after the second command, never before.
+
 Each ends with a line like `Wrote deployments/localhost.json (label "mock")`. The file
-should now list two entries, `mock` and `wrapped`.
+should now list three entries, `mock`, `wrapped` and `auto`.
 
 **Terminal 3, `web/`: the app.**
 
@@ -71,7 +75,7 @@ or wrap some of the account's test ETH on the wrapped card.
 
 ## 5. Day-to-day
 
-- **You restarted the Hardhat node.** The chain is empty again. Run the two deploy
+- **You restarted the Hardhat node.** The chain is empty again. Run the three deploy
   commands from step 3 again. The running app notices the new chain and rebuilds its
   list; you do not need to restart it.
 - **You pulled a change to a database migration.** Run `mix ecto.reset` once in `web/`.

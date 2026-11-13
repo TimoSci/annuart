@@ -1,11 +1,13 @@
 import { ethers, network } from "hardhat";
 import { readDeployments, upsertDeployment, type Deployment } from "../tasks/deployments";
-import { deployRefusal, reusedUnderlying, sentLine } from "../tasks/deployGuard";
+import { autoToken, deployRefusal, reusedUnderlying, sentLine } from "../tasks/deployGuard";
 import { redact, wethProblem } from "../tasks/preflight";
 
 // Deploys an EndowmentNFT with a confidential token and records it in
 // deployments/<network>.json so the task:* commands (and the web app) can find it.
 //
+//   NFT_KIND       standard (default) | auto: the AutoPayoutEndowmentNFT, which shares the token of the
+//                  "wrapped" entry (or TOKEN_ADDRESS); default LABEL "auto"; TOKEN_KIND, if set, must be wrapped
 //   TOKEN_KIND     mock (default) | wrapped | plain
 //   LABEL          name of the entry in the deployment file (default: the token kind)
 //   WETH_ADDRESS   wrapped: the WETH to wrap, checked to be one (a MockWETH is deployed on localhost/hardhat if unset)
@@ -38,11 +40,16 @@ async function checkWeth(address: string) {
 }
 
 async function main() {
-  const kind = (process.env.TOKEN_KIND || "mock") as Deployment["tokenKind"];
+  const nftKind = process.env.NFT_KIND || "standard";
+  if (!["standard", "auto"].includes(nftKind)) {
+    throw new Error(`NFT_KIND must be standard or auto (got "${nftKind}")`);
+  }
+  const isAuto = nftKind === "auto";
+  const kind = (isAuto ? "wrapped" : process.env.TOKEN_KIND || "mock") as Deployment["tokenKind"];
   if (!["mock", "wrapped", "plain"].includes(kind)) {
     throw new Error(`TOKEN_KIND must be mock, wrapped or plain (got "${kind}")`);
   }
-  const label = process.env.LABEL || kind;
+  const label = process.env.LABEL || (isAuto ? "auto" : kind);
   const isLocal = network.name === "localhost" || network.name === "hardhat";
 
   const signers = await ethers.getSigners();
@@ -69,8 +76,18 @@ async function main() {
   });
   if (refusal) throw new Error(refusal);
 
-  // mock and wrapped may reuse an already deployed token instead of deploying one.
-  const reuse = process.env.TOKEN_ADDRESS;
+  // mock and wrapped may reuse an already deployed token instead of deploying one;
+  // the automatic-payout kind always reuses one (the wrapped entry's, unless TOKEN_ADDRESS is set).
+  let reuse = process.env.TOKEN_ADDRESS;
+  if (isAuto) {
+    const a = autoToken({
+      tokenKind: process.env.TOKEN_KIND,
+      tokenAddress: reuse,
+      contracts: readDeployments(network.name).contracts,
+    });
+    if ("refusal" in a) throw new Error(a.refusal);
+    reuse = a.token;
+  }
   if (reuse && (await ethers.provider.getCode(reuse)) === "0x") {
     throw new Error(`TOKEN_ADDRESS ${reuse} has no contract code on ${network.name}`);
   }
@@ -105,13 +122,17 @@ async function main() {
     console.log("Using existing token:", tokenAddr);
   }
 
-  const { address: nftAddr, receipt } = await deployContract("EndowmentNFT", tokenAddr);
+  const { address: nftAddr, receipt } = await deployContract(
+    isAuto ? "AutoPayoutEndowmentNFT" : "EndowmentNFT",
+    tokenAddr,
+  );
 
   upsertDeployment(network.name, chainId, {
     label,
     nft: nftAddr,
     token: tokenAddr,
     tokenKind: kind,
+    ...(isAuto ? { nftKind: "auto" as const } : {}),
     underlying,
     deployBlock: receipt.blockNumber,
   });

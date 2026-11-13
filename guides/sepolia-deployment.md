@@ -4,12 +4,13 @@ These are the steps you (the owner) run yourself. They send real, public, perman
 transactions on the Sepolia test network, signed with your key. Nothing here is run by
 Claude.
 
-The result is two ENFT contracts on Sepolia, recorded in `deployments/sepolia.json`:
+The result is three ENFT contracts on Sepolia, recorded in `deployments/sepolia.json`:
 
 | Label | Token | What it is for |
 |---|---|---|
 | `mock` | `MockConfidentialToken` | Free test tokens from the "Get test tokens" button |
 | `wrapped` | `ConfidentialWETH` over Sepolia WETH | Real Sepolia ETH, wrapped |
+| `auto` | The same `ConfidentialWETH` as `wrapped` | Wrapped ETH with automatic payouts: anyone can trigger a payout, which arrives as plain ETH |
 
 ## 1. What you need
 
@@ -99,13 +100,32 @@ addresses, then:
 Wrote deployments/sepolia.json (label "wrapped")
 ```
 
-## 6. Check and record the result
+## 6. Deploy the automatic-payout variant
+
+Do this after step 5: it shares the wrapped-ETH token that step 5 deployed, so it needs
+the `wrapped` entry in `deployments/sepolia.json` and deploys no new token.
+
+```bash
+CONFIRM_DEPLOY=sepolia NFT_KIND=auto npx hardhat run scripts/deploy.ts --network sepolia
+```
+
+You do not need `WETH_ADDRESS` here. Expect `Using existing token:` followed by the
+`ConfidentialWETH` address (the same one as the `wrapped` entry), then an
+`AutoPayoutEndowmentNFT:` address, then:
+
+```
+Wrote deployments/sepolia.json (label "auto")
+```
+
+If it says `No "wrapped" entry to share a token with`, step 5 has not been recorded yet.
+
+## 7. Check and record the result
 
 ```bash
 cat deployments/sepolia.json
 ```
 
-It should show `"chainId": 11155111` and two entries, `mock` and `wrapped`, each with an
+It should show `"chainId": 11155111` and three entries, `mock`, `wrapped` and `auto`, each with an
 `nft` address, a `token` address and a `deployBlock`. You can look the addresses up on
 `https://sepolia.etherscan.io`.
 
@@ -123,7 +143,7 @@ Then remove the key from your shell:
 unset PRIVATE_KEY
 ```
 
-## 7. If something goes wrong
+## 8. If something goes wrong
 
 - **The script stopped after deploying the token but before the ENFT contract.** The
   token's address and transaction hash were printed as soon as it was sent, before the
@@ -153,7 +173,7 @@ unset PRIVATE_KEY
 Contracts on Sepolia cannot be deleted. A mistaken deployment is harmless: it is simply
 never listed in `deployments/sepolia.json`.
 
-## 8. Run the app against Sepolia
+## 9. Run the app against Sepolia
 
 From `web/`:
 
@@ -189,9 +209,9 @@ Things that differ from the local chain:
   `ANNUART_DEPLOYMENTS` (or close the terminal), so the server reads the local node and
   `deployments/localhost.json` again.
 
-## 9. Tell Claude, then do the wallet pass
+## 10. Tell Claude, then do the wallet pass
 
-Once both deployments are recorded and the app starts, say so. Claude then runs the
+Once all three deployments are recorded and the app starts, say so. Claude then runs the
 read-only checks: that the server indexes the contracts, and that the browser's
 encryption library works against the live network.
 

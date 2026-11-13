@@ -226,7 +226,7 @@ FHEVM mock.
 npx hardhat node                                        # terminal 1
 npx hardhat run scripts/deploy.ts --network localhost   # terminal 2 (mock token)
 TOKEN_KIND=wrapped npx hardhat run scripts/deploy.ts --network localhost
-
+NFT_KIND=auto npx hardhat run scripts/deploy.ts --network localhost   # automatic payouts; after the wrapped deploy
 ```
 
 For Sepolia, follow [`guides/sepolia-deployment.md`](guides/sepolia-deployment.md): a no-cost
@@ -235,6 +235,9 @@ refuses to run unless `CONFIRM_DEPLOY=<network name>` (for example `CONFIRM_DEPL
 
 Environment variables:
 
+- `NFT_KIND`: `standard` (default, `EndowmentNFT`) or `auto` (`AutoPayoutEndowmentNFT`). `auto` deploys
+  no token: it shares the token of the `wrapped` entry (or `TOKEN_ADDRESS`), so deploy `wrapped` first.
+  The default `LABEL` is `auto`, and `TOKEN_KIND`, if set, must be `wrapped`.
 - `TOKEN_KIND`: `mock` (default, `MockConfidentialToken`, dev only: its constructor reverts on
   mainnet/BSC/HyperEVM), `wrapped` (`ConfidentialWETH` wrapping a WETH) or `plain` (an existing ERC7984).
 - `LABEL`: the entry name in the deployment file (default: the token kind). On a public network,
@@ -267,7 +270,8 @@ Each deploy writes `deployments/<network>.json` (git-ignored, except `deployment
 ```
 
 `tokenKind` is `mock`, `wrapped` or `plain`; `underlying` is the WETH address for `wrapped`,
-otherwise `null`; `deployBlock` is the block the EndowmentNFT was deployed in.
+otherwise `null`; `deployBlock` is the block the ENFT contract was deployed in. An `auto` entry has
+`tokenKind` `wrapped` and `"nftKind": "auto"`; entries without `nftKind` are standard.
 
 ### Interaction tasks
 
@@ -328,10 +332,11 @@ it from the `EndowmentMinted` event like the owner and the schedule.
 ### Run it locally
 
 ```bash
-# repo root: a local chain with the FHEVM mock, and both token variants
+# repo root: a local chain with the FHEVM mock, and the three variants
 npx hardhat node                                                     # terminal 1
 npx hardhat run scripts/deploy.ts --network localhost                # terminal 2: mock token
 TOKEN_KIND=wrapped npx hardhat run scripts/deploy.ts --network localhost
+NFT_KIND=auto npx hardhat run scripts/deploy.ts --network localhost
 
 # the app
 cd web
@@ -387,7 +392,7 @@ mix test
 # variants deployed, and are skipped without one.
 node --test "assets/test/**/*.test.js"
 
-# Browser end to end (web/e2e/). Starts its own Hardhat node, deploys both variants and starts
+# Browser end to end (web/e2e/). Starts its own Hardhat node, deploys the three variants and starts
 # the Phoenix dev server, so ports 8545 and 4000 must be free.
 cd e2e
 npm install

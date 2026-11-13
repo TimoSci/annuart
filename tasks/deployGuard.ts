@@ -1,4 +1,6 @@
 // Pure decision logic for scripts/deploy.ts: no I/O, so it can be unit-tested.
+import type { Deployment } from "./deployments";
+
 export type GuardInput = {
   network: string; isLocal: boolean; chainId: number; expectedChainId: number | undefined;
   confirm: string | undefined; label: string; existingLabels: string[]; replace: boolean;
@@ -39,4 +41,19 @@ export function reusedUnderlying(i: { reported: string | null; wethAddress: stri
 // so the address and hash are on screen even if the RPC drops during the wait.
 export function sentLine(name: string, address: string, hash: string): string {
   return `${name}: ${address} (tx ${hash}, waiting…)`;
+}
+
+// NFT_KIND=auto shares the confidential token of the "wrapped" deployment. `tokenKind` is the
+// TOKEN_KIND the caller set (undefined if unset); `tokenAddress` is TOKEN_ADDRESS.
+export function autoToken(i: { tokenKind: string | undefined; tokenAddress: string | undefined; contracts: Deployment[] }):
+  { token: string } | { refusal: string } {
+  if (i.tokenKind !== undefined && i.tokenKind !== "wrapped") {
+    return { refusal: "NFT_KIND=auto needs the wrapped token" };
+  }
+  if (i.tokenAddress) return { token: i.tokenAddress };
+  const wrapped = i.contracts.find((c) => c.label === "wrapped");
+  if (!wrapped) {
+    return { refusal: 'No "wrapped" entry to share a token with. Deploy it first, or set TOKEN_ADDRESS.' };
+  }
+  return { token: wrapped.token };
 }
