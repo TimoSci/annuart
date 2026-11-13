@@ -1,6 +1,6 @@
 import { ethers, fhevm, network } from "hardhat";
 import { readDeployments } from "../tasks/deployments";
-import { keeperRefusal, runKeeperPass, type KeeperContract, type PublicDecrypt } from "../tasks/keeper";
+import { keeperExitCode, keeperRefusal, runKeeperPass, type KeeperContract, type PublicDecrypt } from "../tasks/keeper";
 import { redact } from "../tasks/preflight";
 
 // One keeper pass: finishes pending automatic payouts, requests the due ones, and finishes
@@ -25,7 +25,9 @@ async function main() {
 
   const autos = readDeployments(network.name).contracts.filter((c) => c.nftKind === "auto");
   if (autos.length === 0) {
-    console.log(`No automatic-payout contracts in deployments/${network.name}.json; nothing to do.`);
+    console.log(
+      `No automatic-payout contract is recorded for ${network.name} (looked in deployments/${network.name}.json); nothing to do.`,
+    );
     return;
   }
   const contracts = await Promise.all(
@@ -45,7 +47,7 @@ async function main() {
     secrets: [process.env.SEPOLIA_RPC_URL],
   });
   console.log(`Done: ${result.requested} requested, ${result.finished} finished, ${result.failed} failed.`);
-  if (result.failed > 0) process.exitCode = 1;
+  process.exitCode = keeperExitCode(result);
 }
 
 main().catch((e) => {

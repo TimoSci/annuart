@@ -39,8 +39,9 @@ per contract, for example `auto: 2 token(s), 0 to finish, 1 to request`. Each tr
 is printed as it is sent, as `auto #1: requesting payout (tx 0x…, waiting…)`, followed by
 `auto #1: payout finished`. The last line is
 `Done: <n> requested, <n> finished, <n> failed.` If nothing is due it reports
-`0 requested, 0 finished, 0 failed`. If there is no `auto` entry in the deployment file
-it says so and stops.
+`0 requested, 0 finished, 0 failed`. If no `auto` entry is recorded it prints
+`No automatic-payout contract is recorded for localhost (looked in deployments/localhost.json); nothing to do.`
+and stops.
 
 ## Run it on Sepolia
 
@@ -60,19 +61,46 @@ and sends nothing. Check that the `Keeper:` address it prints is the throwaway a
 you intended.
 
 If a transaction fails, the line says which ENFT (`auto #3: finishing: FAILED: …`), your
-RPC URL is shown as `<SEPOLIA_RPC_URL>`, the other ENFTs are still handled, and the script
+RPC URL is shown as `<SEPOLIA_RPC_URL>`, a contract that cannot be read at all shows as `auto: reading tokens: FAILED: …` (counted as one failure), the other ENFTs are still handled, and the script
 exits with a non-zero code. Run it again later; a payout that is requested but not yet
 finished is picked up first.
 
 ## Running it on a schedule
 
-Run it from a terminal now and then, or from cron. With cron the key has to be available
-to the job, so use a throwaway key and keep it in the job's environment rather than in the
-repository. Example, every hour:
+The simpler and safer option is to run the keeper by hand whenever you like, with the
+`read -s` steps above: the key then never touches a disk.
 
-```
-0 * * * * cd /path/to/annuart && CONFIRM_KEEPER=sepolia npx hardhat run scripts/keeper.ts --network sepolia >> keeper.log 2>&1
-```
+A schedule (cron) cannot type a key in for you, so it means storing the key in a file.
+That is the one exception to "never in a file", and it is acceptable only for a throwaway
+key that holds a small amount of Sepolia ETH, which you top up yourself. Keep the file
+outside this repository, readable only by you. Example:
 
-with `SEPOLIA_RPC_URL` and `PRIVATE_KEY` set for that job. Each run costs gas for every
-payout it triggers, so do not run it more often than your ENFTs' payout intervals.
+1. Create the key file (not in the repository):
+
+   ```bash
+   read -s PRIVATE_KEY
+   umask 077
+   printf 'export SEPOLIA_RPC_URL="https://…your provider URL…"\nexport PRIVATE_KEY="%s"\n' "$PRIVATE_KEY" > ~/.annuart-keeper.env
+   unset PRIVATE_KEY
+   chmod 600 ~/.annuart-keeper.env
+   ```
+
+2. Create a small wrapper, `~/run-keeper.sh`, and make it executable
+   (`chmod +x ~/run-keeper.sh`). Cron has a minimal PATH, so give the full path to `npx`
+   (find it with `which npx`):
+
+   ```bash
+   #!/bin/bash
+   . ~/.annuart-keeper.env
+   cd /path/to/annuart
+   CONFIRM_KEEPER=sepolia /full/path/to/npx hardhat run scripts/keeper.ts --network sepolia
+   ```
+
+3. Add one line with `crontab -e`, for example every hour:
+
+   ```
+   0 * * * * ~/run-keeper.sh >> ~/keeper.log 2>&1
+   ```
+
+Each run costs gas for every payout it triggers, so do not run it more often than your
+ENFTs' payout intervals. Delete `~/.annuart-keeper.env` and the cron line when you stop.

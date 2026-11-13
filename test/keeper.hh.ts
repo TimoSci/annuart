@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { ethers, fhevm } from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
-import { keeperPlan, keeperRefusal, runKeeperPass, type KeeperToken } from "../tasks/keeper";
+import { keeperExitCode, keeperPlan, keeperRefusal, runKeeperPass, type KeeperToken } from "../tasks/keeper";
 
 const t = (tokenId: bigint, o: Partial<KeeperToken> = {}): KeeperToken => ({
   tokenId, pending: false, due: false, lastPaidZero: false, ...o,
@@ -31,7 +31,15 @@ describe("keeperRefusal", () => {
     expect(keeperRefusal({ network: "sepolia", isLocal: false, confirm: "sepolia" })).to.equal(null));
 });
 
+describe("keeperExitCode", () => {
+  it("is 0 without failures and 1 with any", () => {
+    expect(keeperExitCode({ failed: 0 })).to.equal(0);
+    expect(keeperExitCode({ failed: 2 })).to.equal(1);
+  });
+});
+
 describe("runKeeperPass (Hardhat + fhevm mock)", () => {
+  const FEE = 5000n;
   async function setup() {
     const [creator, ownerA, ownerB, keeper] = await ethers.getSigners();
     const weth = await (await ethers.getContractFactory("MockWETH")).deploy();
@@ -48,7 +56,7 @@ describe("runKeeperPass (Hardhat + fhevm mock)", () => {
       const enc = await fhevm.createEncryptedInput(nftAddr, creator.address).add64(1000).encrypt();
       await (
         await nft.mintAuto(owner.address, enc.handles[0], enc.inputProof,
-          [{ duration: 1000, ratePerSec: 1 }], 0, false, ethers.ZeroHash, true, 3600, 0)
+          [{ duration: 1000, ratePerSec: 1 }], 0, false, ethers.ZeroHash, true, 3600, FEE)
       ).wait();
     }
     return { nft, keeper, ownerA, ownerB, rate };
@@ -96,5 +104,60 @@ describe("runKeeperPass (Hardhat + fhevm mock)", () => {
       includeDry: false, log: () => {},
     });
     expect(later).to.deep.equal({ requested: 0, finished: 2, failed: 0 });
+  });
+
+  it("passes the token's fee as minFee and sends finalizePayout with estimate + 20% gas", async () => {
+    const { nft, keeper } = await setup();
+    await time.increase(100);
+    const real = nft.connect(keeper) as any;
+    const mins: bigint[] = [];
+    const gas: { est: bigint; limit: bigint }[] = [];
+    let lastEst = 0n;
+    const finalizePayout: any = (id: bigint, a: bigint, p: string, o?: { gasLimit: bigint }) => {
+      gas.push({ est: lastEst, limit: o!.gasLimit });
+      return real.finalizePayout(id, a, p, o);
+    };
+    finalizePayout.estimateGas = async (id: bigint, a: bigint, p: string) =>
+      (lastEst = await real.finalizePayout.estimateGas(id, a, p));
+    const spy = {
+      totalMinted: () => real.totalMinted(),
+      payoutDue: (i: bigint) => real.payoutDue(i),
+      pendingPayoutOf: (i: bigint) => real.pendingPayoutOf(i),
+      lastPayoutOf: (i: bigint) => real.lastPayoutOf(i),
+      autoPayoutOf: (i: bigint) => real.autoPayoutOf(i),
+      requestPayout: (i: bigint, m: bigint) => (mins.push(m), real.requestPayout(i, m)),
+      finalizePayout,
+    };
+    const res = await runKeeperPass({
+      contracts: [{ label: "auto", contract: spy as any }],
+      publicDecrypt: (h) => fhevm.publicDecrypt(h as `0x${string}`[]) as any,
+      includeDry: false, log: () => {},
+    });
+    expect(res).to.deep.equal({ requested: 2, finished: 2, failed: 0 });
+    expect(mins).to.deep.equal([FEE, FEE]);
+    expect(gas).to.have.length(2);
+    for (const g of gas) expect(g.limit).to.equal((g.est * 120n) / 100n);
+    const paid = (await nft.queryFilter(nft.filters.PayoutPaid())).map((e) => e.args.feeWei);
+    expect(paid).to.deep.equal([FEE, FEE]);
+  });
+
+  it("counts a failed scan of one contract and still processes the next", async () => {
+    const { nft, keeper } = await setup();
+    await time.increase(100);
+    const broken = { totalMinted: async () => { throw new Error("rpc down https://secret.example/key"); } };
+    const lines: string[] = [];
+    const res = await runKeeperPass({
+      contracts: [
+        { label: "broken", contract: broken as any },
+        { label: "auto", contract: nft.connect(keeper) as any },
+      ],
+      publicDecrypt: (h) => fhevm.publicDecrypt(h as `0x${string}`[]) as any,
+      includeDry: false, log: (l) => lines.push(l),
+      secrets: ["https://secret.example/key"],
+    });
+    expect(res).to.deep.equal({ requested: 2, finished: 2, failed: 1 });
+    const out = lines.join("\n");
+    expect(out).to.match(/broken: reading tokens: FAILED: rpc down <SEPOLIA_RPC_URL>/);
+    expect(out).to.not.match(/secret\.example/);
   });
 });

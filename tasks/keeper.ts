@@ -50,6 +50,9 @@ export type KeeperPassInput = {
   // Values to hide in printed errors (the keyed RPC URL).
   secrets?: ReadonlyArray<string | undefined>;
 };
+const SCAN_CHUNK = 20;
+const ZERO_ID = `0x${"0".repeat(64)}`;
+
 export type KeeperResult = { requested: number; finished: number; failed: number };
 
 export async function runKeeperPass(input: KeeperPassInput): Promise<KeeperResult> {
@@ -67,6 +70,7 @@ export async function runKeeperPass(input: KeeperPassInput): Promise<KeeperResul
       try {
         const { requestId } = await c.pendingPayoutOf(tokenId);
         const d = await publicDecrypt([requestId]);
+        // The plugin types the value as bigint | boolean | string; for this handle it is a bigint.
         const amount = BigInt(d.clearValues[requestId] as bigint);
         // The finaliser needs headroom for each ETH send, so give it the estimate plus 20%.
         const gasLimit = ((await c.finalizePayout.estimateGas(tokenId, amount, d.decryptionProof)) * 120n) / 100n;
@@ -82,16 +86,36 @@ export async function runKeeperPass(input: KeeperPassInput): Promise<KeeperResul
       }
     };
 
-    const tokens: KeeperToken[] = [];
-    const total = await c.totalMinted();
-    for (let id = 1n; id <= total; id++) {
-      const last = await c.lastPayoutOf(id);
-      tokens.push({
-        tokenId: id,
-        pending: (await c.pendingPayoutOf(id)).requestId !== `0x${"0".repeat(64)}`,
-        due: await c.payoutDue(id),
-        lastPaidZero: last.paidAt !== 0n && last.amountWei === 0n,
-      });
+    // Read every token's state, SCAN_CHUNK ids at a time. A failed scan costs this contract's
+    // turn (one failure) but not the other contracts'.
+    let tokens: KeeperToken[];
+    try {
+      tokens = [];
+      const total = await c.totalMinted();
+      for (let from = 1n; from <= total; from += BigInt(SCAN_CHUNK)) {
+        const ids: bigint[] = [];
+        for (let id = from; id <= total && id < from + BigInt(SCAN_CHUNK); id++) ids.push(id);
+        tokens.push(
+          ...(await Promise.all(
+            ids.map(async (tokenId): Promise<KeeperToken> => {
+              const [pending, due, last] = await Promise.all([
+                c.pendingPayoutOf(tokenId),
+                c.payoutDue(tokenId),
+                c.lastPayoutOf(tokenId),
+              ]);
+              return {
+                tokenId,
+                pending: pending.requestId !== ZERO_ID,
+                due,
+                lastPaidZero: last.paidAt !== 0n && last.amountWei === 0n,
+              };
+            }),
+          )),
+        );
+      }
+    } catch (e) {
+      fail(`${label}: reading tokens`, e);
+      continue;
     }
     const plan = keeperPlan(tokens, { includeDry });
     log(`${label}: ${tokens.length} token(s), ${plan.finish.length} to finish, ${plan.request.length} to request`);
@@ -115,4 +139,9 @@ export async function runKeeperPass(input: KeeperPassInput): Promise<KeeperResul
     for (const id of requested) await finish(id);
   }
   return result;
+}
+
+// Exit code of a keeper run: 1 if any token (or contract scan) failed.
+export function keeperExitCode(r: { failed: number }): number {
+  return r.failed > 0 ? 1 : 0;
 }
