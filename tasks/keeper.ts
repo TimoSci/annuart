@@ -3,16 +3,29 @@
 // objects it is given, so scripts/keeper.ts and the tests share it.
 import { redact } from "./preflight";
 
-export type KeeperToken = { tokenId: bigint; pending: boolean; due: boolean; lastPaidZero: boolean };
+// `fee` is the token's trigger fee in wei, as set by its owner.
+export type KeeperToken = { tokenId: bigint; pending: boolean; due: boolean; lastPaidZero: boolean; fee: bigint };
 
-// `finish` is every pending token; `request` every due, not pending token, minus those whose
-// last payout was zero unless includeDry.
-export function keeperPlan(tokens: KeeperToken[], opts: { includeDry: boolean }): { finish: bigint[]; request: bigint[] } {
+// `finish` is every pending token, whatever its fee; `request` every due, not pending token whose
+// fee is at least minFee, minus those whose last payout was zero unless includeDry.
+export function keeperPlan(
+  tokens: KeeperToken[],
+  opts: { includeDry: boolean; minFee: bigint },
+): { finish: bigint[]; request: bigint[] } {
   const finish = tokens.filter((t) => t.pending).map((t) => t.tokenId);
   const request = tokens
-    .filter((t) => !t.pending && t.due && (opts.includeDry || !t.lastPaidZero))
+    .filter((t) => !t.pending && t.due && t.fee >= opts.minFee && (opts.includeDry || !t.lastPaidZero))
     .map((t) => t.tokenId);
   return { finish, request };
+}
+
+// KEEPER_MIN_FEE: the smallest fee, in wei, worth paying gas for. Unset or empty means 0.
+export function keeperMinFee(raw: string | undefined): bigint {
+  if (raw === undefined || raw === "") return 0n;
+  if (!/^[0-9]+$/.test(raw)) {
+    throw new Error(`KEEPER_MIN_FEE must be a whole number of wei (for example 1000000000000000), not "${raw}".`);
+  }
+  return BigInt(raw);
 }
 
 export function keeperRefusal(i: { network: string; isLocal: boolean; confirm: string | undefined }): string | null {
@@ -46,6 +59,8 @@ export type KeeperPassInput = {
   contracts: { label: string; contract: KeeperContract }[];
   publicDecrypt: PublicDecrypt;
   includeDry: boolean;
+  // Due tokens whose fee is below this (wei) are not requested.
+  minFee: bigint;
   log: (line: string) => void;
   // Values to hide in printed errors (the keyed RPC URL).
   secrets?: ReadonlyArray<string | undefined>;
@@ -56,7 +71,7 @@ const ZERO_ID = `0x${"0".repeat(64)}`;
 export type KeeperResult = { requested: number; finished: number; failed: number };
 
 export async function runKeeperPass(input: KeeperPassInput): Promise<KeeperResult> {
-  const { publicDecrypt, includeDry, log } = input;
+  const { publicDecrypt, includeDry, minFee, log } = input;
   const result: KeeperResult = { requested: 0, finished: 0, failed: 0 };
   const fail = (what: string, e: unknown) => {
     result.failed++;
@@ -98,16 +113,18 @@ export async function runKeeperPass(input: KeeperPassInput): Promise<KeeperResul
         tokens.push(
           ...(await Promise.all(
             ids.map(async (tokenId): Promise<KeeperToken> => {
-              const [pending, due, last] = await Promise.all([
+              const [pending, due, last, settings] = await Promise.all([
                 c.pendingPayoutOf(tokenId),
                 c.payoutDue(tokenId),
                 c.lastPayoutOf(tokenId),
+                c.autoPayoutOf(tokenId),
               ]);
               return {
                 tokenId,
                 pending: pending.requestId !== ZERO_ID,
                 due,
                 lastPaidZero: last.paidAt !== 0n && last.amountWei === 0n,
+                fee: settings.fee,
               };
             }),
           )),
@@ -117,7 +134,8 @@ export async function runKeeperPass(input: KeeperPassInput): Promise<KeeperResul
       fail(`${label}: reading tokens`, e);
       continue;
     }
-    const plan = keeperPlan(tokens, { includeDry });
+    const plan = keeperPlan(tokens, { includeDry, minFee });
+    const fees = new Map(tokens.map((t) => [t.tokenId, t.fee]));
     log(`${label}: ${tokens.length} token(s), ${plan.finish.length} to finish, ${plan.request.length} to request`);
 
     for (const id of plan.finish) await finish(id);
@@ -126,8 +144,9 @@ export async function runKeeperPass(input: KeeperPassInput): Promise<KeeperResul
     for (const id of plan.request) {
       const what = `${label} #${id}`;
       try {
-        const { fee } = await c.autoPayoutOf(id);
-        const tx = await c.requestPayout(id, fee);
+        // The fee the plan was made with: an owner lowering it since makes the request fail
+        // rather than pay less than was judged worth the gas.
+        const tx = await c.requestPayout(id, fees.get(id)!);
         log(`${what}: requesting payout (tx ${tx.hash}, waiting…)`);
         await tx.wait();
         result.requested++;

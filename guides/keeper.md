@@ -22,9 +22,31 @@ the pass carries on with the others; the next run finishes it.
 **Whoever runs it pays the gas, and receives any fee** that the ENFT owners set for
 triggering a payout. The ENFT owner does not need to be the one running it.
 
-By default it skips an ENFT whose last payout was zero (nothing had accrued yet), so it
-does not spend gas on payouts that pay nothing. To include those too, set
-`KEEPER_INCLUDE_DRY=1`.
+By default it skips an ENFT whose last payout was zero, so it does not spend gas on
+payouts that pay nothing. A zero payout usually means the ENFT has run dry (everything in
+it has been paid out), or that the owner claimed their balance just before the payout.
+An ENFT skipped for this reason stays skipped on every later run, even after someone
+donates to it, until someone triggers a payout for it by hand (for example with the
+Trigger payout button on its page) or you set `KEEPER_INCLUDE_DRY=1`, which includes
+those ENFTs too.
+
+### Skipping payouts with a small fee
+
+Anyone can create many ENFTs with automatic payouts switched on and a fee of zero, or a
+tiny one. A keeper that requests every due payout would then pay the gas for all of them,
+which can drain the keeper account. To guard against that, set `KEEPER_MIN_FEE` to the
+smallest fee you are willing to pay gas for, in wei (1 ETH is 1000000000000000000 wei):
+
+```bash
+KEEPER_MIN_FEE=100000000000000 npx hardhat run scripts/keeper.ts --network localhost
+```
+
+Due payouts whose fee is below that amount are then not requested. A payout that was
+already requested is still finished, whatever its fee, so nothing is left half done. The
+default is 0, which requests every due payout. The value must be a whole number written
+in digits only; anything else (a negative number, a decimal point, `1e15`) makes the
+script stop with `KEEPER_MIN_FEE must be a whole number of wei …` before it sends
+anything. The script prints the minimum it is using on the `Min fee:` line.
 
 ## Run it on the local chain
 
@@ -34,7 +56,7 @@ With the local node running and the contracts deployed (see `guides/running-loca
 npx hardhat run scripts/keeper.ts --network localhost
 ```
 
-It prints `Network:`, `Keeper:` (the address that pays) and `Balance:`, then one line
+It prints `Network:`, `Keeper:` (the address that pays), `Balance:` and `Min fee:`, then one line
 per contract, for example `auto: 2 token(s), 0 to finish, 1 to request`. Each transaction
 is printed as it is sent, as `auto #1: requesting payout (tx 0x…, waiting…)`, followed by
 `auto #1: payout finished`. The last line is

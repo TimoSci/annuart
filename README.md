@@ -325,7 +325,9 @@ default 0, offered to whoever requests a payout. The fee actually paid is never 
 the payout. When a payout is requested, the recipient (the owner then) and the fee are fixed for
 that payout, so a later change cannot redirect or raise it. The first payout may be requested at
 once. **Automatic payouts reset to off when the token is transferred**, so a new owner never
-inherits public payouts they did not choose.
+inherits public payouts they did not choose. If the owner's address is a contract that refuses
+ETH, its share is paid in WETH instead; if that contract cannot move ERC-20 tokens, the WETH
+stays with it.
 
 **Functions**
 

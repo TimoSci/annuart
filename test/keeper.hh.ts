@@ -1,23 +1,42 @@
 import { expect } from "chai";
 import { ethers, fhevm } from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
-import { keeperExitCode, keeperPlan, keeperRefusal, runKeeperPass, type KeeperToken } from "../tasks/keeper";
+import { keeperExitCode, keeperMinFee, keeperPlan, keeperRefusal, runKeeperPass, type KeeperToken } from "../tasks/keeper";
 
 const t = (tokenId: bigint, o: Partial<KeeperToken> = {}): KeeperToken => ({
-  tokenId, pending: false, due: false, lastPaidZero: false, ...o,
+  tokenId, pending: false, due: false, lastPaidZero: false, fee: 0n, ...o,
 });
 
 describe("keeperPlan", () => {
   it("finishes pending tokens", () =>
-    expect(keeperPlan([t(1n, { pending: true }), t(2n)], { includeDry: false })).to.deep.equal({ finish: [1n], request: [] }));
+    expect(keeperPlan([t(1n, { pending: true }), t(2n)], { includeDry: false, minFee: 0n })).to.deep.equal({ finish: [1n], request: [] }));
   it("requests due tokens", () =>
-    expect(keeperPlan([t(1n, { due: true }), t(2n, { due: true })], { includeDry: false })).to.deep.equal({ finish: [], request: [1n, 2n] }));
+    expect(keeperPlan([t(1n, { due: true }), t(2n, { due: true })], { includeDry: false, minFee: 0n })).to.deep.equal({ finish: [], request: [1n, 2n] }));
   it("leaves out due tokens whose last payout was zero", () =>
-    expect(keeperPlan([t(1n, { due: true, lastPaidZero: true }), t(2n, { due: true })], { includeDry: false })).to.deep.equal({ finish: [], request: [2n] }));
+    expect(keeperPlan([t(1n, { due: true, lastPaidZero: true }), t(2n, { due: true })], { includeDry: false, minFee: 0n })).to.deep.equal({ finish: [], request: [2n] }));
   it("includes them with includeDry", () =>
-    expect(keeperPlan([t(1n, { due: true, lastPaidZero: true })], { includeDry: true })).to.deep.equal({ finish: [], request: [1n] }));
+    expect(keeperPlan([t(1n, { due: true, lastPaidZero: true })], { includeDry: true, minFee: 0n })).to.deep.equal({ finish: [], request: [1n] }));
   it("lists a pending and due token only in finish", () =>
-    expect(keeperPlan([t(1n, { pending: true, due: true })], { includeDry: true })).to.deep.equal({ finish: [1n], request: [] }));
+    expect(keeperPlan([t(1n, { pending: true, due: true })], { includeDry: true, minFee: 0n })).to.deep.equal({ finish: [1n], request: [] }));
+  it("leaves out a due token whose fee is below minFee and requests one at or above it", () =>
+    expect(keeperPlan([t(1n, { due: true, fee: 99n }), t(2n, { due: true, fee: 100n }), t(3n, { due: true, fee: 101n })],
+      { includeDry: false, minFee: 100n })).to.deep.equal({ finish: [], request: [2n, 3n] }));
+  it("still finishes a pending token whose fee is below minFee", () =>
+    expect(keeperPlan([t(1n, { pending: true, fee: 0n })], { includeDry: false, minFee: 100n })).to.deep.equal({ finish: [1n], request: [] }));
+});
+
+describe("keeperMinFee", () => {
+  it("is 0 when unset or empty", () => {
+    expect(keeperMinFee(undefined)).to.equal(0n);
+    expect(keeperMinFee("")).to.equal(0n);
+  });
+  it("reads a decimal number of wei", () => {
+    expect(keeperMinFee("0")).to.equal(0n);
+    expect(keeperMinFee("1000000000000000")).to.equal(10n ** 15n);
+  });
+  for (const bad of ["-1", "1.5", "1e15", "0x10", "abc", " 12", "12 "]) {
+    it(`refuses ${JSON.stringify(bad)}`, () => expect(() => keeperMinFee(bad)).to.throw(/KEEPER_MIN_FEE must be a whole number of wei/));
+  }
 });
 
 describe("keeperRefusal", () => {
@@ -72,6 +91,7 @@ describe("runKeeperPass (Hardhat + fhevm mock)", () => {
       contracts: [{ label: "auto", contract: nft.connect(keeper) as any }],
       publicDecrypt: (h) => fhevm.publicDecrypt(h as `0x${string}`[]) as any,
       includeDry: false,
+      minFee: 0n,
       log: (l) => lines.push(l),
     });
     expect(res).to.deep.equal({ requested: 2, finished: 2, failed: 0 });
@@ -83,7 +103,7 @@ describe("runKeeperPass (Hardhat + fhevm mock)", () => {
     expect(await runKeeperPass({
       contracts: [{ label: "auto", contract: nft.connect(keeper) as any }],
       publicDecrypt: (h) => fhevm.publicDecrypt(h as `0x${string}`[]) as any,
-      includeDry: false, log: () => {},
+      includeDry: false, minFee: 0n, log: () => {},
     })).to.deep.equal({ requested: 0, finished: 0, failed: 0 });
   });
 
@@ -94,14 +114,14 @@ describe("runKeeperPass (Hardhat + fhevm mock)", () => {
     const res = await runKeeperPass({
       contracts: [{ label: "auto", contract: nft.connect(keeper) as any }],
       publicDecrypt: async () => { throw new Error("not ready"); },
-      includeDry: false, log: (l) => lines.push(l),
+      includeDry: false, minFee: 0n, log: (l) => lines.push(l),
     });
     expect(res).to.deep.equal({ requested: 2, finished: 0, failed: 2 });
     expect(lines.join("\n")).to.match(/not ready/);
     const later = await runKeeperPass({
       contracts: [{ label: "auto", contract: nft.connect(keeper) as any }],
       publicDecrypt: (h) => fhevm.publicDecrypt(h as `0x${string}`[]) as any,
-      includeDry: false, log: () => {},
+      includeDry: false, minFee: 0n, log: () => {},
     });
     expect(later).to.deep.equal({ requested: 0, finished: 2, failed: 0 });
   });
@@ -131,7 +151,7 @@ describe("runKeeperPass (Hardhat + fhevm mock)", () => {
     const res = await runKeeperPass({
       contracts: [{ label: "auto", contract: spy as any }],
       publicDecrypt: (h) => fhevm.publicDecrypt(h as `0x${string}`[]) as any,
-      includeDry: false, log: () => {},
+      includeDry: false, minFee: 0n, log: () => {},
     });
     expect(res).to.deep.equal({ requested: 2, finished: 2, failed: 0 });
     expect(mins).to.deep.equal([FEE, FEE]);
@@ -139,6 +159,20 @@ describe("runKeeperPass (Hardhat + fhevm mock)", () => {
     for (const g of gas) expect(g.limit).to.equal((g.est * 120n) / 100n);
     const paid = (await nft.queryFilter(nft.filters.PayoutPaid())).map((e) => e.args.feeWei);
     expect(paid).to.deep.equal([FEE, FEE]);
+  });
+
+  it("does not request a due payout whose fee is below minFee", async () => {
+    const { nft, keeper } = await setup();
+    await time.increase(100);
+    const lines: string[] = [];
+    const res = await runKeeperPass({
+      contracts: [{ label: "auto", contract: nft.connect(keeper) as any }],
+      publicDecrypt: (h) => fhevm.publicDecrypt(h as `0x${string}`[]) as any,
+      includeDry: false, minFee: FEE + 1n, log: (l) => lines.push(l),
+    });
+    expect(res).to.deep.equal({ requested: 0, finished: 0, failed: 0 });
+    expect(lines.join("\n")).to.match(/auto: 2 token\(s\), 0 to finish, 0 to request/);
+    expect(await nft.payoutDue(1n)).to.equal(true);
   });
 
   it("counts a failed scan of one contract and still processes the next", async () => {
@@ -152,7 +186,7 @@ describe("runKeeperPass (Hardhat + fhevm mock)", () => {
         { label: "auto", contract: nft.connect(keeper) as any },
       ],
       publicDecrypt: (h) => fhevm.publicDecrypt(h as `0x${string}`[]) as any,
-      includeDry: false, log: (l) => lines.push(l),
+      includeDry: false, minFee: 0n, log: (l) => lines.push(l),
       secrets: ["https://secret.example/key"],
     });
     expect(res).to.deep.equal({ requested: 2, finished: 2, failed: 1 });
