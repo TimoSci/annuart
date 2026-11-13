@@ -9,6 +9,8 @@ import {ERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/token/ER
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {MockWETH} from "../src/mocks/MockWETH.sol";
+import {MockWETH9} from "../src/mocks/MockWETH9.sol";
+import {KMSVerifier} from "@fhevm/host-contracts/contracts/KMSVerifier.sol";
 import {ConfidentialWETH} from "../src/ConfidentialWETH.sol";
 import {EndowmentNFT} from "../src/EndowmentNFT.sol";
 import {AutoPayoutEndowmentNFT} from "../src/AutoPayoutEndowmentNFT.sol";
@@ -671,13 +673,14 @@ contract AutoPayoutEndowmentNFTTest is FhevmTest {
         bytes32 rid = _request(id, keeper);
         (uint64 clear, bytes memory proof) = _proof(rid);
 
-        vm.expectRevert();
+        // The signature recovers to some address that is not a KMS signer.
+        vm.expectPartialRevert(KMSVerifier.KMSInvalidSigner.selector);
         nft.finalizePayout(id, clear + 1, proof);
 
         // A valid proof for another handle does not pass either.
         bytes32 other = euint64.unwrap(nft.distributionHandle(id));
         bytes memory otherProof = buildDecryptionProof(other, abi.encode(clear));
-        vm.expectRevert();
+        vm.expectPartialRevert(KMSVerifier.KMSInvalidSigner.selector);
         nft.finalizePayout(id, clear, otherProof);
 
         (bytes32 pRid,,,) = nft.pendingPayoutOf(id);
@@ -869,33 +872,49 @@ contract AutoPayoutEndowmentNFTTest is FhevmTest {
 
     // ---- payoutDue ----
 
-    function test_payoutDue_matchesRequest() public {
-        assertFalse(nft.payoutDue(1), "nonexistent");
+    /// @dev Asserts payoutDue(id) is true exactly when requestPayout(id, 0) would succeed
+    ///      now, without keeping the request.
+    function _assertDueMatchesRequest(uint256 id, bool expected, string memory state) internal {
+        bool due = nft.payoutDue(id);
+        uint256 snap = vm.snapshotState();
+        vm.prank(keeper);
+        (bool ok,) = address(nft).call(abi.encodeCall(nft.requestPayout, (id, 0)));
+        vm.revertToState(snap);
+        assertEq(due, ok, string.concat("payoutDue == request succeeds: ", state));
+        assertEq(due, expected, state);
+    }
 
-        uint256 id = _mintAuto(alice, false, 3600, 0);
-        vm.warp(block.timestamp + 100);
-        assertFalse(nft.payoutDue(id), "disabled");
-        vm.expectRevert(AutoPayoutEndowmentNFT.AutoPayoutDisabled.selector);
-        nft.requestPayout(id, 0);
+    function test_payoutDue_matchesRequest() public {
+        _assertDueMatchesRequest(1, false, "nonexistent");
+
+        uint64 start = uint64(block.timestamp);
+        uint256 id = _mintAuto(alice, false, 3600, 0); // 1e6 units/s for 1000 s
+        vm.warp(start + 100);
+        _assertDueMatchesRequest(id, false, "disabled");
 
         vm.prank(alice);
         nft.setAutoPayout(id, true, 3600, 0);
-        assertTrue(nft.payoutDue(id), "due");
+        _assertDueMatchesRequest(id, true, "due");
         _request(id, keeper);
-
-        assertFalse(nft.payoutDue(id), "pending");
-        vm.expectRevert(AutoPayoutEndowmentNFT.PayoutPending.selector);
-        nft.requestPayout(id, 0);
+        _assertDueMatchesRequest(id, false, "pending");
 
         _finalize(id, keeper);
-        assertFalse(nft.payoutDue(id), "too soon");
-        vm.warp(block.timestamp + 3600);
-        assertTrue(nft.payoutDue(id), "due again");
+        _assertDueMatchesRequest(id, false, "too soon");
+        vm.warp(start + 100 + 3599);
+        _assertDueMatchesRequest(id, false, "one second too soon");
+
+        // start + 3700 is past the schedule's end (start + 1000): the post-end payout.
+        vm.warp(start + 100 + 3600);
+        _assertDueMatchesRequest(id, true, "due after the end");
+        _request(id, keeper);
+        _finalize(id, keeper);
+        vm.warp(start + 100 + 7200);
+        _assertDueMatchesRequest(id, false, "nothing left");
 
         uint256 later = _mintPayout(bob, 1000, 1000, uint64(block.timestamp + 10), 3600, 0);
-        assertFalse(nft.payoutDue(later), "not started");
-        vm.expectRevert(AutoPayoutEndowmentNFT.ScheduleNotStarted.selector);
-        nft.requestPayout(later, 0);
+        _assertDueMatchesRequest(later, false, "not started");
+        vm.warp(block.timestamp + 10);
+        _assertDueMatchesRequest(later, true, "started");
     }
 
     function test_pendingAndLastPayout_zeroForNewToken() public {
@@ -930,5 +949,131 @@ contract AutoPayoutEndowmentNFTTest is FhevmTest {
             vm.revertToState(snap);
         }
         assertGt(successes, 0, "some gas limit is enough");
+    }
+
+    // ---- fix round 1 ----
+
+    MockWETH9 internal weth9;
+    ConfidentialWETH internal cweth9;
+    AutoPayoutEndowmentNFT internal nft9;
+
+    /// @dev Deploys WETH9, a wrapper over it and an NFT over that on first use, then mints
+    ///      `to` a token holding 1000 units at 1 unit/s, enabled, interval 1 hour.
+    function _mintOverWeth9(address to, uint128 fee) internal returns (uint256 id) {
+        if (address(nft9) == address(0)) {
+            weth9 = new MockWETH9();
+            cweth9 = new ConfidentialWETH(IERC20(address(weth9)));
+            nft9 = new AutoPayoutEndowmentNFT(ERC7984ERC20Wrapper(address(cweth9)));
+        }
+        vm.deal(creator, 1000 * 1e9);
+        vm.startPrank(creator);
+        weth9.deposit{value: 1000 * 1e9}();
+        weth9.approve(address(cweth9), 1000 * 1e9);
+        cweth9.wrap(creator, 1000 * 1e9);
+        cweth9.setOperator(address(nft9), uint48(block.timestamp + 365 days));
+        vm.stopPrank();
+        (externalEuint64 h, bytes memory p) = encryptUint64(1000, creator, address(nft9));
+        vm.prank(creator);
+        id = nft9.mintAuto(to, h, p, _perSec(1000), 0, false, bytes32(0), true, 3600, fee);
+    }
+
+    /// @dev Finalises `id` on nft9 as the finisher, expecting PayoutPaid with these values.
+    function _finalize9(uint256 id, uint256 amountWei, uint256 feeWei, bool paidInWeth) internal {
+        (bytes32 rid,,,) = nft9.pendingPayoutOf(id);
+        (uint64 clear, bytes memory proof) = _proof(rid);
+        vm.expectEmit(true, true, false, true, address(nft9));
+        emit PayoutPaid(id, rid, amountWei, feeWei, paidInWeth);
+        vm.prank(finisher);
+        nft9.finalizePayout(id, clear, proof);
+    }
+
+    /// Real WETH9 (as on Sepolia) pays withdraw with transfer, i.e. 2300 gas, so the
+    /// contract's receive must fit in the stipend.
+    function test_roundTrip_overWeth9_paysEth() public {
+        uint256 id = _mintOverWeth9(alice, 3);
+        vm.warp(block.timestamp + 100);
+        vm.prank(keeper);
+        nft9.requestPayout(id, 0);
+        _finalize9(id, 100 * 1e9, 3, false);
+        assertEq(alice.balance, 100 * 1e9 - 3);
+        assertEq(keeper.balance, 3);
+        assertEq(weth9.balanceOf(address(nft9)), 0);
+        assertEq(address(nft9).balance, 0);
+    }
+
+    /// The WETH fallback over WETH9: deposit, then transfer.
+    function test_roundTrip_overWeth9_recipientRejectsEth_paidInWeth() public {
+        RejectingReceiver rejecting = new RejectingReceiver();
+        uint256 id = _mintOverWeth9(address(rejecting), 0);
+        vm.warp(block.timestamp + 100);
+        vm.prank(keeper);
+        nft9.requestPayout(id, 0);
+        _finalize9(id, 100 * 1e9, 0, true);
+        assertEq(weth9.balanceOf(address(rejecting)), 100 * 1e9);
+        assertEq(weth9.balanceOf(address(nft9)), 0);
+        assertEq(address(nft9).balance, 0);
+    }
+
+    function test_twoPending_finalisedInReverseOrder_oneOnWrapperFirst() public {
+        uint256 a = _mintPayout(alice, 0);
+        vm.warp(block.timestamp + 50);
+        uint256 b = _mintPayout(bob, 0);
+        vm.warp(block.timestamp + 100);
+        bytes32 ra = _request(a, keeper); // 150 units
+        _request(b, keeper); // 100 units
+
+        // A third party finalises a's unwrap on the wrapper: a's WETH arrives early.
+        {
+            (uint64 ca, bytes memory pa) = _proof(ra);
+            assertEq(ca, 150);
+            vm.prank(finisher);
+            cweth.finalizeUnwrap(ra, ca, pa);
+        }
+        assertEq(weth.balanceOf(address(nft)), 150 * 1e9);
+
+        // b first: it must take only its own WETH, not a's.
+        assertEq(_finalize(b, finisher), 100);
+        assertEq(bob.balance, 100 * 1e9);
+        assertEq(alice.balance, 0);
+        assertEq(weth.balanceOf(address(nft)), 150 * 1e9);
+
+        assertEq(_finalize(a, finisher), 150);
+        assertEq(alice.balance, 150 * 1e9);
+        assertEq(bob.balance, 100 * 1e9);
+        assertEq(weth.balanceOf(address(nft)), 0);
+        assertEq(address(nft).balance, 0);
+        _assertNoPending(a);
+        _assertNoPending(b);
+    }
+
+    function test_finalize_justBelowGasRequirement_revertsInsufficientGas() public {
+        uint256 id = _mintPayout(alice, 0);
+        vm.warp(block.timestamp + 100);
+        bytes32 rid = _request(id, keeper);
+        (uint64 clear, bytes memory proof) = _proof(rid);
+        bytes memory data = abi.encodeCall(nft.finalizePayout, (id, clear, proof));
+
+        // Find the lowest gas limit that succeeds; the one just below must stop at the guard.
+        uint256 enough;
+        for (uint256 g = 150_000; g < 800_000; g += 100) {
+            uint256 snap = vm.snapshotState();
+            (bool ok,) = address(nft).call{gas: g}(data);
+            vm.revertToState(snap);
+            if (ok) {
+                enough = g;
+                break;
+            }
+        }
+        assertGt(enough, 0, "some gas limit is enough");
+
+        vm.expectRevert(AutoPayoutEndowmentNFT.InsufficientGas.selector);
+        (bool success,) = address(nft).call{gas: enough - 100}(data);
+        success; // the revert is asserted by expectRevert
+        (bytes32 still,,,) = nft.pendingPayoutOf(id);
+        assertEq(still, rid);
+
+        (bool paid,) = address(nft).call{gas: enough}(data);
+        assertTrue(paid);
+        assertEq(alice.balance, 100 * 1e9);
     }
 }

@@ -211,6 +211,8 @@ contract AutoPayoutEndowmentNFT is EndowmentNFT {
                 share += feeWei;
                 feeWei = 0;
             }
+            // A recipient that is the WETH contract itself (a token sent there) accepts the
+            // ETH as a deposit credited to this contract, so that payout stays here for good.
             if (!_sendEth(p.recipient, share)) {
                 IWETH(weth).deposit{value: share}();
                 SafeERC20.safeTransfer(IERC20(weth), p.recipient, share);
