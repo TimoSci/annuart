@@ -79,6 +79,8 @@ defmodule AnnuartWeb.CreateLiveTest do
     for role <- ~w(auto auto-enabled auto-interval auto-interval-unit auto-fee auto-fee-echo),
         do: assert(html =~ ~s(data-role="#{role}"))
 
+    assert html =~ "At most 10% of each payout is ever paid as a fee."
+
     assert html =~
              "Anyone can trigger these payouts, and you receive them as plain ETH. Each automatic payout amount is public. If the ENFT ever runs out, that reveals how much it held in total."
 

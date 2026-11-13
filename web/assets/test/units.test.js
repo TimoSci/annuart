@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  U64_MAX, parseAmount, formatAmount, durationSeconds, ratePerSecond, effectiveRate,
+  U64_MAX, parseAmount, parseFee, formatAmount, durationSeconds, ratePerSecond, effectiveRate,
   toSegments, scheduleTotal, amountWarning,
 } from "../js/units.js";
 
@@ -135,4 +135,18 @@ test("intervalText names the largest unit that divides evenly", async () => {
   assert.equal(intervalText(3600), "1 hour");
   assert.equal(intervalText(172800), "2 days");
   assert.equal(intervalText(5400), "90 minutes");
+});
+
+test("parseFee reads ETH as wei, with zero and empty meaning no fee", () => {
+  assert.equal(parseFee("0.001"), 1_000_000_000_000_000n);
+  assert.equal(parseFee("1"), 1_000_000_000_000_000_000n);
+  assert.equal(parseFee("0"), 0n);
+  assert.equal(parseFee("0.0"), 0n);
+  assert.equal(parseFee(""), 0n);
+  assert.equal(parseFee("  "), 0n);
+  assert.throws(() => parseFee("1,5"), {code: "separator"});
+  assert.throws(() => parseFee("abc"), {code: "not_a_number"});
+  assert.throws(() => parseFee("-1"), {code: "negative"});
+  assert.throws(() => parseFee("0.0000000000000000001"), {code: "too_many_decimals"});
+  assert.throws(() => parseFee("19"), {code: "too_large"});
 });

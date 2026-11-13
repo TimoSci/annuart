@@ -6,8 +6,8 @@
 // is the thin LiveView hook around it.
 import {isAddress} from "ethers";
 import {
-  parseAmount, formatAmount, intervalSeconds, intervalText, effectiveRate, toSegments, scheduleTotal, amountWarning,
-  ScheduleError, AmountError, U64_MAX,
+  parseAmount, parseFee, formatAmount, intervalSeconds, intervalText, effectiveRate, toSegments, scheduleTotal, amountWarning,
+  ScheduleError, U64_MAX,
 } from "../units.js";
 import {explainAmount} from "../errors.js";
 import {current, onChange, chainInfo} from "../chain/signer.js";
@@ -27,6 +27,7 @@ const MIN_BAR_HEIGHT = 4;
 const WEI_PER_UNIT = 1_000_000_000n;
 const ETH_DECIMALS = 18;
 const FEE_CAP_DIVISOR = 10n;
+const DEFAULT_INTERVAL = 86400;
 // Dates beyond this are outside what a JavaScript Date can show.
 const MAX_DATE_SECONDS = 8_640_000_000_000n;
 // A start further off than this is called out in the summary (a year is 365 days).
@@ -67,16 +68,6 @@ function warningText(warning, {symbol, decimals}, format) {
       return `${formatAmount(warning.extra, decimals, format)} ${symbol} extra will be paid to the owner as a lump sum when the schedule ends.`;
     default:
       return `At these rates the endowment runs out around ${dateText(warning.at)}.`;
-  }
-}
-
-// The fee in wei. Unlike an amount, zero is allowed (and is the default).
-function parseFee(text) {
-  try {
-    return parseAmount(text, ETH_DECIMALS);
-  } catch (err) {
-    if (err instanceof AmountError && err.code === "zero") return 0n;
-    throw err;
   }
 }
 
@@ -371,7 +362,7 @@ export class CreateFormController {
     const echo = this.role("auto-fee-echo");
     if (!echo) return;
     echo.textContent = "";
-    if (!this.isAuto()) return;
+    if (!this.isAuto() || !isChecked(this.role("auto-enabled"))) return;
     const text = this.role("auto-fee").value;
     let fee;
     try {
@@ -380,7 +371,6 @@ export class CreateFormController {
       echo.textContent = explainAmount(err, "ETH");
       return;
     }
-    if (text.trim() === "") return;
     if (fee === 0n) return;
     echo.textContent = `= ${formatAmount(fee, ETH_DECIMALS, TYPED)} ETH`;
     if (decimals === null) return;
@@ -479,11 +469,12 @@ export class CreateFormController {
 
     let auto;
     if (this.isAuto()) {
-      let interval;
-      try { interval = this.autoInterval(); } catch (err) { throw new InputError(explainAmount(err, symbol)); }
-      let fee;
-      try { fee = parseFee(this.role("auto-fee").value); } catch (err) { throw new InputError(explainAmount(err, "ETH")); }
-      auto = {enabled: isChecked(this.role("auto-enabled")), interval, fee};
+      // Settings that will not be used are not checked.
+      auto = {enabled: isChecked(this.role("auto-enabled")), interval: DEFAULT_INTERVAL, fee: 0n};
+      if (auto.enabled) {
+        try { auto.interval = this.autoInterval(); } catch (err) { throw new InputError(explainAmount(err, symbol)); }
+        try { auto.fee = parseFee(this.role("auto-fee").value); } catch (err) { throw new InputError(explainAmount(err, "ETH")); }
+      }
     }
 
     return {

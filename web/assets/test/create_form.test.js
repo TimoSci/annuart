@@ -742,8 +742,7 @@ test("a fee typed with a separator stops with the amount message", async () => {
   type(q(t.el, "auto-fee"), "1,5");
   click(q(t.el, "run"));
   await t.ctl.pending;
-  assert.match(message(t.el), /separator|decimal|digits|\./i);
-  assert.notEqual(message(t.el), "");
+  assert.equal(message(t.el), "Use a period for decimals and no separators, for example 1500.25.");
   assert.equal(t.calls.length, 0);
 });
 
@@ -772,4 +771,38 @@ test("a fee above 10% of one interval's payout is called out", () => {
   assert.equal(q(t.el, "auto-fee-echo").textContent.includes("capped"), false);
   type(q(t.el, "auto-fee"), "0.011");
   assert.match(q(t.el, "auto-fee-echo").textContent, /The fee is capped at 10% of each payout\./);
+});
+
+test("an unticked group ignores a malformed fee or interval and sends the defaults", async () => {
+  const t = autoPage();
+  fillDefault(t.el);
+  type(q(t.el, "auto-fee"), "1,5");
+  type(q(t.el, "auto-interval"), "0");
+  const box = q(t.el, "auto-enabled");
+  box.checked = false;
+  box.dispatchEvent(new box.ownerDocument.defaultView.Event("change", {bubbles: true}));
+  assert.equal(q(t.el, "auto-fee-echo").textContent, "");
+  click(q(t.el, "run"));
+  click(q(t.el, "confirm"));
+  await t.ctl.pending;
+  assert.deepEqual(t.calls[0].args.auto, {enabled: false, interval: 86400, fee: 0n});
+});
+
+test("the fee cap note follows the interval and unit, and needs a rate", () => {
+  const t = autoPage();
+  fillDefault(t.el);
+  const note = () => q(t.el, "auto-fee-echo").textContent;
+  type(q(t.el, "auto-fee"), "0.011");
+  assert.match(note(), /capped at 10%/);
+  // A week's payout is seven times larger: 0.011 is then well under 10%.
+  pick(q(t.el, "auto-interval-unit"), "weeks");
+  assert.doesNotMatch(note(), /capped/);
+  type(q(t.el, "auto-interval"), "1");
+  pick(q(t.el, "auto-interval-unit"), "hours");
+  assert.match(note(), /capped at 10%/);
+  // No rate in the first period: no note, only the echo.
+  pick(q(t.el, "auto-interval-unit"), "days");
+  type(q(rows(t.el)[0], "rate"), "");
+  assert.doesNotMatch(note(), /capped/);
+  assert.match(note(), /^= 0\.011 ETH$/);
 });

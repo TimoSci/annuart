@@ -45,6 +45,18 @@ export function parseAmount(text, decimals) {
   return units;
 }
 
+// A fee typed in ETH (18 decimals), as wei. Unlike an amount, zero and an empty
+// field both mean no fee; anything else is parsed (and refused) as parseAmount does.
+export function parseFee(text) {
+  if (String(text ?? "").trim() === "") return 0n;
+  try {
+    return parseAmount(text, 18);
+  } catch (err) {
+    if (err instanceof AmountError && err.code === "zero") return 0n;
+    throw err;
+  }
+}
+
 // `grouping: false` leaves out the thousands separators: a value the person
 // typed is shown back to them exactly as the app reads it ("1500.25").
 export function formatAmount(units, decimals, {grouping = true} = {}) {

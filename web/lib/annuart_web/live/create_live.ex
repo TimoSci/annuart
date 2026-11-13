@@ -270,6 +270,7 @@ defmodule AnnuartWeb.CreateLive do
                 value="0"
                 autocomplete="off"
               />
+              <span class="note">At most 10% of each payout is ever paid as a fee.</span>
               <span data-role="auto-fee-echo" class="amount-echo"></span>
             </div>
             <p class="note">
