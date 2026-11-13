@@ -78,6 +78,14 @@ class RoleAction extends TxActionController {
 
   // What the next click runs: the finishing action a failure left, or its own.
   get effective() { return this.finishing?.action ?? this.el.dataset.action; }
+
+  // A trigger sends the fee it showed as minFee, so the request fails if the
+  // owner has lowered it since.
+  readArgs() {
+    const args = super.readArgs();
+    if (this.minFee !== undefined) args.minFee = this.minFee;
+    return args;
+  }
 }
 
 // Save: its arguments come from the settings form, validated and, when
@@ -327,6 +335,7 @@ export class AutoPayoutController {
       let note = "You pay the transaction fees.";
       if (status.fee > 0n) note += ` You receive up to ${formatAmount(status.fee, ETH_DECIMALS, TYPED)} ETH as the fee.`;
       this.triggerNote.textContent = note;
+      c.minFee = status.fee;
       items.push(this.triggerNote);
     }
     this.slot.replaceChildren(...items, c.el);

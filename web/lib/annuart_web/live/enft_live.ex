@@ -126,12 +126,23 @@ defmodule AnnuartWeb.EnftLive do
           true -> {:text, "A payout can be triggered now."}
         end
 
+      # Never requested: the first payout may be requested at once, from the
+      # schedule's start. A fixed schedule already over says nothing.
+      [] ->
+        now = System.os_time(:second)
+
+        if started_by?(enft, now) and not schedule_ended_by?(enft, now),
+          do: {:text, "A payout can be triggered now."}
+
       _ ->
         nil
     end
   end
 
   defp index_state(_enft, _payouts), do: nil
+
+  defp started_by?(%{schedule_start: start}, now) when is_integer(start), do: start <= now
+  defp started_by?(_enft, _now), do: false
 
   # The contract pays nothing more once a request was made at or after the end
   # of a fixed schedule. A hidden schedule cannot be checked here.

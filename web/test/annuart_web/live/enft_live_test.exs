@@ -619,9 +619,67 @@ defmodule AnnuartWeb.EnftLiveTest do
       assert has_element?(view, "#auto-index-state", "A payout can be triggered now.")
     end
 
-    test "no index line when off, never requested, the request time is unknown, or the schedule ended",
+    test "never requested and the schedule has started: the index line says one can be triggered now",
          %{conn: conn} do
       make_auto()
+
+      mint(
+        schedule_start: System.os_time(:second) - 86_400,
+        schedule: [%{"duration" => indefinite(), "rate_per_sec" => 1}]
+      )
+
+      settings()
+      {:ok, view, _html} = live(conn, ~p"/enft/mock/1")
+
+      assert has_element?(view, "#auto-index-state", "A payout can be triggered now.")
+    end
+
+    test "never requested and the schedule has not started: no index line", %{conn: conn} do
+      make_auto()
+
+      mint(
+        schedule_start: System.os_time(:second) + 86_400,
+        schedule: [%{"duration" => indefinite(), "rate_per_sec" => 1}]
+      )
+
+      settings()
+      {:ok, view, _html} = live(conn, ~p"/enft/mock/1")
+
+      refute has_element?(view, "#auto-index-state")
+    end
+
+    test "never requested, started, but switched off: no index line", %{conn: conn} do
+      make_auto()
+
+      mint(
+        schedule_start: System.os_time(:second) - 86_400,
+        schedule: [%{"duration" => indefinite(), "rate_per_sec" => 1}]
+      )
+
+      settings(enabled: false)
+      {:ok, view, _html} = live(conn, ~p"/enft/mock/1")
+
+      refute has_element?(view, "#auto-index-state")
+    end
+
+    test "never requested and a fixed schedule that has ended: no index line", %{conn: conn} do
+      make_auto()
+
+      mint(
+        schedule_start: System.os_time(:second) - 2 * 86_400,
+        schedule: [%{"duration" => 86_400, "rate_per_sec" => 1}]
+      )
+
+      settings()
+      {:ok, view, _html} = live(conn, ~p"/enft/mock/1")
+
+      refute has_element?(view, "#auto-index-state")
+    end
+
+    test "no index line when off, not started, the request time is unknown, or the schedule ended",
+         %{conn: conn} do
+      make_auto()
+      # Never requested, and mint's default schedule start is still to come.
       mint(schedule: [%{"duration" => indefinite(), "rate_per_sec" => 1}])
       settings()
       {:ok, view, _html} = live(conn, ~p"/enft/mock/1")

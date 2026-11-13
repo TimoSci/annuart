@@ -359,19 +359,20 @@ export async function setAutoPayout(session, contract, {tokenId, enabled, interv
 }
 
 // Anyone may pay out an ENFT's claimable balance to its owner, in ETH, once
-// per interval: steps "requestPayout", "decrypt", "payOut", "mined". The fee
-// read now is passed as minFee, so an owner lowering it in between makes the
-// request fail rather than pay the caller less. Once the request is mined the
+// per interval: steps "requestPayout", "decrypt", "payOut", "mined". `minFee`
+// (wei) is the fee the caller was shown; without it the fee read now is used.
+// Either way an owner lowering the fee in between makes the request fail
+// rather than pay the caller less. Once the request is mined the
 // payout is pending until finished, by anyone: any later failure carries
 // err.resume = {action: "finishPayout", args: {tokenId}}. The result is
 // {hash, wei, feeWei, paidInWeth, note}; `wei` is the whole payout, fee included.
-export async function triggerPayout(session, contract, {tokenId}, onStep) {
+export async function triggerPayout(session, contract, {tokenId, minFee}, onStep) {
   requireAuto(contract);
   return withSteps(onStep, "requestPayout", async steps => {
     const s = await ensureChain(session);
     const nft = autoOf(contract, s.signer);
     await steps.sendAndWait("requestPayout",
-      async () => nft.requestPayout(tokenId, (await nft.autoPayoutOf(tokenId)).fee),
+      async () => nft.requestPayout(tokenId, minFee ?? (await nft.autoPayoutOf(tokenId)).fee),
       receipt => findEvent(receipt, nft, "PayoutRequested").args.requestId,
       requestId => ({requestId}));
     try {

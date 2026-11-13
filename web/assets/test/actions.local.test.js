@@ -835,6 +835,22 @@ test("triggerPayout by another account pays the owner in ETH and the caller the 
   assert.equal(again.detail("requestPayout"), "It is too soon for the next automatic payout.");
 });
 
+test("triggerPayout with a minFee above the current fee fails at the request and changes nothing", {skip: autoSkip}, async () => {
+  const fee = 5n * UNIT;
+  const tokenId = await autoEnft({enabled: true, interval: HOUR, fee});
+  await increaseTime(100);
+  const st = steps();
+  await assert.rejects(() => actions.triggerPayout(bob, autoNft, {tokenId, minFee: fee + 1n}, st),
+    err => err.resume === undefined && explain(err) === "The fee was lowered. Reload and try again.");
+  assert.equal(st.state("requestPayout"), "failed");
+  assert.equal(st.detail("requestPayout"), "The fee was lowered. Reload and try again.");
+  assert.deepEqual(st.sentLog, []);
+  const status = await actions.autoPayoutStatus(bob, autoNft, tokenId);
+  assert.equal(status.due, true);
+  assert.equal(status.pending, null);
+  assert.equal(status.lastRequestAt, null);
+});
+
 test("triggerPayout with the second transaction rejected can be finished by a third account; the fee is capped at a tenth", {skip: autoSkip}, async () => {
   const tokenId = await autoEnft({enabled: true, interval: HOUR, fee: ETHER});
   await increaseTime(100);

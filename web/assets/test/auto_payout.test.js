@@ -83,6 +83,15 @@ test("due with a fee: the line says what fee the caller receives", async () => {
   assert.equal(q(t.el, "trigger-note").textContent, "You pay the transaction fees. You receive up to 0.01 ETH as the fee.");
 });
 
+test("Trigger payout sends the fee it showed as minFee, so a fee lowered since makes it fail", async () => {
+  const t = make({status: {...STATUS, fee: ETH / 100n}});
+  await t.ctl.pending;
+  click(q(t.el, "trigger"));
+  await settle(t);
+  assert.deepEqual(t.state.calls.map(c => c.name), ["triggerPayout"]);
+  assert.deepEqual(t.state.calls[0].args, {tokenId: 1n, minFee: ETH / 100n});
+});
+
 test("pending: only Finish payout is offered", async () => {
   const t = make({status: {...STATUS, due: false, lastRequestAt: NOW - 10, pending: PENDING}});
   await t.ctl.pending;
