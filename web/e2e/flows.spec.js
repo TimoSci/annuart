@@ -1,5 +1,5 @@
-// Browser end-to-end flows against a real Hardhat node (FHEVM mock), the mock
-// and wrapped deployments, and the Phoenix dev server, all started by
+// Browser end-to-end flows against a real Hardhat node (FHEVM mock), the mock,
+// wrapped and automatic-payout deployments, and the Phoenix dev server, all started by
 // playwright.config.js. The dev login (five Hardhat accounts in the #wallet
 // <select>) signs, and the mock FHE client encrypts and decrypts in the page.
 //
@@ -113,7 +113,7 @@ async function fillPeriod(form, {length = "1", unit = "days", rate = "1000", per
 
 // Creates an ENFT through the Create page as the connected account and
 // returns its token id, once the page has navigated to it.
-async function createEnft(page, {label = "mock", amount = "2000", donations = true, period = {}} = {}) {
+async function createEnft(page, {label = "mock", amount = "2000", donations = true, period = {}, summaryHas = []} = {}) {
   await page.goto("/create");
   const form = page.locator("#create-form");
   await expect(form).toBeVisible();
@@ -124,6 +124,7 @@ async function createEnft(page, {label = "mock", amount = "2000", donations = tr
   await form.locator("button[data-role=run]").click();
   const summary = form.locator("[data-role=summary]");
   await expect(summary).toBeVisible();
+  for (const text of summaryHas) await expect(summary).toContainText(text);
   await summary.locator("button[data-role=confirm]").click();
   await page.waitForURL(new RegExp(`/enft/${label}/\\d+$`), {timeout: 90_000});
   return Number(page.url().match(/\/(\d+)$/)[1]);
@@ -431,6 +432,59 @@ test("wrapped token: wrap 0.01 ETH, then unwrap it", async ({page}) => {
   await expect(card.locator("[data-role=weth]")).toBeHidden();
 });
 
+test("automatic ENFT: created by one account, triggered by another, owner is paid in ETH", async ({page}) => {
+  await page.goto("/");
+  await login(page, 1);
+  await page.goto("/tokens");
+  await connectedAs(page, 1);
+  // One cWETH card holds both authorisations: the wrapped contract's and the automatic one's.
+  const card = page.locator("#token-wrapped");
+  await expect(card.locator("#tx-authorise-wrapped")).toBeVisible();
+  await expect(card.locator("#tx-authorise-auto")).toBeVisible();
+  await expect(page.locator("#token-auto")).toHaveCount(0);
+  const wrap = page.locator("#tx-wrap-wrapped");
+  await wrap.locator("input[data-arg=wei]").fill("1");
+  await runTx(wrap);
+
+  // Created with the defaults of the automatic payouts group: on, every 1 day, no fee.
+  const id = await createEnft(page, {
+    label: "auto", amount: "0.5", period: {length: "1", unit: "years", rate: "1", per: "day"},
+    summaryHas: ["Automatic payouts are on, at most once every 1 day, with no fee."],
+  });
+  const auto = page.locator("#panel-auto");
+  await expect(auto).toBeVisible();
+  await expect(auto.locator("#auto-status")).toHaveText("On");
+  await expect(auto.locator("#auto-payout [data-role=settings]")).toBeVisible({timeout: 30_000});
+
+  // The schedule pays by the second: let an hour of it build up. The first
+  // payout needs no waiting for an interval.
+  await advanceTime(3600);
+
+  // Another account sees a payout due and triggers it.
+  await login(page, 2);
+  await page.goto(`/enft/auto/${id}`);
+  await connectedAs(page, 2);
+  await expect(page.locator("#panel-yours")).toHaveCount(0);
+  const trigger = page.locator("#auto-payout button[data-role=trigger]");
+  await expect(trigger).toHaveText("Trigger payout", {timeout: 60_000});
+  const ownerBefore = BigInt(await rpc("eth_getBalance", [ACCOUNTS[1], "latest"]));
+  const tx = page.locator("#auto-payout div.tx");
+  await trigger.click();
+  await expectDone(tx);
+  for (const name of ["requestPayout", "decrypt", "payOut"]) await expect(step(tx, name)).toHaveAttribute("data-state", "done");
+  await expect(tx.locator("p.tx-message")).toContainText("ETH was paid to the owner.");
+
+  // The index follows: History gains the payout, nothing is left to trigger,
+  // and the page says when the next one is possible.
+  await expect(panel(page, "history")).toContainText("Automatic payout of", {timeout: 60_000});
+  await expect(trigger).toHaveCount(0);
+  await expect(page.locator("#auto-payout [data-role=state]")).toContainText("Next payout possible");
+  await expect(auto.locator("#auto-last")).not.toContainText("None yet");
+
+  // The owner really received ETH (their transaction fees were paid by account 2).
+  await expect.poll(async () => BigInt(await rpc("eth_getBalance", [ACCOUNTS[1], "latest"])) > ownerBefore).toBe(true);
+});
+
 test("create with a later start, two periods ending indefinitely, for another address", async ({page}) => {
   await page.goto("/");
   await login(page, 0);
@@ -688,6 +742,24 @@ test("no request body or websocket frame contains the entered amount", async ({p
 
   const leaks = sent.filter(s => carriesAmount(s.data));
   expect(leaks, JSON.stringify(leaks.slice(0, 3))).toEqual([]);
+
+  // Creating on the automatic payout contract sends no endowment amount either.
+  // The endowment is entered in wrapped ETH (9 decimals): 3.14159 is 3141590000
+  // base units. Only what is sent from here on is checked against these.
+  const autoAmount = [/3\.14159/, /3,14159/, /314159/, new RegExp((3141590000n).toString(16), "i")];
+  const mark = sent.length;
+  const nodeMark = toNode.length;
+  await page.goto("/tokens");
+  await connectedAs(page, 0);
+  const wrap = page.locator("#tx-wrap-wrapped");
+  await wrap.locator("input[data-arg=wei]").fill("4");
+  await runTx(wrap);
+  await createEnft(page, {label: "auto", amount: "3.14159", period: {length: "1", unit: "years", rate: "1", per: "day"}});
+  await expect(page.locator("#panel-auto")).toBeVisible();
+  expect(sent.slice(mark).filter(s => s.kind === "ws").length).toBeGreaterThan(0);
+  expect(toNode.slice(nodeMark).some(d => d.toLowerCase().includes((3141590000n).toString(16)))).toBe(true);
+  const autoLeaks = sent.slice(mark).filter(s => autoAmount.some(re => re.test(s.data)));
+  expect(autoLeaks, JSON.stringify(autoLeaks.slice(0, 3))).toEqual([]);
 });
 
 test("after the node is restarted and redeployed, Browse shows only the new chain's ENFTs", async ({browser}) => {
@@ -707,7 +779,7 @@ test("after the node is restarted and redeployed, Browse shows only the new chai
     await waitFor(reachable, "the new node to answer", 120_000);
     deploy();
     // A fresh node with the same deploy order reuses the same addresses.
-    expect(readDeployments().contracts.map(c => c.label).sort()).toEqual(["mock", "wrapped"]);
+    expect(readDeployments().contracts.map(c => c.label).sort()).toEqual(["auto", "mock", "wrapped"]);
 
     // The indexer notices the chain changed and rebuilds: no ENFTs at all.
     await expect(page.locator("#enfts [data-activity-id]")).toHaveCount(0, {timeout: 30_000});

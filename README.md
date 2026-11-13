@@ -75,7 +75,7 @@ Run with full verbosity:
 forge test -vvv
 ```
 
-Expected: **26 tests pass** (17 `EndowmentNFT` + 9 `Schedule`), 0 failed.
+Expected: **117 tests pass** (50 `EndowmentNFT`, 50 `AutoPayoutEndowmentNFT`, 13 `Schedule`, 4 `ConfidentialWETH`), 0 failed.
 
 ---
 
@@ -176,13 +176,16 @@ It has a permissionless `mint` function that allows anyone to mint arbitrary amo
 ```
 src/
   EndowmentNFT.sol          # Main ERC-721 contract
+  AutoPayoutEndowmentNFT.sol # EndowmentNFT over a WETH wrapper, with automatic ETH payouts
+  ConfidentialWETH.sol      # ERC-7984 wrapper over WETH (9 decimals)
   libraries/
     ScheduleLib.sol          # Piecewise-linear accrual schedule
   mocks/
     MockConfidentialToken.sol # TEST ONLY — permissionless mint
 script/
   Deploy.s.sol              # Foundry deploy script
-test/                       # Foundry test suite (26 tests)
+test/                       # Foundry test suite (117 tests) and Hardhat tests
+scripts/                    # Hardhat deploy, pre-flight check and payout keeper
 client/                     # TypeScript relayer-sdk client (Sepolia)
 docs/superpowers/specs/     # Design spec
 ```
@@ -307,6 +310,64 @@ For ad-hoc exploration, `npx hardhat console --network localhost` exposes `ether
 
 ---
 
+## Automatic payouts (`AutoPayoutEndowmentNFT`)
+
+`AutoPayoutEndowmentNFT` is an `EndowmentNFT` whose token is an ERC-7984 wrapper over WETH
+(`ConfidentialWETH`, the same token as the `wrapped` deployment). Its owner can let **anyone**
+pay out the whole claimable balance to the owner as plain ETH, so income arrives without the
+owner having to claim and unwrap by hand. With automatic payouts off (the state of a token
+minted with plain `mint`) it behaves exactly like an `EndowmentNFT`. There are no admin
+functions and no contract-owner role.
+
+**Settings** (per token, set by the owner, or given at `mintAuto`): on or off; the interval, at
+most one payout per interval, default 1 day, between 1 hour and 365 days; the fee, in wei of ETH,
+default 0, offered to whoever requests a payout. The fee actually paid is never more than 10% of
+the payout. When a payout is requested, the recipient (the owner then) and the fee are fixed for
+that payout, so a later change cannot redirect or raise it. The first payout may be requested at
+once. **Automatic payouts reset to off when the token is transferred**, so a new owner never
+inherits public payouts they did not choose.
+
+**Functions**
+
+| Function | Who | What |
+|---|---|---|
+| `mintAuto(to, encEndowment, inputProof, segments, scheduleStart, topUpsAllowed, name, enabled, interval, fee)` | anyone | `mint` with the settings given up front |
+| `setAutoPayout(tokenId, enabled, interval, fee)` | owner | change all three settings |
+| `requestPayout(tokenId, minFee)` | anyone | take the whole claimable balance and ask the wrapper to unwrap it; reverts if the fee is below `minFee`, a payout is pending, or it is too soon |
+| `finalizePayout(tokenId, cleartextAmount, decryptionProof)` | anyone | once the amount is publicly decrypted, pay the fee to the requester and the rest to the owner, in ETH (in WETH if the owner cannot receive ETH) |
+| `autoPayoutOf`, `pendingPayoutOf`, `payoutDue`, `lastPayoutOf`, `totalMinted` | view | settings and last request time; the pending payout; whether a request would be accepted now; the last paid payout; the number of tokens minted |
+
+**Events:** `AutoPayoutSet(tokenId, enabled, interval, fee)` on every change, including mint and
+the reset on transfer; `PayoutRequested(tokenId, requestId, recipient, requester, fee)`;
+`PayoutPaid(tokenId, requestId, amountWei, feeWei, paidInWeth)`.
+
+**Privacy cost.** Unwrapping reveals the amount, so for a token with automatic payouts on:
+
+- every automatic payout amount is public, with its time;
+- while payouts equal the scheduled amount, the remaining endowment stays hidden;
+- the first payout that falls short shows that the endowment has run out. Because the schedule
+  is public, that also reveals, in hindsight, everything the ENFT ever held: the original
+  endowment plus all donations up to then;
+- after that, each later payout is whatever was donated in between, so those donation amounts
+  become public too;
+- when a fixed schedule ends, the leftover is released to the owner, and the next automatic
+  payout reveals it.
+
+The Create page and the ENFT page say this wherever the setting is turned on. Automatic payout
+amounts are public chain data, so the web server indexes and shows them: a deliberate exception
+to "no amount reaches the server" that does not extend to endowments, claimable balances, token
+balances or manual claims.
+
+**Deploying.** `NFT_KIND=auto` deploys it, sharing the token of the `wrapped` entry (see
+"Interacting via Hardhat", Deploy, above). On Sepolia, see
+[`guides/sepolia-deployment.md`](guides/sepolia-deployment.md).
+
+**The keeper.** `scripts/keeper.ts` is a small script that triggers the payouts that are due
+and finishes the pending ones, for every `auto` contract in the deployment file. Whoever runs it
+pays the gas and receives the fees. See [`guides/keeper.md`](guides/keeper.md).
+
+---
+
 ## Web app
 
 `web/` is a Phoenix LiveView app for browsing, creating and managing ENFTs. The server indexes
@@ -320,6 +381,9 @@ inputs have no `name`, sit in `phx-update="ignore"` regions, and are never sent 
 event, form or URL; the server only hears `tx:confirmed` with an action, a contract label, a token
 id and a transaction hash. The server never holds a private key and never signs, encrypts or
 decrypts. `web/e2e` checks this in a real browser.
+
+The one exception is the amount of an automatic payout (see "Automatic payouts" above): it is
+public chain data once paid, so the server indexes and shows it.
 
 An ENFT's name is not an amount and is not private: it is public chain data, and the server reads
 it from the `EndowmentMinted` event like the owner and the schedule.
@@ -388,8 +452,8 @@ forge test
 # Server (web/)
 mix test
 
-# Browser code, in Node (web/). The *.local tests need a running Hardhat node with both
-# variants deployed, and are skipped without one.
+# Browser code, in Node (web/). The *.local tests need a running Hardhat node with all
+# three variants deployed, and are skipped without one.
 node --test "assets/test/**/*.test.js"
 
 # Browser end to end (web/e2e/). Starts its own Hardhat node, deploys the three variants and starts

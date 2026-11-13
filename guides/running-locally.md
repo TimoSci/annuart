@@ -121,8 +121,8 @@ npx hardhat test
 # Server (web/)
 mix test
 
-# Browser code, in Node (web/). Needs the chain from step 3 running, with both
-# variants deployed.
+# Browser code, in Node (web/). Needs the chain from step 3 running, with all
+# three variants deployed.
 node --test "assets/test/**/*.test.js"
 
 # Browser end to end (web/e2e/). Starts its own chain and app, so ports 8545 and

@@ -19,8 +19,9 @@ The result is three ENFT contracts on Sepolia, recorded in `deployments/sepolia.
 2. **A deployer key that holds nothing of value.** Create a fresh account in your wallet
    for this and export its private key. Do not use a key that holds funds on any real
    network.
-3. **About 0.1 Sepolia ETH** in that account, from any Sepolia faucet. The four contract
-   deployments cost far less; the pre-flight check warns below 0.05.
+3. **About 0.1 Sepolia ETH** in that account, from any Sepolia faucet. The five contract
+   deployments (the mock token and its ENFT contract, `ConfidentialWETH` and its ENFT contract,
+   and the automatic-payout ENFT contract) cost far less; the pre-flight check warns below 0.05.
 4. **Dependencies installed** in the repo root: `npm install`.
 
 ## 2. Set the environment

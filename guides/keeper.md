@@ -79,8 +79,7 @@ outside this repository, readable only by you. Example:
 
    ```bash
    read -s PRIVATE_KEY
-   umask 077
-   printf 'export SEPOLIA_RPC_URL="https://…your provider URL…"\nexport PRIVATE_KEY="%s"\n' "$PRIVATE_KEY" > ~/.annuart-keeper.env
+   ( umask 077; printf 'export SEPOLIA_RPC_URL="https://…your provider URL…"\nexport PRIVATE_KEY="%s"\n' "$PRIVATE_KEY" > ~/.annuart-keeper.env )
    unset PRIVATE_KEY
    chmod 600 ~/.annuart-keeper.env
    ```

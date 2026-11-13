@@ -7,7 +7,7 @@ cannot judge.
 
 ## Before you start
 
-1. Follow `guides/sepolia-deployment.md`: it deploys the `mock` and `wrapped` variants and starts
+1. Follow `guides/sepolia-deployment.md`: it deploys the `mock`, `wrapped` and `auto` variants and starts
    the app with `ANNUART_RPC_URL` set to a Sepolia RPC and `ANNUART_DEPLOYMENTS` set to
    `../deployments/sepolia.json`.
 2. Use two wallet accounts, A and B, each holding some Sepolia ETH.
@@ -55,8 +55,8 @@ deciding something failed.
    that transaction.
 2. Reveal Claimable: a positive amount. Claim; after Done the value is hidden again. Reveal: `0`.
 3. My ENFTs lists the ENFT; its reveal shows the same claimable.
-3a. Wait a while again, then click `Claim and convert to ETH` (wrapped ENFTs only; the mock ENFT
-   in 3b has no such button). The page first asks to confirm that the amount becomes public.
+3a. Wait a while again, then click `Claim and convert to ETH` (ENFTs on the wrapped or automatic
+   contract only; the mock ENFT in 3b has no such button). The page first asks to confirm that the amount becomes public.
    Steps: Claim the payout, Request unwrap, Wait for decryption, Finalise unwrap, Convert WETH to
    ETH, Done; the wallet asks four times. Afterwards a line says how much ETH was sent to your
    wallet, the wallet's ETH balance has grown by that less gas, Claimable reveals `0`, and the
@@ -76,9 +76,68 @@ deciding something failed.
 3. After a short while, click Update accrual on the new ENFT. Reveal Claimable: a positive amount.
    Claim; after Done the value is hidden again. Reveal Claimable: `0`.
 
+## 3c. Automatic payouts
+
+This needs the `auto` variant deployed, and wrapped ETH in account A (section 2, step 3). Account
+B pays the transaction fees of the payout, so B needs a little Sepolia ETH too.
+
+1. Tokens: there is one cWETH card, labelled `wrapped`, not two. It lists both ENFT contracts,
+   `wrapped` and `auto`, each with its own authorisation line and its own `Authorise` button. There
+   is no separate card for `auto`.
+2. Create: pick `auto (cWETH, automatic payouts)`. A group appears with `Automatic payouts` ticked,
+   `At most once every` `1` `days`, and `Fee per payout (ETH)` `0`. It says `Anyone can trigger
+   these payouts, and you receive them as plain ETH. Each automatic payout amount is public. If the
+   ENFT ever runs out, that reveals how much it held in total.` Pick the `wrapped` contract
+   instead: the group goes. Pick `auto` again. Give a period that pays something visible
+   (for example 1 year at `0.001` per day), amount `0.01` (wrap more ETH first if the balance is
+   short), donations on.
+3. Click Create ENFT. The summary contains `Automatic payouts are on, at most once every 1 day,
+   with no fee.` Cancel, untick `Automatic payouts`, click Create ENFT again: the summary now says
+   `Automatic payouts are off.` Cancel, tick it again, and try an interval over 365 days (`53`
+   `weeks`): it is refused with a message and nothing is sent. Put it back to `1` `days`, Create
+   ENFT, confirm. Steps as in section 2. The page lands on `/enft/auto/<id>`.
+4. The `Automatic payouts` panel shows Status `On`, Interval `At most once every 1 day`, Fee
+   `No fee`, Last automatic payout `None yet`. As owner you also see `Your settings`, with the
+   same three fields filled in and a `Save` button. History shows `Created by …`. Once the wallet
+   is connected the panel says `A payout can be triggered now.` (the first payout needs no wait)
+   and offers `Trigger payout`.
+5. Wait an hour or more so that something has accrued, then switch the wallet to account B and
+   open the ENFT. There is no Yours panel, no `Your settings`, and `Trigger payout` is offered
+   with `You pay the transaction fees.` Click it. Steps: Request the payout, Wait for decryption
+   (this takes a while on Sepolia), Pay out, Done; the wallet asks twice (the request and the
+   payout). Afterwards a line says `<amount> ETH was paid to the owner.`, `Trigger payout` is
+   gone, and the panel says `Next payout possible <date>.` (a day after the request). Within a
+   minute History gains `Automatic payout of <amount> ETH, triggered by` and B's picture, and
+   Last automatic payout shows the amount and time.
+6. Switch back to A: A's ETH balance has grown by exactly that amount (B paid the gas), and
+   Claimable (Yours panel) reveals `0`.
+7. On Etherscan, open the contract's address and its latest transaction from B. The logs show
+   `PayoutRequested` and `PayoutPaid`; `PayoutPaid` has `amountWei`, the same amount as the page
+   shows, in plain sight. That amount is public by design. The remaining endowment is not, while the
+   payouts keep matching the schedule: nothing on the page or in the logs says how much is left.
+8. As A, change the settings: `At most once every` `12` `hours`, `Fee per payout (ETH)`
+   `0.000001` (the line `= 0.000001 ETH` appears beside it). Click `Save`. Steps: Confirm in your
+   wallet, Done. The panel then shows `At most once every 12 hours` and `0.000001 ETH per payout,
+   never more than 10% of it`. As B, after the interval, the note by `Trigger payout` now adds `You
+   receive up to 0.000001 ETH as the fee.`, and the finished line adds `0.000001 ETH went to you as the fee.`
+   (when the payout is at least 0.00001 ETH; below that the fee is cut to a tenth of it).
+9. Interrupt one: as B, trigger a payout and close the tab once Request the payout is done.
+   Reopen the ENFT: the panel says `A payout is waiting to be finished.` and offers `Finish
+   payout`, which runs Wait for decryption, Pay out, Done.
+10. As A, untick `Automatic payouts` and `Save`. No question is asked. Status shows `Off`, and as B
+    `Trigger payout` is gone. Tick it again and `Save`: the page asks `Switch automatic payouts on?
+    Each payout amount becomes public.` Cancel: nothing is sent. Save again and accept, so that
+    Status is `On`.
+11. As A, Transfer the ENFT to B's address (section 3, step 5). Afterwards Status reads `Off`: a
+    new owner never inherits public payouts. As B, `Your settings` shows `Automatic payouts`
+    unticked, with the interval and fee unchanged.
+12. In the Network tab, no request or frame sent to the app's own host contains the endowment or a
+    donation amount, as in section 8. The paid amounts of automatic payouts are public chain data
+    and the page shows them, but nothing the page sends contains an amount you typed.
+
 ## 4. Unwrap
 
-1. Tokens, wrapped card: unwrap `0.005`. Steps: Check your balance, Encrypt the amount, Request unwrap, Wait for
+1. Tokens, wrapped card (the one cWETH card, which also serves the `auto` contract): unwrap `0.005`. Steps: Check your balance, Encrypt the amount, Request unwrap, Wait for
    decryption (this takes a while on Sepolia), Finalise unwrap, Convert WETH to ETH, Done. ETH in
    your wallet goes up by about that amount.
 2. Interrupt one: start an unwrap and close the tab once Request unwrap is done. Reopen Tokens: an
