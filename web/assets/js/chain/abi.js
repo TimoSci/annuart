@@ -21,6 +21,33 @@ export const NFT_ABI = [
   "error InvalidName()",
 ];
 
+// The ENFT with automatic payouts: everything above, plus its own functions.
+export const AUTO_NFT_ABI = [
+  ...NFT_ABI,
+  "function mintAuto(address to, bytes32 encEndowment, bytes inputProof, (uint64 duration, uint64 ratePerSec)[] segments, uint64 scheduleStart, bool topUpsAllowed, bytes32 name, bool enabled, uint32 interval, uint128 fee) returns (uint256)",
+  "function setAutoPayout(uint256 tokenId, bool enabled, uint32 interval, uint128 fee)",
+  "function autoPayoutOf(uint256 tokenId) view returns (bool enabled, uint32 interval, uint128 fee, uint64 lastRequestAt)",
+  "function requestPayout(uint256 tokenId, uint128 minFee) returns (bytes32)",
+  "function finalizePayout(uint256 tokenId, uint64 cleartextAmount, bytes decryptionProof)",
+  "function pendingPayoutOf(uint256 tokenId) view returns (bytes32 requestId, address recipient, address requester, uint128 fee)",
+  "function payoutDue(uint256 tokenId) view returns (bool)",
+  "function lastPayoutOf(uint256 tokenId) view returns (uint64 paidAt, uint256 amountWei)",
+  "event AutoPayoutSet(uint256 indexed tokenId, bool enabled, uint32 interval, uint128 fee)",
+  "event PayoutRequested(uint256 indexed tokenId, bytes32 indexed requestId, address indexed recipient, address requester, uint128 fee)",
+  "event PayoutPaid(uint256 indexed tokenId, bytes32 indexed requestId, uint256 amountWei, uint256 feeWei, bool paidInWeth)",
+  "error InvalidInterval()",
+  "error AutoPayoutDisabled()",
+  "error PayoutPending()",
+  "error PayoutTooSoon(uint64 notBefore)",
+  "error ScheduleNotStarted()",
+  "error NothingLeft()",
+  "error FeeTooLow(uint128 fee)",
+  "error NoPendingPayout()",
+  "error InsufficientGas()",
+  "error MintIdMismatch()",
+  "error OnlyWeth()",
+];
+
 // ERC-7984, plus the mock token's faucet mint and the ERC-20 wrapper's functions.
 export const TOKEN_ABI = [
   "function confidentialBalanceOf(address account) view returns (bytes32)",

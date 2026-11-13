@@ -113,3 +113,26 @@ test("toSegments bounds fixed lengths", () => {
   assert.throws(() => toSegments([...row(half), ...row(half)], 6), { code: "too_long" });
   assert.throws(() => toSegments([...row(half), ...row(half), { rate: "1", per: "day", indefinite: true }], 6), { code: "too_long" });
 });
+
+test("intervalSeconds: a whole number of hours, days or weeks between 1 hour and 365 days", async () => {
+  const {intervalSeconds, INTERVAL_UNITS} = await import("../js/units.js");
+  assert.deepEqual(INTERVAL_UNITS, {hours: 3600, days: 86400, weeks: 604800});
+  assert.equal(intervalSeconds("1", "days"), 86400);
+  assert.equal(intervalSeconds("1", "hours"), 3600);
+  assert.equal(intervalSeconds("365", "days"), 31536000);
+  assert.equal(intervalSeconds(" 2 ", "weeks"), 1209600);
+  for (const [value, unit] of [["0", "hours"], ["1.5", "days"], ["366", "days"], ["", "days"], ["-1", "days"], ["abc", "hours"], ["53", "weeks"]]) {
+    assert.throws(() => intervalSeconds(value, unit), {name: "ScheduleError", code: "bad_interval"}, `${value} ${unit}`);
+  }
+});
+
+test("intervalText names the largest unit that divides evenly", async () => {
+  const {intervalText} = await import("../js/units.js");
+  assert.equal(intervalText(86400), "1 day");
+  assert.equal(intervalText(129600), "36 hours");
+  assert.equal(intervalText(1209600), "2 weeks");
+  assert.equal(intervalText(604800), "1 week");
+  assert.equal(intervalText(3600), "1 hour");
+  assert.equal(intervalText(172800), "2 days");
+  assert.equal(intervalText(5400), "90 minutes");
+});

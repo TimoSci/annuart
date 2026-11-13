@@ -18,7 +18,19 @@ const SELECTORS = {
   "0x8dba7587": "Only the last period can be indefinite.",
   "0x52c92d06": "An indefinite period needs a rate above zero.",
   "0xb1d04f08": "This ENFT does not exist.",
+  // Automatic payouts.
+  "0xa6db1522": "It is too soon for the next automatic payout.",       // PayoutTooSoon(uint64)
+  "0xc2cf8023": "Automatic payouts are switched off for this ENFT.",  // AutoPayoutDisabled()
+  "0xbef3c847": "A payout is already waiting to be finished.",        // PayoutPending()
+  "0xf39d2840": "This ENFT has paid out everything.",                 // NothingLeft()
+  "0xe52041f6": "The fee was lowered. Reload and try again.",         // FeeTooLow(uint128)
+  "0x5fabb610": "The interval must be between 1 hour and 365 days.",  // InvalidInterval()
+  "0x33f986e6": "Payouts have not started yet.",                      // ScheduleNotStarted()
+  "0x645f76c6": "This payout has already been finished.",             // NoPendingPayout()
+  "0x1c26714c": "The transaction ran out of gas. Try again.",         // InsufficientGas()
 };
+
+export const NO_PENDING_PAYOUT = SELECTORS["0x645f76c6"];
 
 function selectorOf(err) {
   for (const d of [err?.data, err?.info?.error?.data, err?.error?.data]) {
@@ -50,6 +62,7 @@ export function explainAmount(err, symbol) {
     case "indefinite_not_last": return SELECTORS["0x8dba7587"];
     case "too_long": return SELECTORS["0x15a7d4e1"];
     case "zero_length": return SELECTORS["0x91378467"];
+    case "bad_interval": return SELECTORS["0x5fabb610"];
     default: return String(err?.message || err);
   }
 }

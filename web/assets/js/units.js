@@ -142,3 +142,29 @@ export function amountWarning(segments, start, amount) {
   if (total < amount) return { kind: "leftover", extra: amount - total };
   return null;
 }
+
+// Automatic payout intervals: seconds, as a number, within the contract's bounds.
+export const INTERVAL_UNITS = {hours: 3600, days: 86400, weeks: 604800};
+const MIN_INTERVAL = 3600;
+const MAX_INTERVAL = 31536000;
+
+// A whole number of `unit`s above zero, from 1 hour to 365 days.
+export function intervalSeconds(value, unit) {
+  const per = INTERVAL_UNITS[unit];
+  if (per === undefined) throw new RangeError(`unknown unit ${unit}`);
+  const text = String(value ?? "").trim();
+  if (!/^\d+$/.test(text)) throw new ScheduleError("bad_interval");
+  const seconds = Number(text) * per;
+  if (seconds < MIN_INTERVAL || seconds > MAX_INTERVAL) throw new ScheduleError("bad_interval");
+  return seconds;
+}
+
+// Largest first; minutes and seconds only word an interval set some other way.
+const INTERVAL_NAMES = [["week", 604800], ["day", 86400], ["hour", 3600], ["minute", 60], ["second", 1]];
+
+// "1 day", "36 hours", "2 weeks": the largest unit that divides evenly.
+export function intervalText(seconds) {
+  const [name, per] = INTERVAL_NAMES.find(([, per]) => seconds % per === 0);
+  const n = seconds / per;
+  return `${n} ${name}${n === 1 ? "" : "s"}`;
+}

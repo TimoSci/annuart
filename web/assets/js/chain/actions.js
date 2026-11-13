@@ -12,11 +12,11 @@
 import {Contract, ZeroAddress, makeError} from "ethers";
 import {ensureChain, requireChain} from "./signer.js";
 import {getFhe} from "./fhe.js";
-import {ActionError, explain} from "../errors.js";
+import {ActionError, NO_PENDING_PAYOUT, explain} from "../errors.js";
 import {formatAmount} from "../units.js";
 import {nameToBytes32} from "../name.js";
 import {recentLogs} from "./logs.js";
-import {NFT_ABI, TOKEN_ABI, WETH_ABI} from "./abi.js";
+import {AUTO_NFT_ABI, NFT_ABI, TOKEN_ABI, WETH_ABI} from "./abi.js";
 
 const YEAR = 365 * 86400;
 
@@ -104,6 +104,7 @@ async function withSteps(onStep, firstStep, fn) {
 }
 
 const nftOf = (contract, runner) => new Contract(contract.nft, NFT_ABI, runner);
+const autoOf = (contract, runner) => new Contract(contract.nft, AUTO_NFT_ABI, runner);
 const tokenOf = (contract, runner) => new Contract(contract.token, TOKEN_ABI, runner);
 const wethOf = (contract, runner) => new Contract(contract.underlying, WETH_ABI, runner);
 
@@ -124,6 +125,10 @@ async function yearFromNow(session) {
 
 function requireKind(contract, kind, message) {
   if (contract.tokenKind !== kind) throw new Error(message);
+}
+
+function requireAuto(contract) {
+  if (contract.nftKind !== "auto") throw new ActionError("Only an ENFT with automatic payouts can do this.");
 }
 
 // ERC-7984 moves zero, without reverting, when asked for more than the
@@ -148,18 +153,24 @@ async function authoriseIfNeeded(steps, s, contract) {
 }
 
 // `name` is the optional public name; the empty string mints an unnamed ENFT.
-export function createEnft(session, contract, {to, amount, segments, start, topUps, name = "", symbol, decimals}, onStep) {
+// `auto`, {enabled, interval, fee}, gives an ENFT of the automatic-payout
+// contract its settings at mint; without it that contract mints with payouts
+// off. Any other contract refuses `auto`.
+export function createEnft(session, contract, {to, amount, segments, start, topUps, name = "", symbol, decimals, auto}, onStep) {
   return withSteps(onStep, "balance", async steps => {
-    // First, so a name the contract would refuse stops before anything is sent.
+    // First, so a name or settings the contract would refuse stop before anything is sent.
+    if (auto) requireAuto(contract);
     const nameWord = nameToBytes32(name);
     const s = await ensureChain(session);
     await checkBalance(steps, s, contract, {amount, symbol, decimals});
     await authoriseIfNeeded(steps, s, contract);
     const enc = await steps.step("encrypt", async () => (await getFhe(s)).encrypt64(contract.nft, s.address, amount));
-    const nft = nftOf(contract, s.signer);
+    const nft = auto ? autoOf(contract, s.signer) : nftOf(contract, s.signer);
     const schedule = segments.map(({duration, ratePerSec}) => ({duration, ratePerSec}));
     return steps.send("confirm", "mined",
-      () => nft.mint(to, enc.handle, enc.inputProof, schedule, start, topUps, nameWord),
+      () => auto
+        ? nft.mintAuto(to, enc.handle, enc.inputProof, schedule, start, topUps, nameWord, auto.enabled, auto.interval, auto.fee)
+        : nft.mint(to, enc.handle, enc.inputProof, schedule, start, topUps, nameWord),
       receipt => ({hash: receipt.hash, tokenId: findEvent(receipt, nft, "EndowmentMinted").args.tokenId}));
   });
 }
@@ -338,6 +349,81 @@ async function completeUnwrap(steps, s, contract, requestId) {
   return {hash: receipt.hash, wei};
 }
 
+// Automatic payouts, on an ENFT of the automatic-payout contract. `interval`
+// is in seconds, `fee` in wei of ETH.
+
+// Sets all three settings in one transaction (owner only): steps "confirm", "mined".
+export async function setAutoPayout(session, contract, {tokenId, enabled, interval, fee}, onStep) {
+  requireAuto(contract);
+  return single(session, onStep, s => autoOf(contract, s.signer).setAutoPayout(tokenId, enabled, interval, fee));
+}
+
+// Anyone may pay out an ENFT's claimable balance to its owner, in ETH, once
+// per interval: steps "requestPayout", "decrypt", "payOut", "mined". The fee
+// read now is passed as minFee, so an owner lowering it in between makes the
+// request fail rather than pay the caller less. Once the request is mined the
+// payout is pending until finished, by anyone: any later failure carries
+// err.resume = {action: "finishPayout", args: {tokenId}}. The result is
+// {hash, wei, feeWei, paidInWeth, note}; `wei` is the whole payout, fee included.
+export async function triggerPayout(session, contract, {tokenId}, onStep) {
+  requireAuto(contract);
+  return withSteps(onStep, "requestPayout", async steps => {
+    const s = await ensureChain(session);
+    const nft = autoOf(contract, s.signer);
+    await steps.sendAndWait("requestPayout",
+      async () => nft.requestPayout(tokenId, (await nft.autoPayoutOf(tokenId)).fee),
+      receipt => findEvent(receipt, nft, "PayoutRequested").args.requestId,
+      requestId => ({requestId}));
+    try {
+      return await completePayout(steps, s, contract, tokenId);
+    } catch (err) {
+      if (err && typeof err === "object") err.resume = {action: "finishPayout", args: {tokenId}};
+      throw err;
+    }
+  });
+}
+
+// Finishes a pending payout, by anyone: steps "decrypt", "payOut", "mined".
+// The result is triggerPayout's.
+export async function finishPayout(session, contract, {tokenId}, onStep) {
+  requireAuto(contract);
+  return withSteps(onStep, "decrypt", async steps => completePayout(steps, await ensureChain(session), contract, tokenId));
+}
+
+// The pending payout's amount is publicly decryptable under its request id;
+// the contract checks the proof itself, so this works whether or not someone
+// already finalised the unwrap on the wrapper.
+async function completePayout(steps, s, contract, tokenId) {
+  const nft = autoOf(contract, s.signer);
+  const {requester, clear, proof} = await steps.step("decrypt", async () => {
+    const {requestId, requester} = await nft.pendingPayoutOf(tokenId);
+    if (BigInt(requestId) === 0n) throw new ActionError(NO_PENDING_PAYOUT);
+    const {values, proof} = await (await getFhe(s)).publicDecrypt([requestId]);
+    const clear = values.get(requestId);
+    if (typeof clear !== "bigint") {
+      throw new ActionError("The payout amount could not be decrypted. Try finishing the payout again later.");
+    }
+    return {requester, clear, proof};
+  });
+  const paid = await steps.send("payOut", "mined", async () => {
+    // The contract refuses to send ETH when too little gas is left, and an
+    // estimate lands right on that edge: the margin keeps it clear.
+    const gas = await nft.finalizePayout.estimateGas(tokenId, clear, proof);
+    return nft.finalizePayout(tokenId, clear, proof, {gasLimit: gas + gas / 5n});
+  }, receipt => ({hash: receipt.hash, event: findEvent(receipt, nft, "PayoutPaid").args}));
+  const {amountWei: wei, feeWei, paidInWeth} = paid.event;
+  const requestedByCaller = requester.toLowerCase() === s.address.toLowerCase();
+  return {hash: paid.hash, wei, feeWei, paidInWeth, note: payoutNote({wei, feeWei, paidInWeth}, requestedByCaller)};
+}
+
+function payoutNote({wei, feeWei, paidInWeth}, requestedByCaller) {
+  if (wei === 0n) return "There was nothing to pay out.";
+  const amount = value => formatAmount(value, 18, {grouping: false});
+  let note = `${amount(wei - feeWei)} ${paidInWeth ? "WETH" : "ETH"} was paid to the owner.`;
+  if (feeWei !== 0n && requestedByCaller) note += ` ${amount(feeWei)} ETH went to you as the fee.`;
+  return note;
+}
+
 // WETH -> ETH, for WETH left behind by an unwrap whose withdraw failed.
 export async function withdrawWeth(session, contract, {wei}, onStep) {
   requireKind(contract, "wrapped", "Only a wrapped token has WETH to withdraw.");
@@ -434,6 +520,31 @@ export async function pendingUnwraps(session, contract) {
     storeUnwraps(key, storedUnwraps(key).filter(u => !gone.has(u.requestId)));
   }
   return pending;
+}
+
+// An ENFT's automatic payout settings and state, read in the background:
+// {enabled, interval, fee, lastRequestAt, due, pending, last}. lastRequestAt is
+// null before the first request; pending is null or {requestId, recipient,
+// requester, fee}; last is null or {paidAt, wei} for the last finished payout.
+// Times are unix seconds.
+export async function autoPayoutStatus(session, contract, tokenId) {
+  requireAuto(contract);
+  const s = await requireChain(session);
+  const nft = autoOf(contract, s.provider);
+  const [settings, due, pending, last] = await Promise.all([
+    nft.autoPayoutOf(tokenId), nft.payoutDue(tokenId), nft.pendingPayoutOf(tokenId), nft.lastPayoutOf(tokenId),
+  ]);
+  return {
+    enabled: settings.enabled,
+    interval: Number(settings.interval),
+    fee: settings.fee,
+    lastRequestAt: settings.lastRequestAt === 0n ? null : Number(settings.lastRequestAt),
+    due,
+    pending: BigInt(pending.requestId) === 0n ? null : {
+      requestId: pending.requestId, recipient: pending.recipient, requester: pending.requester, fee: pending.fee,
+    },
+    last: last.paidAt === 0n ? null : {paidAt: Number(last.paidAt), wei: last.amountWei},
+  };
 }
 
 export async function wethBalance(session, contract) {

@@ -48,3 +48,22 @@ test("explain passes an ActionError's message through as it is", async () => {
   assert.equal(err.name, "ActionError");
   assert.equal(explain(err), "Enter at least 1 unit.");
 });
+
+test("explain maps the automatic payout errors", () => {
+  const sentences = {
+    "0xa6db1522": "It is too soon for the next automatic payout.",       // PayoutTooSoon(uint64)
+    "0xc2cf8023": "Automatic payouts are switched off for this ENFT.",  // AutoPayoutDisabled()
+    "0xbef3c847": "A payout is already waiting to be finished.",        // PayoutPending()
+    "0xf39d2840": "This ENFT has paid out everything.",                 // NothingLeft()
+    "0xe52041f6": "The fee was lowered. Reload and try again.",         // FeeTooLow(uint128)
+    "0x5fabb610": "The interval must be between 1 hour and 365 days.",  // InvalidInterval()
+    "0x33f986e6": "Payouts have not started yet.",                      // ScheduleNotStarted()
+    "0x645f76c6": "This payout has already been finished.",             // NoPendingPayout()
+    "0x1c26714c": "The transaction ran out of gas. Try again.",         // InsufficientGas()
+  };
+  for (const [sel, msg] of Object.entries(sentences)) {
+    assert.equal(explain({ data: sel + "00".repeat(32) }), msg);
+    assert.equal(explain({ info: { error: { data: sel } } }), msg);
+  }
+  assert.equal(explainAmount(new ScheduleError("bad_interval"), "ETH"), "The interval must be between 1 hour and 365 days.");
+});

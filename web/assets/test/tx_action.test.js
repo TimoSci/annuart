@@ -17,7 +17,7 @@ function setup({action = "donate", extra = "", attrs = ""} = {}) {
   return {document, window, el: document.getElementById("tx")};
 }
 
-function controller(el, {run, finish, session = SESSION, confirm = () => true, timers = {}} = {}) {
+function controller(el, {run, finish, more = {}, session = SESSION, confirm = () => true, timers = {}} = {}) {
   const pushed = [];
   const events = [];
   const failures = [];
@@ -25,7 +25,7 @@ function controller(el, {run, finish, session = SESSION, confirm = () => true, t
     push: (name, payload) => pushed.push([name, payload]),
     session: () => session,
     contract: label => (label === "mock" ? CONTRACT : undefined),
-    actions: {donate: run, claim: run, transfer: run, unwrap: run, claimToEth: run, finaliseUnwrap: finish},
+    actions: {donate: run, claim: run, transfer: run, unwrap: run, claimToEth: run, finaliseUnwrap: finish, ...more},
     confirm,
     announce: () => events.push("annuart:tx"),
     failed: () => failures.push("annuart:tx-failed"),
@@ -657,4 +657,68 @@ test("the waiting timer does not outlive a failure", async () => {
   await ctl.run();
   assert.equal(timers.pending.size, 0);
   assert.doesNotMatch(el.textContent, WAITING);
+});
+
+test("a trigger payout that fails after its request retries by finishing the payout, not by requesting again", async () => {
+  const {el} = setup({action: "triggerPayout"});
+  let triggers = 0;
+  const finishes = [];
+  let seen;
+  const note = "0.0000001 ETH was paid to the owner. 0.00000001 ETH went to you as the fee.";
+  const {ctl, pushed} = controller(el, {more: {
+    triggerPayout: async (_s, _c, _a, onStep) => {
+      triggers += 1;
+      seen = states(el);
+      onStep("requestPayout", "done", {requestId: "0x" + "11".repeat(32)});
+      onStep("decrypt", "done");
+      onStep("payOut", "failed", "You cancelled the request in your wallet.");
+      throw Object.assign(new Error("rejected"), {sentHash: HASH, resume: {action: "finishPayout", args: {tokenId: 7n}}});
+    },
+    finishPayout: async (_s, c, a, onStep) => {
+      finishes.push({c, a});
+      for (const id of ["decrypt", "payOut", "mined"]) onStep(id, "done");
+      return {hash: "0xpaid", wei: 110000000000n, feeWei: 10000000000n, paidInWeth: false, note};
+    },
+  }});
+  await ctl.run();
+  assert.deepEqual(seen, [["requestPayout", "waiting"], ["decrypt", "waiting"], ["payOut", "waiting"], ["mined", "waiting"]]);
+  assert.match(el.querySelector("li[data-step=requestPayout]").textContent, /^Request the payout: done$/);
+  assert.match(el.querySelector("li[data-step=payOut]").textContent, /^Pay out: failed/);
+  const retry = el.querySelector("button[data-role=retry]");
+  assert.equal(retry.textContent, "Try again");
+  assert.equal(el.querySelector("button[data-role=start-over]"), null);
+  retry.click();
+  await ctl.pending;
+  assert.equal(triggers, 1, "the payout is not requested again");
+  assert.deepEqual(finishes, [{c: CONTRACT, a: {tokenId: 7n}}]);
+  assert.deepEqual(states(el), [["decrypt", "done"], ["payOut", "done"], ["mined", "done"]]);
+  assert.equal(el.querySelector(".tx-message").textContent, note);
+  assert.deepEqual(pushed, [["tx:confirmed", {action: "finishPayout", label: "mock", tokenId: "7", hash: "0xpaid"}]]);
+  assert.deepEqual(Object.keys(pushed[0][1]), ["action", "label", "tokenId", "hash"]);
+  assert.doesNotMatch(JSON.stringify(pushed), /110000000000|10000000000|0\.0000001/);
+});
+
+test("the request payout and pay out steps count as sent once done", async () => {
+  const {el} = setup({action: "triggerPayout"});
+  const {ctl} = controller(el, {more: {
+    triggerPayout: async (_s, _c, _a, onStep) => {
+      onStep("requestPayout", "done", {hash: HASH});
+      onStep("decrypt", "done");
+      onStep("payOut", "done", {hash: HASH});
+      onStep("mined", "active");
+      throw new Error("reverted");
+    },
+  }});
+  await ctl.run();
+  assert.ok(el.querySelector("button[data-role=start-over]"));
+});
+
+test("set automatic payouts and finish payout show their steps", async () => {
+  for (const [action, plan] of [["setAutoPayout", ["confirm", "mined"]], ["finishPayout", ["decrypt", "payOut", "mined"]]]) {
+    const {el} = setup({action});
+    let seen;
+    const {ctl} = controller(el, {more: {[action]: async () => { seen = states(el); return {hash: "0x1"}; }}});
+    await ctl.run();
+    assert.deepEqual(seen, plan.map(id => [id, "waiting"]), action);
+  }
 });

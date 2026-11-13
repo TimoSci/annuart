@@ -24,11 +24,14 @@ const LABELS = {
   decrypt: "Wait for decryption",
   finalise: "Finalise unwrap",
   withdraw: "Convert WETH to ETH",
+  requestPayout: "Request the payout",
+  payOut: "Pay out",
 };
 
 const SEND = ["confirm", "mined"];
 const WITH_ENCRYPT = ["balance", "authorise", "encrypt", "confirm", "mined"];
 const FINISH = ["decrypt", "finalise", "withdraw", "mined"];
+const FINISH_PAYOUT = ["decrypt", "payOut", "mined"];
 // The steps each action reports, in order, so they can all show "waiting".
 const PLANS = {
   createEnft: WITH_ENCRYPT,
@@ -37,12 +40,15 @@ const PLANS = {
   unwrap: ["balance", "encrypt", "request", ...FINISH],
   claimToEth: ["claim", "request", ...FINISH],
   finaliseUnwrap: FINISH,
+  triggerPayout: ["requestPayout", ...FINISH_PAYOUT],
+  finishPayout: FINISH_PAYOUT,
 };
 // Steps that are done once their transaction has been broadcast.
-const SENDING = new Set(["authorise", "confirm", "claim", "deposit", "approve", "wrap", "request", "finalise", "withdraw"]);
+const SENDING = new Set(["authorise", "confirm", "claim", "deposit", "approve", "wrap", "request", "finalise", "withdraw", "requestPayout", "payOut"]);
 
 // Actions that make an unwrap request: once it is on chain, a failure is
 // recovered by finishing that request, never by running the action again.
+// Other actions say how to finish themselves with err.resume.
 const UNWRAPPING = new Set(["unwrap", "claimToEth"]);
 
 // A transaction pending this long may have been dropped by the wallet.
@@ -184,8 +190,9 @@ export class TxActionController {
     this.running = false;
     this.pending = null;
     // After a failure: {kind: "retry"} reruns at the next click, {kind:
-    // "start-over"} only once confirmed. `finishing` is the request id of an
-    // unwrap that failed after its request was mined: the next run finishes it.
+    // "start-over"} only once confirmed. `finishing`, {action, args}, is what
+    // finishes an action that failed after a request it made was mined (an
+    // unwrap, or a payout): the next run runs that instead.
     this.recovery = null;
     this.finishing = null;
 
@@ -278,7 +285,7 @@ export class TxActionController {
     if (this.running) return this.pending;
     if (this.recovery?.kind === "start-over" && !this.deps.confirm(START_OVER_QUESTION)) return this.pending;
     this.pending = this.finishing
-      ? this.execute("finaliseUnwrap", {requestId: this.finishing})
+      ? this.execute(this.finishing.action, this.finishing.args)
       : this.attempt();
     return this.pending;
   }
@@ -337,8 +344,11 @@ export class TxActionController {
       this.recovery = this.stepList.fail(err);
       // An unwrap whose request is on chain is finished from then on, never
       // requested again: finishing sends nothing the request already did.
-      if (UNWRAPPING.has(action) && err?.requestId) {
-        this.finishing = err.requestId;
+      const resume = err?.resume ?? (UNWRAPPING.has(action) && err?.requestId
+        ? {action: "finaliseUnwrap", args: {requestId: err.requestId}}
+        : null);
+      if (resume) {
+        this.finishing = resume;
         this.recovery = this.stepList.offer({kind: "retry"});
       }
       this.deps.failed?.();

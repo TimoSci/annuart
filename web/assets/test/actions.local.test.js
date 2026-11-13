@@ -761,3 +761,173 @@ test("claimToEth refuses a token that is not wrapped ETH", {skip}, async () => {
   await assert.rejects(() => actions.claimToEth(alice, mock, {tokenId: 1n}, steps()),
     /Only payouts in wrapped ETH can be converted to ETH\./);
 });
+
+// Automatic payouts, on the `auto` contract (cWETH, shared with `wrapped`).
+// Dave creates each ENFT, carol owns it, bob and alice trigger and finish
+// payouts. Every test uses a fresh ENFT, so the one-hour minimum interval
+// between payouts never carries over from an earlier run.
+const autoNft = chain.contracts.find(c => c.label === "auto");
+const autoSkip = skip || (!autoNft ? "no auto entry in the deployment file: deploy the automatic-payout ENFT" : false);
+if (!skip && autoSkip) console.log(`# automatic payout tests skipped: ${autoSkip}`);
+const HOUR = 3600;
+const NOT_AUTO = /Only an ENFT with automatic payouts can do this\./;
+
+async function autoEnft(auto, extra = {}) {
+  await actions.wrap(dave, wrapped, {wei: 2_000n * UNIT}, steps());
+  const {tokenId} = await actions.createEnft(dave, autoNft,
+    createArgs(carol.address, {...WRAPPED_UNITS, auto, ...extra}), steps());
+  return tokenId;
+}
+
+const eth = wei => formatAmount(wei, 18, {grouping: false});
+
+test("create with automatic payouts on reports the settings through autoPayoutStatus", {skip: autoSkip}, async () => {
+  const tokenId = await autoEnft({enabled: true, interval: 2 * HOUR, fee: 5n * UNIT});
+  const status = await actions.autoPayoutStatus(bob, autoNft, tokenId);
+  assert.deepEqual(status, {
+    enabled: true, interval: 2 * HOUR, fee: 5n * UNIT, lastRequestAt: null, due: true, pending: null, last: null,
+  });
+});
+
+test("createEnft without auto on the auto contract mints with payouts off", {skip: autoSkip}, async () => {
+  const tokenId = await autoEnft(undefined);
+  const status = await actions.autoPayoutStatus(carol, autoNft, tokenId);
+  assert.deepEqual(status, {
+    enabled: false, interval: 86400, fee: 0n, lastRequestAt: null, due: false, pending: null, last: null,
+  });
+});
+
+test("triggerPayout by another account pays the owner in ETH and the caller the fee; a second at once is too soon", {skip: autoSkip}, async () => {
+  const fee = 5n * UNIT;
+  const tokenId = await autoEnft({enabled: true, interval: HOUR, fee});
+  await increaseTime(100);
+  const block = await provider.getBlockNumber();
+  const owner = await actions.ethBalance(carol);
+  const caller = await actions.ethBalance(bob);
+
+  const st = steps();
+  const result = await actions.triggerPayout(bob, autoNft, {tokenId}, st);
+  assert.deepEqual(st.ids(), ["requestPayout", "decrypt", "payOut", "mined"]);
+  assert.ok(st.finalStates().every(s => s === "done"));
+  assert.deepEqual(st.sentLog.map(e => e.id), ["requestPayout", "mined"]);
+  assert.match(st.detail("requestPayout").requestId, /^0x[0-9a-f]{64}$/);
+  assert.match(result.hash, /^0x[0-9a-f]{64}$/);
+  assert.ok(result.wei >= 100n * UNIT && result.wei <= 115n * UNIT, `paid ${result.wei}`);
+  assert.equal(result.feeWei, fee);
+  assert.equal(result.paidInWeth, false);
+  assert.equal(result.note,
+    `${eth(result.wei - fee)} ETH was paid to the owner. ${eth(fee)} ETH went to you as the fee.`);
+
+  assert.equal(await actions.ethBalance(carol), owner + result.wei - result.feeWei);
+  const gas = await feesPaid(bob.address, block, await provider.getBlockNumber());
+  assert.equal(await actions.ethBalance(bob), caller + result.feeWei - gas);
+
+  const status = await actions.autoPayoutStatus(bob, autoNft, tokenId);
+  assert.equal(status.due, false);
+  assert.equal(status.pending, null);
+  assert.equal(status.last.wei, result.wei);
+  assert.ok(status.last.paidAt > 0 && status.lastRequestAt > 0);
+
+  const again = steps();
+  await assert.rejects(() => actions.triggerPayout(bob, autoNft, {tokenId}, again),
+    err => err.resume === undefined && explain(err) === "It is too soon for the next automatic payout.");
+  assert.equal(again.state("requestPayout"), "failed");
+  assert.equal(again.detail("requestPayout"), "It is too soon for the next automatic payout.");
+});
+
+test("triggerPayout with the second transaction rejected can be finished by a third account; the fee is capped at a tenth", {skip: autoSkip}, async () => {
+  const tokenId = await autoEnft({enabled: true, interval: HOUR, fee: ETHER});
+  await increaseTime(100);
+  const block = await provider.getBlockNumber();
+  const owner = await actions.ethBalance(carol);
+  const requester = await actions.ethBalance(bob);
+
+  const st = steps();
+  await assert.rejects(() => actions.triggerPayout(rejectingNth(bob, 2), autoNft, {tokenId}, st),
+    err => {
+      assert.deepEqual(err.resume, {action: "finishPayout", args: {tokenId}});
+      return explain(err) === "You cancelled the request in your wallet.";
+    });
+  assert.equal(st.state("requestPayout"), "done");
+  assert.equal(st.state("payOut"), "failed");
+
+  const {pending, due} = await actions.autoPayoutStatus(alice, autoNft, tokenId);
+  assert.equal(due, false);
+  assert.match(pending.requestId, /^0x[0-9a-f]{64}$/);
+  assert.equal(pending.recipient, carol.address);
+  assert.equal(pending.requester, bob.address);
+  assert.equal(pending.fee, ETHER);
+
+  const fin = steps();
+  const result = await actions.finishPayout(alice, autoNft, {tokenId}, fin);
+  assert.deepEqual(fin.ids(), ["decrypt", "payOut", "mined"]);
+  assert.ok(fin.finalStates().every(s => s === "done"));
+  assert.ok(result.wei >= 100n * UNIT && result.wei <= 120n * UNIT, `paid ${result.wei}`);
+  assert.equal(result.feeWei, result.wei / 10n);
+  // Alice did not request the payout, so the fee is not hers and the note says nothing of it.
+  assert.equal(result.note, `${eth(result.wei - result.feeWei)} ETH was paid to the owner.`);
+  assert.equal(await actions.ethBalance(carol), owner + result.wei - result.feeWei);
+  const gas = await feesPaid(bob.address, block, await provider.getBlockNumber());
+  assert.equal(await actions.ethBalance(bob), requester + result.feeWei - gas);
+  assert.equal((await actions.autoPayoutStatus(alice, autoNft, tokenId)).pending, null);
+
+  // Someone else finished it first: refused before asking for a decryption.
+  const late = steps();
+  await assert.rejects(() => actions.finishPayout(alice, autoNft, {tokenId}, late),
+    err => explain(err) === "This payout has already been finished." && err.sentHash === undefined);
+  assert.equal(late.state("decrypt"), "failed");
+  assert.deepEqual(late.ids(), ["decrypt"]);
+});
+
+test("setAutoPayout: the owner changes the settings; a non-owner or a bad interval is refused", {skip: autoSkip}, async () => {
+  const tokenId = await autoEnft({enabled: true, interval: HOUR, fee: 0n});
+
+  const st = steps();
+  await assert.rejects(() => actions.setAutoPayout(bob, autoNft, {tokenId, enabled: false, interval: HOUR, fee: 0n}, st),
+    err => explain(err) === "Only the owner can do this.");
+  assert.equal(st.state("confirm"), "failed");
+
+  await assert.rejects(() => actions.setAutoPayout(carol, autoNft, {tokenId, enabled: true, interval: HOUR - 1, fee: 0n}, steps()),
+    err => explain(err) === "The interval must be between 1 hour and 365 days.");
+
+  const ok = steps();
+  const {hash} = await actions.setAutoPayout(carol, autoNft, {tokenId, enabled: false, interval: 7 * 86400, fee: UNIT}, ok);
+  assert.match(hash, /^0x[0-9a-f]{64}$/);
+  assert.deepEqual(ok.ids(), ["confirm", "mined"]);
+  const status = await actions.autoPayoutStatus(bob, autoNft, tokenId);
+  assert.equal(status.enabled, false);
+  assert.equal(status.interval, 7 * 86400);
+  assert.equal(status.fee, UNIT);
+  assert.equal(status.due, false);
+
+  await assert.rejects(() => actions.triggerPayout(bob, autoNft, {tokenId}, steps()),
+    err => explain(err) === "Automatic payouts are switched off for this ENFT.");
+});
+
+test("the automatic payout actions refuse a contract without automatic payouts", {skip: autoSkip}, async () => {
+  await assert.rejects(() => actions.setAutoPayout(carol, wrapped, {tokenId: 1n, enabled: true, interval: HOUR, fee: 0n}, steps()), NOT_AUTO);
+  await assert.rejects(() => actions.triggerPayout(bob, wrapped, {tokenId: 1n}, steps()), NOT_AUTO);
+  await assert.rejects(() => actions.finishPayout(bob, wrapped, {tokenId: 1n}, steps()), NOT_AUTO);
+  await assert.rejects(() => actions.autoPayoutStatus(bob, wrapped, 1n), NOT_AUTO);
+  const st = steps();
+  await assert.rejects(() => actions.createEnft(dave, wrapped,
+    createArgs(dave.address, {...WRAPPED_UNITS, auto: {enabled: true, interval: HOUR, fee: 0n}}), st), NOT_AUTO);
+  assert.equal(st.state("balance"), "failed");
+});
+
+test("triggerPayout after the owner claimed everything pays nothing and no fee", {skip: autoSkip}, async () => {
+  const tokenId = await autoEnft({enabled: true, interval: HOUR, fee: UNIT});
+  // Past the schedule's end, so the owner's claim takes everything, the leftover too.
+  await increaseTime(1_100);
+  await actions.claim(carol, autoNft, {tokenId}, steps());
+  const owner = await actions.ethBalance(carol);
+
+  const result = await actions.triggerPayout(bob, autoNft, {tokenId}, steps());
+  assert.equal(result.wei, 0n);
+  assert.equal(result.feeWei, 0n);
+  assert.equal(result.note, "There was nothing to pay out.");
+  assert.equal(await actions.ethBalance(carol), owner);
+  const status = await actions.autoPayoutStatus(bob, autoNft, tokenId);
+  assert.equal(status.pending, null);
+  assert.deepEqual(status.last, {paidAt: status.last.paidAt, wei: 0n});
+});
