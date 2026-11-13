@@ -150,6 +150,34 @@ td.n, th.n { text-align: right; padding-right: 0; }
 .tx ol.steps li[data-state=waiting] { opacity: .5; }
 .tx ol.steps li[data-state=active], .tx ol.steps li[data-state=failed] { color: var(--hot-fg); }
 
+/* Automatic payouts: the badge on lists and the ENFT page, and the ENFT
+   page's panel. The badge is outlined, never filled: brightness is activity. */
+.badge {
+  display: inline-block; font-size: 11px; letter-spacing: .04em; line-height: 1.5;
+  border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; margin-left: 6px;
+  vertical-align: middle; white-space: nowrap;
+}
+.auto-payout { margin-top: 14px; }
+.auto-payout .auto-state { margin: 0 0 10px; }
+.auto-payout .auto-state:empty { display: none; }
+.auto-payout [data-role=trigger-note] { margin: 0 0 8px; }
+.auto-payout [hidden] { display: none; }
+.auto-settings { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
+.auto-settings h3 { font-size: 13px; font-weight: 500; margin: 0 0 10px; }
+.auto-settings .field { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; }
+.auto-settings .field > label { min-width: 150px; opacity: .75; }
+@media (max-width: 760px) { .auto-settings .field > label { flex-basis: 100%; min-width: 0; } }
+.auto-settings .note { margin: -4px 0 10px; }
+.auto-settings input[type=text], .auto-settings select {
+  background: transparent; color: var(--hot-fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 5px 10px; font: inherit; max-width: 100%;
+}
+.auto-settings input[data-role=set-interval] { width: 5em; }
+.auto-settings input[data-role=set-fee] { width: 9em; }
+.auto-settings select option { background: var(--rest-bg); }
+.auto-settings .amount-echo { font-size: 12px; }
+.auto-settings .amount-echo:empty { display: none; }
+
 /* Create ENFT form */
 .create { display: flex; flex-direction: column; gap: 12px; max-width: 760px; }
 .create .field { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; }

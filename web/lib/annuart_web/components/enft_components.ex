@@ -1,7 +1,7 @@
 defmodule AnnuartWeb.EnftComponents do
   @moduledoc """
   Display components for ENFTs: identity (name, number and creator picture),
-  schedule chart and table, addresses and dates.
+  the automatic payouts badge, schedule chart and table, addresses and dates.
   """
   use Phoenix.Component
 
@@ -34,6 +34,20 @@ defmodule AnnuartWeb.EnftComponents do
     </span>
     """
   end
+
+  @doc """
+  Marks an ENFT whose automatic payouts are switched on. Renders nothing
+  otherwise, including for an ENFT of a standard contract (`auto_enabled` nil).
+  """
+  attr :enft, :map, required: true
+
+  def auto_badge(%{enft: %{auto_enabled: true}} = assigns) do
+    ~H"""
+    <span class="badge" data-role="auto-badge" title="Automatic payouts are on">Automatic</span>
+    """
+  end
+
+  def auto_badge(assigns), do: ~H""
 
   @doc """
   The creator's address as a small picture (see `Annuart.Randomart`): squares

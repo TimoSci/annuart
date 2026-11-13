@@ -9,6 +9,11 @@ defmodule AnnuartWeb.EnftLive do
 
   Indexed data comes from the store; `last_accrual_at`, `settled` and the token's
   metadata are read live and are `nil` when the chain cannot be read.
+
+  For an automatic payout contract the page also shows the indexed automatic
+  payout settings and the paid automatic payouts. Their amounts and fees are
+  public chain data, the one kind of amount this page shows. Whether a payout is
+  due or pending is read in the browser by the `AutoPayout` hook, not from here.
   """
   use AnnuartWeb, :live_view
 
@@ -18,6 +23,7 @@ defmodule AnnuartWeb.EnftLive do
   alias AnnuartWeb.{EnftComponents, Layouts, TxComponents}
 
   @zero_address "0x0000000000000000000000000000000000000000"
+  @eth_decimals 18
 
   def mount(%{"label" => label, "id" => id}, _session, socket) do
     with {token_id, ""} <- Integer.parse(id),
@@ -73,16 +79,76 @@ defmodule AnnuartWeb.EnftLive do
         raise AnnuartWeb.NotFoundError
 
       enft ->
+        transfers = Enum.reject(Enfts.history(enft), &(&1.from == @zero_address))
+        auto? = contract.nft_kind == :auto
+
         assign(socket,
           enft: enft,
           periods: periods(enft),
-          transfers: Enum.reject(Enfts.history(enft), &(&1.from == @zero_address)),
+          auto?: auto?,
+          last_payout: if(auto?, do: Enfts.last_payout(enft)),
+          history: history(transfers, if(auto?, do: Enfts.list_payouts(enft), else: [])),
           token_meta: ok_or_nil(Reader.token_meta(contract.token)),
           last_accrual_at: ok_or_nil(Reader.last_accrual_at(contract.nft, token_id)),
           settled: ok_or_nil(Reader.settled(contract.nft, token_id))
         )
     end
   end
+
+  # Transfers and paid automatic payouts, oldest first. A pending payout is not
+  # history yet. Sorting is stable, so transfers keep their block order.
+  defp history(transfers, payouts) do
+    paid = for %{paid_at: %DateTime{} = at} = p <- payouts, do: {at, {:payout, p}}
+
+    (Enum.map(transfers, &{&1.at, {:transfer, &1}}) ++ paid)
+    |> Enum.sort_by(&elem(&1, 0), DateTime)
+    |> Enum.map(&elem(&1, 1))
+  end
+
+  # Wei as ETH, trimmed: "0.5", "1.25". Automatic payout amounts only.
+  defp eth(wei), do: Schedule.format_amount(wei, @eth_decimals)
+
+  # The largest unit that divides the interval evenly, as the browser words it.
+  @interval_units [
+    {"week", 604_800},
+    {"day", 86_400},
+    {"hour", 3600},
+    {"minute", 60},
+    {"second", 1}
+  ]
+  defp interval_text(seconds) do
+    {name, size} = Enum.find(@interval_units, fn {_, size} -> rem(seconds, size) == 0 end)
+
+    case div(seconds, size) do
+      1 -> "1 #{name}"
+      n -> "#{n} #{name}s"
+    end
+  end
+
+  # "Automatic payout of 0.5 ETH (paid in WETH), fee 0.01 ETH, triggered by": the
+  # whole payout, fee included, the fee the requester received when there was one,
+  # and, when the request was indexed, the lead-in to the requester's address.
+  defp payout_text(p) do
+    "Automatic payout of #{eth(p.amount_wei)} ETH" <>
+      if(p.paid_in_weth, do: " (paid in WETH)", else: "") <>
+      if(p.fee_wei > 0, do: ", fee #{eth(p.fee_wei)} ETH", else: "") <>
+      if(p.requester, do: ", triggered by", else: "")
+  end
+
+  defp auto_status(%{auto_enabled: true}), do: "On"
+  defp auto_status(%{auto_enabled: false}), do: "Off"
+  defp auto_status(_enft), do: "—"
+
+  defp auto_interval(%{auto_interval: seconds}) when is_integer(seconds) and seconds > 0,
+    do: "At most once every " <> interval_text(seconds)
+
+  defp auto_interval(_enft), do: "—"
+
+  defp auto_fee(%{auto_fee: nil}), do: "—"
+  defp auto_fee(%{auto_fee: 0}), do: "No fee"
+  defp auto_fee(%{auto_fee: fee}), do: "#{eth(fee)} ETH per payout, never more than 10% of it"
+
+  defp owner?(address, enft), do: address != nil and address == enft.owner
 
   defp periods(%{schedule: nil}), do: nil
 
@@ -120,6 +186,7 @@ defmodule AnnuartWeb.EnftLive do
       <h1><EnftComponents.identity enft={@enft} unnamed="ENFT" size={:large} /></h1>
       <p class="sub">
         {@label} · created <EnftComponents.datetime value={@enft.created_at} format={:date} />
+        <EnftComponents.auto_badge :if={@auto?} enft={@enft} />
       </p>
 
       <div class="grid">
@@ -158,6 +225,42 @@ defmodule AnnuartWeb.EnftLive do
             </div>
           </div>
 
+          <div
+            :if={@auto?}
+            class="area panel"
+            id="panel-auto"
+            data-activity-id="panel:enft:auto"
+          >
+            <h2>Automatic payouts</h2>
+            <div class="kv">
+              <span class="k">Status</span>
+              <span id="auto-status">{auto_status(@enft)}</span>
+              <span class="k">Interval</span>
+              <span id="auto-interval">{auto_interval(@enft)}</span>
+              <span class="k">Fee</span>
+              <span id="auto-fee">{auto_fee(@enft)}</span>
+              <span class="k">Last automatic payout</span>
+              <span id="auto-last">
+                <%= if @last_payout do %>
+                  {eth(@last_payout.amount_wei)} ETH on
+                  <EnftComponents.datetime value={@last_payout.paid_at} />
+                <% else %>
+                  None yet
+                <% end %>
+              </span>
+            </div>
+            <div
+              id="auto-payout"
+              class="auto-payout"
+              phx-hook="AutoPayout"
+              phx-update="ignore"
+              data-label={@label}
+              data-token-id={@token_id}
+              data-owner={if(owner?(@address, @enft), do: "true", else: "false")}
+            >
+            </div>
+          </div>
+
           <div class="area panel" data-activity-id="panel:enft:schedule">
             <h2>Payout schedule</h2>
             <%= if @periods do %>
@@ -189,17 +292,30 @@ defmodule AnnuartWeb.EnftLive do
                   <td><EnftComponents.datetime value={@enft.created_at} format={:date} /></td>
                   <td>Created by <EnftComponents.address value={@enft.creator} /></td>
                 </tr>
-                <tr :for={t <- @transfers}>
-                  <td><EnftComponents.datetime value={t.at} format={:date} /></td>
-                  <td>Transferred to <EnftComponents.address value={t.to} /></td>
-                </tr>
+                <%= for entry <- @history do %>
+                  <%= case entry do %>
+                    <% {:transfer, t} -> %>
+                      <tr>
+                        <td><EnftComponents.datetime value={t.at} format={:date} /></td>
+                        <td>Transferred to <EnftComponents.address value={t.to} /></td>
+                      </tr>
+                    <% {:payout, p} -> %>
+                      <tr data-role="auto-payout-entry">
+                        <td><EnftComponents.datetime value={p.paid_at} format={:date} /></td>
+                        <td>
+                          {payout_text(p)}
+                          <EnftComponents.address :if={p.requester} value={p.requester} />
+                        </td>
+                      </tr>
+                  <% end %>
+                <% end %>
               </tbody>
             </table>
           </div>
         </div>
         <div class="col" id="enft-side">
           <div
-            :if={@address != nil and @address == @enft.owner}
+            :if={owner?(@address, @enft)}
             class="area panel"
             id="panel-yours"
             data-activity-id="panel:enft:yours"

@@ -71,7 +71,10 @@ defmodule AnnuartWeb.MyEnftsLive do
           <span>
             Created <EnftComponents.datetime value={e.created_at} format={:date} />
           </span>
-          <span>{if e.top_ups_allowed, do: "Donations on", else: "Donations off"}</span>
+          <span>
+            {if e.top_ups_allowed, do: "Donations on", else: "Donations off"}
+            <EnftComponents.auto_badge enft={e} />
+          </span>
           <span
             id={"secret-distribution-#{e.label}-#{e.token_id}"}
             phx-hook="SecretValue"

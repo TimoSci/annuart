@@ -139,7 +139,10 @@ defmodule AnnuartWeb.BrowseLive do
           <span><EnftComponents.datetime value={e.created_at} format={:date} /></span>
           <span><EnftComponents.address value={e.owner} /></span>
           <span>{summary(e, @metas[e.label])}</span>
-          <span>{if e.top_ups_allowed, do: "Donations on", else: "Donations off"}</span>
+          <span>
+            {if e.top_ups_allowed, do: "Donations on", else: "Donations off"}
+            <EnftComponents.auto_badge enft={e} />
+          </span>
         </.link>
       </div>
     </Layouts.app>

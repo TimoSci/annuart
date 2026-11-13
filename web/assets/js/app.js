@@ -29,6 +29,7 @@ import {TxAction} from "./hooks/tx_action.js"
 import {SecretValue} from "./hooks/secret_value.js"
 import {CreateForm} from "./hooks/create_form.js"
 import {Tokens} from "./hooks/tokens.js"
+import {AutoPayout} from "./hooks/auto_payout.js"
 import {initActivity} from "./hooks/activity.js"
 import * as signer from "./chain/signer.js"
 
@@ -36,7 +37,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, Wallet, TxAction, SecretValue, CreateForm, Tokens},
+  hooks: {...colocatedHooks, Wallet, TxAction, SecretValue, CreateForm, Tokens, AutoPayout},
 })
 
 // Show progress bar on live navigation and form submits

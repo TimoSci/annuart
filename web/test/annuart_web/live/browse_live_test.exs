@@ -259,4 +259,34 @@ defmodule AnnuartWeb.BrowseLiveTest do
     assert html =~ ~s(data-activity-id="enft:mock:1")
     assert html =~ ~s(data-activity-id="enft:mock:2")
   end
+
+  test "marks only ENFTs with automatic payouts on", %{conn: conn} do
+    mint(token_id: 1)
+    mint(token_id: 2)
+    mint(token_id: 3)
+
+    :ok =
+      Annuart.Enfts.record_auto_settings(%{
+        nft: nft(),
+        token_id: 2,
+        enabled: true,
+        interval: 3_600,
+        fee: 0
+      })
+
+    :ok =
+      Annuart.Enfts.record_auto_settings(%{
+        nft: nft(),
+        token_id: 3,
+        enabled: false,
+        interval: 3_600,
+        fee: 0
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/")
+    row = &~s(a[data-activity-id="enft:mock:#{&1}"] [data-role=auto-badge])
+    assert has_element?(view, row.(2), "Automatic")
+    refute has_element?(view, row.(1))
+    refute has_element?(view, row.(3))
+  end
 end

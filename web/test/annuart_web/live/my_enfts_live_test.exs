@@ -162,4 +162,21 @@ defmodule AnnuartWeb.MyEnftsLiveTest do
     html = render(view)
     refute html =~ ~s(href="/enft/mock/1")
   end
+
+  test "marks only ENFTs with automatic payouts on", %{conn: conn} do
+    :ok =
+      Annuart.Enfts.record_auto_settings(%{
+        nft: nft(),
+        token_id: 3,
+        enabled: true,
+        interval: 3_600,
+        fee: 0
+      })
+
+    {:ok, view, _} = live(conn, ~p"/mine")
+    render_hook(view, "wallet:changed", %{"address" => @alice})
+
+    assert has_element?(view, "#mine-mock-3 [data-role=auto-badge]", "Automatic")
+    refute has_element?(view, "#mine-mock-1 [data-role=auto-badge]")
+  end
 end
