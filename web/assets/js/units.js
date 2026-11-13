@@ -26,7 +26,9 @@ const PER_SECONDS = { day: 86400n, month: 2592000n, year: 31536000n };
 // or fifteen hundred, so any separator is refused rather than guessed at.
 const SEPARATED = /^-?[\d.,\s'\u2019_]*\d[\d.,\s'\u2019_]*$/;
 
-export function parseAmount(text, decimals) {
+// `max` is the largest value accepted, in the smallest unit; a confidential
+// amount is a uint64.
+export function parseAmount(text, decimals, max = U64_MAX) {
   const trimmed = String(text ?? "").trim();
   if (trimmed === "") throw new AmountError("empty", decimals);
   const m = /^(-)?(\d*)(?:\.(\d*))?$/.exec(trimmed);
@@ -41,7 +43,7 @@ export function parseAmount(text, decimals) {
   const units = BigInt((whole || "0") + frac.slice(0, decimals).padEnd(decimals, "0"));
   if (units === 0n) throw new AmountError("zero", decimals);
   if (neg) throw new AmountError("negative", decimals);
-  if (units > U64_MAX) throw new AmountError("too_large", decimals);
+  if (units > max) throw new AmountError("too_large", decimals);
   return units;
 }
 

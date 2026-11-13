@@ -722,3 +722,19 @@ test("set automatic payouts and finish payout show their steps", async () => {
     assert.deepEqual(seen, plan.map(id => [id, "waiting"]), action);
   }
 });
+
+test("ETH to wrap is limited by the wrapped token's uint64 balance, not by a uint64 of wei", () => {
+  // setup's token has 2 decimals, so one unit is 1e16 wei.
+  const {el, window} = setup({action: "wrap", extra: `<input data-arg="wei" value="">`});
+  controller(el, {run: async () => ({}), more: {wrap: async () => ({})}});
+  const input = el.querySelector("[data-arg=wei]");
+  const echo = () => el.querySelector(".amount-echo").textContent;
+  const type = text => { input.value = text; input.dispatchEvent(new window.Event("input", {bubbles: true})); };
+  // More than 18.44 ETH, which is where a uint64 of wei ends.
+  type("100");
+  assert.equal(echo(), "= 100 ETH");
+  type("184467440737095516.15");
+  assert.equal(echo(), "= 184467440737095516.15 ETH");
+  type("184467440737095516.16");
+  assert.equal(echo(), "That is more ETH than can be wrapped.");
+});

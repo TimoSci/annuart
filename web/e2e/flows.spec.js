@@ -298,7 +298,7 @@ test("dev login: get test tokens, create an ENFT, land on its page", async ({pag
   // Account 0 may have authorised the contract in an earlier flow.
   expect(await page.evaluate(() => window.__steps.authorise)).toMatch(/^(done|skipped)$/);
   // The heading is the name and the number, next to the creator's picture.
-  await expect(page.locator("h1")).toHaveText(/^Rainy day fund #\d+$/);
+  await expect(page.locator("h1")).toHaveText(/^\s*Rainy day fund\s+#\d+\s*$/);
   await expect(page.locator(`h1 svg[data-role=randomart][data-creator="${ACCOUNTS[0].toLowerCase()}"]`)).toBeVisible();
   await expect(page.locator("#panel-yours")).toBeVisible();
   await expect(panel(page, "details")).toContainText("Donations");

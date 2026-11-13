@@ -5,7 +5,7 @@
 // Amounts are read from [data-arg] inputs, parsed here and handed to the
 // action. They never leave the browser: the one event pushed to the server,
 // "tx:confirmed", carries {action, label, tokenId, hash} and nothing else.
-import {parseAmount, formatAmount} from "../units.js";
+import {parseAmount, formatAmount, U64_MAX} from "../units.js";
 import {explain, explainAmount} from "../errors.js";
 import {current, chainInfo} from "../chain/signer.js";
 import * as actions from "../chain/actions.js";
@@ -238,11 +238,22 @@ export class TxActionController {
     return [Number(decimals), this.symbol];
   }
 
+  // The most ETH, in wei, that fits the wrapped token: its balances are uint64
+  // in the token's own decimals, fewer than ETH's 18.
+  maxWei() {
+    const decimals = Number(this.el.dataset.decimals);
+    if (this.el.dataset.decimals === undefined || this.el.dataset.decimals === ""
+      || !Number.isInteger(decimals) || decimals > ETH_DECIMALS) return U64_MAX;
+    return U64_MAX * 10n ** BigInt(ETH_DECIMALS - decimals);
+  }
+
   parse(input) {
     const [decimals, symbol] = this.unitsFor(input);
+    const wei = input.dataset.arg === "wei";
     try {
-      return {value: parseAmount(input.value, decimals), decimals, symbol};
+      return {value: parseAmount(input.value, decimals, wei ? this.maxWei() : U64_MAX), decimals, symbol};
     } catch (err) {
+      if (wei && err?.code === "too_large") throw new InputError("That is more ETH than can be wrapped.");
       throw new InputError(explainAmount(err, symbol));
     }
   }
