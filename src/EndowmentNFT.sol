@@ -60,6 +60,20 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
         bool topUpsAllowed,
         bytes32 name_
     ) external nonReentrant returns (uint256 tokenId) {
+        return _mintEndowment(to, encEndowment, inputProof, segments, scheduleStart, topUpsAllowed, name_);
+    }
+
+    /// @dev The body of mint: pulls the endowment from the caller, stores the token's
+    ///      state, emits EndowmentMinted and safe-mints the token to `to`.
+    function _mintEndowment(
+        address to,
+        externalEuint64 encEndowment,
+        bytes calldata inputProof,
+        Segment[] calldata segments,
+        uint64 scheduleStart,
+        bool topUpsAllowed,
+        bytes32 name_
+    ) internal returns (uint256 tokenId) {
         if (segments.length == 0) revert EmptySchedule();
         if (!_validName(name_)) revert InvalidName();
 
@@ -188,15 +202,8 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
 
     function claim(uint256 tokenId) external nonReentrant {
         if (msg.sender != ownerOf(tokenId)) revert NotOwner();
-        _accrue(tokenId);
-
-        Endowment storage e = _endowments[tokenId];
-        euint64 amt = e.distribution;
-
-        // checks-effects-interactions: zero out before the external transfer
-        e.distribution = FHE.asEuint64(0);
-        FHE.allowThis(e.distribution);
-        FHE.allow(e.distribution, msg.sender);
+        // checks-effects-interactions: the distribution is zeroed before the external transfer
+        euint64 amt = _takeDistribution(tokenId, msg.sender);
 
         FHE.allowTransient(amt, address(token));
         token.confidentialTransfer(msg.sender, amt);
@@ -217,8 +224,23 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
         FHE.allowThis(e.endowmentRemaining); // never granted to any owner
     }
 
+    /// @dev Accrues, then takes the whole distribution and leaves a zero in its place,
+    ///      readable by the contract and by `reader`. Returns the amount taken; the
+    ///      caller decides where it goes.
+    function _takeDistribution(uint256 tokenId, address reader) internal returns (euint64 amt) {
+        _accrue(tokenId);
+
+        Endowment storage e = _endowments[tokenId];
+        amt = e.distribution;
+
+        e.distribution = FHE.asEuint64(0);
+        FHE.allowThis(e.distribution);
+        FHE.allow(e.distribution, reader);
+    }
+
     function _update(address to, uint256 tokenId, address auth)
         internal
+        virtual
         override
         returns (address from)
     {
