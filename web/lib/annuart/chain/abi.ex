@@ -7,7 +7,10 @@ defmodule Annuart.Chain.Abi do
 
   @topics %{
     endowment_minted: "0x25a622b3341f11db07752ec3231ebbf16da534e766579285f53d6b44d736ac3b",
-    transfer: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+    transfer: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+    auto_payout_set: "0x8bcf464aca0c3a4f72cb8523a3ceb88ba6f17985819ffd2922e6d3d855e3f479",
+    payout_requested: "0xe559d654c6733656f8709e3f8f321f64d19d289bd625bb184161881dea19a4e7",
+    payout_paid: "0xe4e624488c455a4960889c1eacc4b1c8399a43ddab47d8151e8044e341790563"
   }
 
   # fun => {signature, output type}
@@ -23,7 +26,13 @@ defmodule Annuart.Chain.Abi do
     decimals: {"decimals()", "uint8"}
   }
 
-  @spec topic(:endowment_minted | :transfer) :: String.t()
+  @spec topic(
+          :endowment_minted
+          | :transfer
+          | :auto_payout_set
+          | :payout_requested
+          | :payout_paid
+        ) :: String.t()
   def topic(name), do: Map.fetch!(@topics, name)
 
   @doc "Decodes a JSON-RPC log map (string keys `\"topics\"`, `\"data\"`)."
@@ -48,6 +57,39 @@ defmodule Annuart.Chain.Abi do
         [from, to, id] = indexed
 
         {:transfer, %{from: topic_address(from), to: topic_address(to), token_id: topic_uint(id)}}
+
+      t0 == topic(:auto_payout_set) and length(indexed) == 1 ->
+        [id] = indexed
+        [enabled, interval, fee] = ABI.decode("f(bool,uint32,uint128)", from_hex(data))
+
+        {:auto_payout_set,
+         %{token_id: topic_uint(id), enabled: enabled, interval: interval, fee: fee}}
+
+      t0 == topic(:payout_requested) and length(indexed) == 3 ->
+        [id, request_id, recipient] = indexed
+        [requester, fee] = ABI.decode("f(address,uint128)", from_hex(data))
+
+        {:payout_requested,
+         %{
+           token_id: topic_uint(id),
+           request_id: String.downcase(request_id),
+           recipient: topic_address(recipient),
+           requester: to_hex(requester),
+           fee: fee
+         }}
+
+      t0 == topic(:payout_paid) and length(indexed) == 2 ->
+        [id, request_id] = indexed
+        [amount, fee, in_weth] = ABI.decode("f(uint256,uint256,bool)", from_hex(data))
+
+        {:payout_paid,
+         %{
+           token_id: topic_uint(id),
+           request_id: String.downcase(request_id),
+           amount_wei: amount,
+           fee_wei: fee,
+           paid_in_weth: in_weth
+         }}
 
       true ->
         :unknown

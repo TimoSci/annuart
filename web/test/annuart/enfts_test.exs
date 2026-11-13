@@ -5,7 +5,7 @@ defmodule Annuart.EnftsTest do
 
   alias Annuart.Chain.Config
   alias Annuart.Enfts
-  alias Annuart.Enfts.{Cursor, Enft, Transfer}
+  alias Annuart.Enfts.{Cursor, Enft, Payout, Transfer}
 
   @nft_a "0x" <> String.duplicate("a1", 20)
   @nft_b "0x" <> String.duplicate("b2", 20)
@@ -264,5 +264,155 @@ defmodule Annuart.EnftsTest do
     assert enft.owner == @alice
     assert enft.creator == @alice
     assert enft.schedule == [%{"duration" => 5, "rate_per_sec" => 1}]
+  end
+
+  describe "automatic payouts" do
+    @req1 "0x" <> String.duplicate("01", 32)
+    @req2 "0x" <> String.duplicate("02", 32)
+    @wei 10_000_000_000_000_000_000_000_000
+
+    setup do
+      {:ok, enft} = Enfts.record_mint(mint_attrs([]))
+      %{enft: enft}
+    end
+
+    defp settings(overrides) do
+      Map.merge(
+        %{nft: @nft_a, token_id: 1, enabled: true, interval: 86_400, fee: 1_000},
+        Map.new(overrides)
+      )
+    end
+
+    defp requested(overrides \\ []) do
+      Map.merge(
+        %{
+          nft: @nft_a,
+          token_id: 1,
+          request_id: @req1,
+          recipient: @alice,
+          requester: @bob,
+          fee_offered: 1_000,
+          requested_at: ~U[2026-01-03 00:00:00Z],
+          requested_block: 20
+        },
+        Map.new(overrides)
+      )
+    end
+
+    defp paid(overrides \\ []) do
+      Map.merge(
+        %{
+          nft: @nft_a,
+          token_id: 1,
+          request_id: @req1,
+          amount_wei: @wei,
+          fee_wei: 1_000,
+          paid_in_weth: false,
+          paid_at: ~U[2026-01-03 00:01:00Z],
+          paid_block: 21,
+          tx_hash: "0x" <> String.duplicate("0a", 32)
+        },
+        Map.new(overrides)
+      )
+    end
+
+    test "a standard ENFT has no automatic settings", %{enft: enft} do
+      assert enft.auto_enabled == nil and enft.auto_interval == nil
+      assert enft.auto_fee == nil and enft.pending_request_id == nil
+    end
+
+    test "record_auto_settings stores and replaces the settings" do
+      assert :ok = Enfts.record_auto_settings(settings(fee: @wei))
+      assert :ok = Enfts.record_auto_settings(settings(fee: @wei))
+
+      assert %Enft{auto_enabled: true, auto_interval: 86_400, auto_fee: @wei} =
+               Enfts.get_enft("Alpha", 1)
+
+      assert :ok = Enfts.record_auto_settings(settings(enabled: false, interval: 60, fee: 0))
+
+      assert %Enft{auto_enabled: false, auto_interval: 60, auto_fee: 0} =
+               Enfts.get_enft("Alpha", 1)
+    end
+
+    test "settings for an ENFT that is not stored are ignored" do
+      assert :ok = Enfts.record_auto_settings(settings(token_id: 99))
+      assert Repo.aggregate(Enft, :count) == 1
+    end
+
+    test "a request then its payment fill one row", %{enft: enft} do
+      :ok = Enfts.record_payout_requested(requested())
+      assert [%Payout{paid_at: nil, fee_offered: 1_000}] = Enfts.list_payouts(enft)
+      assert Enfts.last_payout(enft) == nil
+
+      :ok = Enfts.record_payout_paid(paid(paid_in_weth: true))
+
+      assert [
+               %Payout{
+                 request_id: @req1,
+                 recipient: @alice,
+                 requester: @bob,
+                 fee_offered: 1_000,
+                 requested_block: 20,
+                 amount_wei: @wei,
+                 fee_wei: 1_000,
+                 paid_in_weth: true,
+                 paid_block: 21
+               }
+             ] = Enfts.list_payouts(enft)
+
+      assert %Payout{request_id: @req1} = Enfts.last_payout(enft)
+    end
+
+    test "a payment whose request was never seen creates one row", %{enft: enft} do
+      :ok = Enfts.record_payout_paid(paid())
+
+      assert [%Payout{request_id: @req1, amount_wei: @wei, recipient: nil}] =
+               Enfts.list_payouts(enft)
+    end
+
+    test "replaying a request and its payment changes nothing", %{enft: enft} do
+      for _ <- 1..2 do
+        :ok = Enfts.record_payout_requested(requested())
+        :ok = Enfts.record_payout_paid(paid())
+      end
+
+      assert Repo.aggregate(Payout, :count) == 1
+      assert [%Payout{amount_wei: @wei, recipient: @alice}] = Enfts.list_payouts(enft)
+      assert Enfts.get_enft("Alpha", 1).pending_request_id == nil
+    end
+
+    test "a request sets the pending request and its payment clears it" do
+      :ok = Enfts.record_payout_requested(requested())
+      assert Enfts.get_enft("Alpha", 1).pending_request_id == @req1
+
+      :ok = Enfts.record_payout_paid(paid())
+      assert Enfts.get_enft("Alpha", 1).pending_request_id == nil
+    end
+
+    test "a payment does not clear a different pending request" do
+      :ok = Enfts.record_payout_requested(requested(request_id: @req2))
+      :ok = Enfts.record_payout_paid(paid(request_id: @req1))
+      assert Enfts.get_enft("Alpha", 1).pending_request_id == @req2
+    end
+
+    test "list_payouts is newest first and last_payout is the latest paid", %{enft: enft} do
+      :ok = Enfts.record_payout_requested(requested())
+      :ok = Enfts.record_payout_paid(paid())
+      :ok = Enfts.record_payout_requested(requested(request_id: @req2, requested_block: 30))
+
+      assert [%{request_id: @req2}, %{request_id: @req1}] = Enfts.list_payouts(enft)
+      assert %Payout{request_id: @req1} = Enfts.last_payout(enft)
+    end
+
+    test "reset_contract deletes payouts" do
+      :ok = Enfts.record_payout_requested(requested())
+      :ok = Enfts.reset_contract(@nft_a)
+      assert Repo.aggregate(Payout, :count) == 0
+    end
+
+    test "amounts above the signed 64-bit range survive a round trip", %{enft: enft} do
+      :ok = Enfts.record_payout_paid(paid(amount_wei: @wei))
+      assert [%Payout{amount_wei: @wei}] = Enfts.list_payouts(enft)
+    end
   end
 end

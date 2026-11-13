@@ -17,7 +17,14 @@ defmodule Annuart.Enfts.Enft do
     field :name, :string
     # List of %{"duration" => int, "rate_per_sec" => int}, or nil when hidden.
     field :schedule, {:array, :map}
+    # Automatic payout settings: nil on a standard contract's ENFTs. Public chain data.
+    field :auto_enabled, :boolean
+    field :auto_interval, :integer
+    field :auto_fee, Annuart.Enfts.BigUint
+    # Request id of the payout asked for and not yet paid, or nil.
+    field :pending_request_id, :string
     has_many :transfers, Annuart.Enfts.Transfer
+    has_many :payouts, Annuart.Enfts.Payout
   end
 
   @fields ~w(label nft token_id creator owner created_at created_block schedule_start top_ups_allowed schedule name)a
@@ -34,6 +41,13 @@ defmodule Annuart.Enfts.Enft do
     end)
     |> downcase(@addresses)
     |> unique_constraint([:nft, :token_id])
+  end
+
+  @doc "Changeset for the automatic payout settings, which only their events set."
+  def auto_changeset(enft, attrs) do
+    enft
+    |> cast(attrs, [:auto_enabled, :auto_interval, :auto_fee])
+    |> validate_required([:auto_enabled, :auto_interval, :auto_fee])
   end
 
   defp downcase(changeset, fields) do

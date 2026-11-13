@@ -62,6 +62,31 @@ defmodule Annuart.Chain.ConfigTest do
     assert {:error, :invalid} = Config.load(path)
   end
 
+  describe "nftKind" do
+    defp with_kind(kind) do
+      ~s({"chainId":31337,"contracts":[{"label":"x","nft":"0x01","token":"0x02","tokenKind":"mock","nftKind":#{kind},"underlying":null,"deployBlock":8}]})
+    end
+
+    test "auto loads as :auto", %{dir: dir} do
+      assert {:ok, %{contracts: [%Config.Contract{nft_kind: :auto}]}} =
+               Config.load(write_tmp!(dir, with_kind(~s("auto"))))
+    end
+
+    test "standard, or no nftKind, loads as :standard", %{dir: dir} do
+      assert {:ok, %{contracts: [%Config.Contract{nft_kind: :standard}]}} =
+               Config.load(write_tmp!(dir, with_kind(~s("standard"))))
+
+      assert {:ok, %{contracts: [%Config.Contract{nft_kind: :standard}]}} =
+               Config.load(write_tmp!(dir, deployment("mock")))
+    end
+
+    test "any other nftKind is invalid", %{dir: dir} do
+      for bad <- [~s("weird"), "null", "1"] do
+        assert {:error, :invalid} = Config.load(write_tmp!(dir, with_kind(bad)))
+      end
+    end
+  end
+
   test "a contract missing a field is invalid", %{dir: dir} do
     path = write_tmp!(dir, ~s({"chainId":1,"contracts":[{"label":"x"}]}))
     assert {:error, :invalid} = Config.load(path)
@@ -98,6 +123,22 @@ defmodule Annuart.Chain.ConfigTest do
         :chain,
         Keyword.merge([rpc_url: "http://127.0.0.1:8545", contracts: []], opts)
       )
+    end
+
+    test "public/0 publishes the contract kind" do
+      contract = fn label, kind ->
+        %Config.Contract{
+          label: label,
+          nft: "0x01",
+          token: "0x02",
+          token_kind: :mock,
+          nft_kind: kind,
+          deploy_block: 1
+        }
+      end
+
+      put_chain(chain_id: 31_337, contracts: [contract.("a", :standard), contract.("b", :auto)])
+      assert [%{nftKind: "standard"}, %{nftKind: "auto"}] = Config.public().contracts
     end
 
     test "public/0 hides the server RPC URL off the local chain" do

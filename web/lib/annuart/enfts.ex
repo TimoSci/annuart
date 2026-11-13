@@ -1,9 +1,9 @@
 defmodule Annuart.Enfts do
-  @moduledoc "Store of indexed ENFTs, their transfers and per-contract indexer cursors."
+  @moduledoc "Store of indexed ENFTs, their transfers, automatic payouts and per-contract indexer cursors."
   import Ecto.Query
 
   alias Annuart.Chain.Config
-  alias Annuart.Enfts.{Cursor, Enft, Transfer}
+  alias Annuart.Enfts.{Cursor, Enft, Payout, Transfer}
   alias Annuart.Repo
 
   @doc """
@@ -109,6 +109,97 @@ defmodule Annuart.Enfts do
 
   defp find_enft(%{nft: nft, token_id: token_id}),
     do: Repo.get_by(Enft, nft: String.downcase(nft), token_id: token_id)
+
+  @doc """
+  Stores the automatic payout settings of an ENFT named by `:nft` and `:token_id`:
+  `:enabled`, `:interval` (seconds) and `:fee` (wei). A token that is not stored is
+  ignored. Safe to repeat.
+  """
+  def record_auto_settings(%{enabled: enabled, interval: interval, fee: fee} = attrs) do
+    with %Enft{} = enft <- find_enft(attrs) do
+      enft
+      |> Enft.auto_changeset(%{auto_enabled: enabled, auto_interval: interval, auto_fee: fee})
+      |> Repo.update!()
+    end
+
+    :ok
+  end
+
+  @doc """
+  Records a `PayoutRequested` event. Attrs: `:nft`, `:token_id`, `:request_id`, `:recipient`,
+  `:requester`, `:fee_offered`, `:requested_at`, `:requested_block`. Fills the payout row of
+  the request (creating it if needed) and marks the request pending unless it is already
+  paid. A token that is not stored is ignored. Safe to repeat.
+  """
+  def record_payout_requested(attrs) do
+    upsert_payout(attrs, :request_changeset, Payout.request_fields(), fn enft, payout ->
+      if is_nil(payout.paid_at) and enft.pending_request_id != payout.request_id,
+        do: set_pending(enft, payout.request_id)
+    end)
+  end
+
+  @doc """
+  Records a `PayoutPaid` event. Attrs: `:nft`, `:token_id`, `:request_id`, `:amount_wei` (the
+  whole payout), `:fee_wei`, `:paid_in_weth`, `:paid_at`, `:paid_block`, `:tx_hash`. Completes
+  the payout row of the request, creating it if the request was never seen, and clears the
+  pending request when it is this one. A token that is not stored is ignored. Safe to repeat.
+  """
+  def record_payout_paid(attrs) do
+    upsert_payout(attrs, :paid_changeset, Payout.paid_fields(), fn enft, payout ->
+      if enft.pending_request_id == payout.request_id, do: set_pending(enft, nil)
+    end)
+  end
+
+  defp upsert_payout(attrs, changeset_fun, fields, after_upsert) do
+    attrs = Map.new(attrs)
+
+    with %Enft{} = enft <- find_enft(attrs) do
+      changeset = apply(Payout, changeset_fun, [%Payout{enft_id: enft.id}, attrs])
+
+      Repo.transaction(fn ->
+        case Repo.insert(changeset,
+               on_conflict: {:replace, fields},
+               conflict_target: [:enft_id, :request_id]
+             ) do
+          {:ok, _} ->
+            payout =
+              Repo.get_by!(Payout, enft_id: enft.id, request_id: changeset.changes.request_id)
+
+            after_upsert.(Repo.get!(Enft, enft.id), payout)
+            :ok
+
+          {:error, changeset} ->
+            Repo.rollback(changeset)
+        end
+      end)
+      |> case do
+        {:ok, :ok} -> :ok
+        {:error, changeset} -> {:error, changeset}
+      end
+    else
+      _ -> :ok
+    end
+  end
+
+  defp set_pending(%Enft{id: id}, request_id),
+    do: Enft |> where([e], e.id == ^id) |> Repo.update_all(set: [pending_request_id: request_id])
+
+  @doc "Payouts of an ENFT, newest first."
+  def list_payouts(%Enft{id: id}) do
+    Payout
+    |> where([p], p.enft_id == ^id)
+    |> order_by([p], desc: coalesce(p.requested_block, p.paid_block), desc: p.id)
+    |> Repo.all()
+  end
+
+  @doc "The latest paid payout of an ENFT, or `nil`."
+  def last_payout(%Enft{id: id}) do
+    Payout
+    |> where([p], p.enft_id == ^id and not is_nil(p.paid_at))
+    |> order_by([p], desc: p.paid_block, desc: p.id)
+    |> limit(1)
+    |> Repo.one()
+  end
 
   @doc "Removes a contract's ENFTs, their transfers and its cursor."
   def reset_contract(nft) do

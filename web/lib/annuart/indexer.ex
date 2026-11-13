@@ -185,7 +185,15 @@ defmodule Annuart.Indexer do
       address: contract.nft,
       from_block: from,
       to_block: to,
-      topics: [[Abi.topic(:endowment_minted), Abi.topic(:transfer)]]
+      topics: [
+        [
+          Abi.topic(:endowment_minted),
+          Abi.topic(:transfer),
+          Abi.topic(:auto_payout_set),
+          Abi.topic(:payout_requested),
+          Abi.topic(:payout_paid)
+        ]
+      ]
     })
   end
 
@@ -276,6 +284,68 @@ defmodule Annuart.Indexer do
 
       {:ok, t.token_id, blocks}
     end
+  end
+
+  # Only a contract of kind auto emits these; a standard contract's ENFTs keep no settings.
+  defp apply_entry(%{nft_kind: :standard}, %{event: {kind, _}}, blocks)
+       when kind in [:auto_payout_set, :payout_requested, :payout_paid],
+       do: {:skip, blocks}
+
+  defp apply_entry(contract, %{event: {:auto_payout_set, s}}, blocks) do
+    :ok =
+      Enfts.record_auto_settings(%{
+        nft: contract.nft,
+        token_id: s.token_id,
+        enabled: s.enabled,
+        interval: s.interval,
+        fee: s.fee
+      })
+
+    {:ok, s.token_id, blocks}
+  end
+
+  defp apply_entry(contract, %{event: {:payout_requested, r}, order: {block, _}}, blocks) do
+    with {:ok, ts, blocks} <- timestamp(block, blocks) do
+      result =
+        Enfts.record_payout_requested(%{
+          nft: contract.nft,
+          token_id: r.token_id,
+          request_id: r.request_id,
+          recipient: r.recipient,
+          requester: r.requester,
+          fee_offered: r.fee,
+          requested_at: DateTime.from_unix!(ts),
+          requested_block: block
+        })
+
+      payout_result(contract, result, r.token_id, blocks)
+    end
+  end
+
+  defp apply_entry(contract, %{event: {:payout_paid, p}, order: {block, _}} = entry, blocks) do
+    with {:ok, ts, blocks} <- timestamp(block, blocks) do
+      result =
+        Enfts.record_payout_paid(%{
+          nft: contract.nft,
+          token_id: p.token_id,
+          request_id: p.request_id,
+          amount_wei: p.amount_wei,
+          fee_wei: p.fee_wei,
+          paid_in_weth: p.paid_in_weth,
+          paid_at: DateTime.from_unix!(ts),
+          paid_block: block,
+          tx_hash: entry.tx_hash
+        })
+
+      payout_result(contract, result, p.token_id, blocks)
+    end
+  end
+
+  defp payout_result(_contract, :ok, token_id, blocks), do: {:ok, token_id, blocks}
+
+  defp payout_result(contract, {:error, %Ecto.Changeset{} = cs}, _token_id, blocks) do
+    Logger.warning("indexer: #{contract.label}: skipping invalid payout: #{inspect(cs.errors)}")
+    {:skip, blocks}
   end
 
   defp schedule(contract, token_id) do

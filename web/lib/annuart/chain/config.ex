@@ -8,9 +8,12 @@ defmodule Annuart.Chain.Config do
   require Logger
 
   defmodule Contract do
-    @moduledoc "One deployed `EndowmentNFT` and its confidential token. Addresses are lowercased."
+    @moduledoc """
+    One deployed ENFT contract and its confidential token. `nft_kind` is `:auto` for an
+    `AutoPayoutEndowmentNFT`, `:standard` for a plain `EndowmentNFT`. Addresses are lowercased.
+    """
     @enforce_keys [:label, :nft, :token, :token_kind, :deploy_block]
-    defstruct [:label, :nft, :token, :token_kind, :underlying, :deploy_block]
+    defstruct [:label, :nft, :token, :token_kind, :underlying, :deploy_block, nft_kind: :standard]
 
     @type t :: %__MODULE__{
             label: String.t(),
@@ -18,6 +21,7 @@ defmodule Annuart.Chain.Config do
             token: String.t(),
             token_kind: :mock | :wrapped | :plain,
             underlying: String.t() | nil,
+            nft_kind: :standard | :auto,
             deploy_block: non_neg_integer
           }
   end
@@ -26,6 +30,7 @@ defmodule Annuart.Chain.Config do
   @default_rpc_url "http://127.0.0.1:8545"
 
   @token_kinds %{"mock" => :mock, "wrapped" => :wrapped, "plain" => :plain}
+  @nft_kinds %{"standard" => :standard, "auto" => :auto}
 
   @doc "Parses a deployment file."
   @spec load(String.t()) ::
@@ -90,6 +95,7 @@ defmodule Annuart.Chain.Config do
     underlying = Map.get(raw, "underlying")
 
     with {:ok, token_kind} <- Map.fetch(@token_kinds, kind),
+         {:ok, nft_kind} <- nft_kind(raw),
          true <- is_nil(underlying) or is_binary(underlying) do
       {:ok,
        %Contract{
@@ -97,6 +103,7 @@ defmodule Annuart.Chain.Config do
          nft: String.downcase(nft),
          token: String.downcase(token),
          token_kind: token_kind,
+         nft_kind: nft_kind,
          underlying: underlying && String.downcase(underlying),
          deploy_block: block
        }}
@@ -106,6 +113,14 @@ defmodule Annuart.Chain.Config do
   end
 
   defp parse_contract(_), do: :error
+
+  # No "nftKind" means a standard contract; any other value than a known kind is invalid.
+  defp nft_kind(raw) do
+    case Map.fetch(raw, "nftKind") do
+      :error -> {:ok, :standard}
+      {:ok, kind} -> Map.fetch(@nft_kinds, kind)
+    end
+  end
 
   @doc "Chain id of the running instance (0 when no deployment file could be loaded)."
   @spec chain_id() :: integer
@@ -249,6 +264,7 @@ defmodule Annuart.Chain.Config do
             nft: c.nft,
             token: c.token,
             tokenKind: Atom.to_string(c.token_kind),
+            nftKind: Atom.to_string(c.nft_kind),
             underlying: c.underlying,
             deployBlock: c.deploy_block
           }

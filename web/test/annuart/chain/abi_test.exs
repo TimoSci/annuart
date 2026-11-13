@@ -17,6 +17,72 @@ defmodule Annuart.Chain.AbiTest do
              "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
   end
 
+  test "automatic payout topics are the keccak of their signatures" do
+    assert Abi.topic(:auto_payout_set) ==
+             "0x8bcf464aca0c3a4f72cb8523a3ceb88ba6f17985819ffd2922e6d3d855e3f479"
+
+    assert Abi.topic(:payout_requested) ==
+             "0xe559d654c6733656f8709e3f8f321f64d19d289bd625bb184161881dea19a4e7"
+
+    assert Abi.topic(:payout_paid) ==
+             "0xe4e624488c455a4960889c1eacc4b1c8399a43ddab47d8151e8044e341790563"
+  end
+
+  test "decodes an AutoPayoutSet log" do
+    log = %{
+      "topics" => [Abi.topic(:auto_payout_set), pad(7)],
+      "data" => "0x" <> word(1) <> word(86_400) <> word(1_000_000_000_000_000_000_000)
+    }
+
+    assert {:auto_payout_set,
+            %{token_id: 7, enabled: true, interval: 86_400, fee: 1_000_000_000_000_000_000_000}} =
+             Abi.decode_log(log)
+
+    off = %{log | "data" => "0x" <> word(0) <> word(60) <> word(0)}
+    assert {:auto_payout_set, %{enabled: false, interval: 60, fee: 0}} = Abi.decode_log(off)
+  end
+
+  test "decodes a PayoutRequested log" do
+    request = "0x" <> String.duplicate("ab", 32)
+
+    log = %{
+      "topics" => [
+        Abi.topic(:payout_requested),
+        pad(7),
+        request,
+        pad_addr("0x00000000000000000000000000000000000a11ce")
+      ],
+      "data" => pad_addr("0x00000000000000000000000000000000000B0B00") <> word(500)
+    }
+
+    assert {:payout_requested,
+            %{
+              token_id: 7,
+              request_id: ^request,
+              recipient: "0x00000000000000000000000000000000000a11ce",
+              requester: "0x00000000000000000000000000000000000b0b00",
+              fee: 500
+            }} = Abi.decode_log(log)
+  end
+
+  test "decodes a PayoutPaid log" do
+    request = "0x" <> String.duplicate("cd", 32)
+
+    log = %{
+      "topics" => [Abi.topic(:payout_paid), pad(7), request],
+      "data" => "0x" <> word(10_000_000_000_000_000_000) <> word(500) <> word(1)
+    }
+
+    assert {:payout_paid,
+            %{
+              token_id: 7,
+              request_id: ^request,
+              amount_wei: 10_000_000_000_000_000_000,
+              fee_wei: 500,
+              paid_in_weth: true
+            }} = Abi.decode_log(log)
+  end
+
   test "decodes an EndowmentMinted log" do
     log = %{
       "topics" => [

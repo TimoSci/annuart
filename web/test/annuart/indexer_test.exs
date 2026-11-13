@@ -94,6 +94,200 @@ defmodule Annuart.IndexerTest do
     }
   end
 
+  @auto "0x" <> String.duplicate("a3", 20)
+  @req "0x" <> String.duplicate("0b", 32)
+
+  defp put_auto_contract do
+    put_contracts([
+      contract("mock", @nft, 5),
+      %{contract("auto", @auto, 5) | nft_kind: :auto}
+    ])
+  end
+
+  defp word(n), do: String.pad_leading(Integer.to_string(n, 16), 64, "0")
+
+  defp log(nft, topics, data, block, index) do
+    %{
+      "address" => nft,
+      "topics" => topics,
+      "data" => "0x" <> data,
+      "blockNumber" => hex(block),
+      "logIndex" => hex(index),
+      "transactionHash" =>
+        "0x" <> String.pad_leading(Integer.to_string(block * 100 + index, 16), 64, "0")
+    }
+  end
+
+  defp settings_log(nft, id, enabled, interval, fee, block, index) do
+    log(
+      nft,
+      [Abi.topic(:auto_payout_set), uint_topic(id)],
+      word(if(enabled, do: 1, else: 0)) <> word(interval) <> word(fee),
+      block,
+      index
+    )
+  end
+
+  defp requested_log(nft, id, block, index) do
+    log(
+      nft,
+      [Abi.topic(:payout_requested), uint_topic(id), @req, pad_topic(@alice)],
+      String.pad_leading(String.trim_leading(@bob, "0x"), 64, "0") <> word(700),
+      block,
+      index
+    )
+  end
+
+  defp paid_log(nft, id, block, index) do
+    log(
+      nft,
+      [Abi.topic(:payout_paid), uint_topic(id), @req],
+      word(5_000_000_000_000_000_000_000) <> word(700) <> word(0),
+      block,
+      index
+    )
+  end
+
+  describe "automatic payouts" do
+    setup do
+      put_auto_contract()
+      put_blocks(0..30)
+      RpcStub.put_head(20)
+      put_schedule(@auto, 1, [{1000, 1}])
+      :ok
+    end
+
+    test "a mint and its AutoPayoutSet in one block give an ENFT with settings" do
+      RpcStub.put_logs([
+        mint_log(@auto, 1, @alice, 10, 0),
+        transfer_log(@auto, 1, @zero, @alice, 10, 1),
+        settings_log(@auto, 1, true, 86_400, 1_000, 10, 2)
+      ])
+
+      Indexer.sync_once()
+
+      e = Enfts.get_enft("auto", 1)
+      assert e.auto_enabled and e.auto_interval == 86_400 and e.auto_fee == 1_000
+      assert e.pending_request_id == nil
+    end
+
+    test "a transfer then AutoPayoutSet disables automatic payouts" do
+      RpcStub.put_logs([
+        mint_log(@auto, 1, @alice, 10, 0),
+        settings_log(@auto, 1, true, 86_400, 1_000, 10, 2),
+        transfer_log(@auto, 1, @alice, @bob, 12, 0),
+        settings_log(@auto, 1, false, 86_400, 1_000, 12, 1)
+      ])
+
+      Indexer.sync_once()
+
+      e = Enfts.get_enft("auto", 1)
+      assert e.owner == @bob and e.auto_enabled == false and e.auto_interval == 86_400
+    end
+
+    test "a request in one range and its payment in the next give one paid row" do
+      RpcStub.put_logs([
+        mint_log(@auto, 1, @alice, 10, 0),
+        settings_log(@auto, 1, true, 86_400, 1_000, 10, 1),
+        requested_log(@auto, 1, 15, 0)
+      ])
+
+      Indexer.sync_once()
+      e = Enfts.get_enft("auto", 1)
+      assert e.pending_request_id == @req
+
+      assert [%{paid_at: nil, requester: @bob, recipient: @alice, fee_offered: 700}] =
+               Enfts.list_payouts(e)
+
+      RpcStub.put_head(25)
+
+      RpcStub.put_logs([
+        mint_log(@auto, 1, @alice, 10, 0),
+        requested_log(@auto, 1, 15, 0),
+        paid_log(@auto, 1, 22, 0)
+      ])
+
+      Indexer.sync_once()
+
+      e = Enfts.get_enft("auto", 1)
+      assert e.pending_request_id == nil
+
+      assert [
+               %{
+                 request_id: @req,
+                 requested_block: 15,
+                 paid_block: 22,
+                 amount_wei: 5_000_000_000_000_000_000_000,
+                 fee_wei: 700,
+                 paid_in_weth: false,
+                 requested_at: requested_at,
+                 paid_at: paid_at
+               }
+             ] = Enfts.list_payouts(e)
+
+      assert requested_at == DateTime.from_unix!(1_700_000_015)
+      assert paid_at == DateTime.from_unix!(1_700_000_022)
+    end
+
+    test "syncing the same ranges again leaves one row" do
+      logs = [
+        mint_log(@auto, 1, @alice, 10, 0),
+        requested_log(@auto, 1, 15, 0),
+        paid_log(@auto, 1, 16, 0)
+      ]
+
+      RpcStub.put_logs(logs)
+      Indexer.sync_once()
+      Indexer.sync_once()
+
+      # Rebuild from scratch (the cursor is gone): still one row.
+      Enfts.reset_contract(@auto)
+      Indexer.sync_once()
+
+      assert Repo.aggregate(Annuart.Enfts.Payout, :count) == 1
+      assert [%{paid_block: 16}] = Enfts.list_payouts(Enfts.get_enft("auto", 1))
+    end
+
+    test "each event broadcasts enft_changed" do
+      RpcStub.put_logs([
+        mint_log(@auto, 1, @alice, 10, 0),
+        settings_log(@auto, 1, true, 60, 0, 11, 0)
+      ])
+
+      Phoenix.PubSub.subscribe(Annuart.PubSub, "enfts")
+      Indexer.sync_once()
+      assert_receive {:enft_changed, "auto", 1}
+      drain_enft_messages()
+
+      RpcStub.put_head(25)
+      RpcStub.put_logs([requested_log(@auto, 1, 22, 0)])
+      Indexer.sync_once()
+      assert_receive {:enft_changed, "auto", 1}
+      drain_enft_messages()
+
+      RpcStub.put_head(28)
+      RpcStub.put_logs([paid_log(@auto, 1, 27, 0)])
+      Indexer.sync_once()
+      assert_receive {:enft_changed, "auto", 1}
+    end
+
+    test "the three events are ignored on a standard contract" do
+      put_schedule(@nft, 1, [{1000, 1}])
+
+      RpcStub.put_logs([
+        mint_log(@nft, 1, @alice, 10, 0),
+        settings_log(@nft, 1, true, 60, 0, 11, 0),
+        requested_log(@nft, 1, 12, 0)
+      ])
+
+      Indexer.sync_once()
+
+      e = Enfts.get_enft("mock", 1)
+      assert e.auto_enabled == nil and e.pending_request_id == nil
+      assert Enfts.list_payouts(e) == []
+    end
+  end
+
   defp drain_enft_messages(acc \\ []) do
     receive do
       msg when msg == :enfts_reset or elem(msg, 0) == :enft_changed ->
