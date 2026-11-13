@@ -256,10 +256,7 @@ defmodule AnnuartWeb.EnftLive do
               <span class="k">Owner</span>
               <span><EnftComponents.address value={@enft.owner} /></span>
               <span class="k">Creator</span>
-              <span class="creator" title={"Creator #{@enft.creator}"}>
-                <EnftComponents.randomart address={@enft.creator} />
-                <EnftComponents.address value={@enft.creator} />
-              </span>
+              <span><EnftComponents.address value={@enft.creator} /></span>
               <span class="k">Created</span>
               <span><EnftComponents.datetime value={@enft.created_at} /></span>
               <span class="k">Payouts start</span>

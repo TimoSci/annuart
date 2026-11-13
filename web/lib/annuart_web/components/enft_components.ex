@@ -11,10 +11,11 @@ defmodule AnnuartWeb.EnftComponents do
   @min_bar_height 4
 
   @doc """
-  How an ENFT is named everywhere: its creator's picture, its name when it has
-  one, and its number. Names are not unique and anyone can pick any name, so a
-  name is never shown without the two things that cannot be copied: the token
-  number and the creator. `unnamed` is the text shown in place of a missing name.
+  How an ENFT is named everywhere: its own picture inside its creator's frame,
+  its name when it has one, and its number. Names are not unique and anyone can
+  pick any name, so a name is never shown without the things that cannot be
+  copied: the token number, the picture drawn from it, and the creator's frame.
+  `unnamed` is the text shown in place of a missing name.
   """
   attr :enft, :map, required: true
   attr :unnamed, :string, default: nil
@@ -25,14 +26,26 @@ defmodule AnnuartWeb.EnftComponents do
     <span class="enft-identity" data-role="enft-identity">
       <%!-- The tooltip is a title attribute, not an SVG <title>, so the address
            never becomes part of the surrounding text (a heading, a link). --%>
-      <span class="randomart-box" title={"Creator #{@enft.creator}"}>
-        <.randomart address={@enft.creator} size={@size} />
+      <span
+        class={["randomart-box", "acct-frame", @size == :large && "large"]}
+        style={frame_style(@enft.creator)}
+        title={"Creator #{@enft.creator}"}
+      >
+        <.randomart enft={@enft} size={@size} />
       </span>
       <span :if={@enft.name} class="enft-name" data-role="enft-name">{@enft.name}</span>
       <span :if={!@enft.name && @unnamed} class="enft-name">{@unnamed}</span>
       <span class="enft-number" data-role="enft-number">#{@enft.token_id}</span>
     </span>
     """
+  end
+
+  # The account's frame as the custom property the .acct-frame rule draws.
+  defp frame_style(address) do
+    case Randomart.frame(address) do
+      nil -> nil
+      gradient -> "--frame: #{gradient}"
+    end
   end
 
   @doc """
@@ -50,15 +63,17 @@ defmodule AnnuartWeb.EnftComponents do
   def auto_badge(assigns), do: ~H""
 
   @doc """
-  The creator's address as a small picture (see `Annuart.Randomart`): squares
-  darken with visits, a ring marks where the walk started and a dot where it
-  ended. Hovering shows the address. Renders nothing for a malformed address.
+  An ENFT's own picture (see `Annuart.Randomart`): squares darken with visits,
+  a ring marks where the walk started and a dot where it ended. It is drawn
+  from the contract address and token id, so no two ENFTs share one. Renders
+  nothing for a malformed contract address.
   """
-  attr :address, :string, required: true
+  attr :enft, :map, required: true
   attr :size, :atom, default: :small, values: [:small, :large]
 
   def randomart(assigns) do
-    assigns = assign(assigns, :cells, Randomart.cells(assigns.address))
+    assigns =
+      assign(assigns, :cells, Randomart.enft_cells(assigns.enft.nft, assigns.enft.token_id))
 
     ~H"""
     <svg
@@ -66,9 +81,9 @@ defmodule AnnuartWeb.EnftComponents do
       class={["randomart", @size == :large && "large"]}
       viewBox={"0 0 #{Randomart.width()} #{Randomart.height()}"}
       role="img"
-      aria-label={"Creator #{@address}"}
+      aria-label={"Picture of ENFT #{@enft.token_id}, framed for its creator #{@enft.creator}"}
       data-role="randomart"
-      data-creator={@address}
+      data-creator={@enft.creator}
     >
       <rect
         :for={c <- @cells}
@@ -184,13 +199,19 @@ defmodule AnnuartWeb.EnftComponents do
   defp max_cell(p, decimals, symbol),
     do: [Schedule.format_amount(p.max_payable, decimals), symbol && " " <> symbol]
 
-  @doc "A shortened address such as `0x70f3…a2c1`, with ` (you)` when it is the viewer's."
+  @doc "A shortened address such as `0x70f3…a2c1` inside the account's frame, with ` (you)` when it is the viewer's."
   attr :value, :string, required: true
   attr :you, :boolean, default: false
 
   def address(assigns) do
     ~H"""
-    <span class="addr" title={@value}>{short(@value)}{if @you, do: " (you)"}</span>
+    <span
+      class="addr acct-frame"
+      style={frame_style(@value)}
+      title={@value}
+      data-role="address"
+      phx-no-format
+    >{short(@value)}{if @you, do: " (you)"}</span>
     """
   end
 

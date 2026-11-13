@@ -79,17 +79,22 @@ h1 { font-size: 26px; font-weight: 500; color: var(--hot-fg); margin: 0 0 4px; l
 .col { display: flex; flex-direction: column; gap: 12px; }
 @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
 
-/* An ENFT's identity: creator picture, name, number. The picture is drawn in
+/* An ENFT's identity: its picture in its creator's frame, name, number. The picture is drawn in
    the text colour, so it follows the activity brightness like everything else. */
 .enft-identity { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; vertical-align: middle; }
 .enft-identity .enft-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .enft-identity .enft-number { flex: none; opacity: .75; font-variant-numeric: tabular-nums; }
 .randomart-box { flex: none; display: inline-flex; }
-.randomart { flex: none; width: 51px; height: 27px; border: 1px solid var(--line); border-radius: 3px; }
-.randomart.large { width: 102px; height: 54px; border-radius: 5px; }
+.randomart { flex: none; width: 51px; height: 27px; }
+.randomart.large { width: 102px; height: 54px; }
+/* An account's frame: muted segments in a colour family unique to its address (--frame is set
+   inline, see Annuart.Randomart.frame/1 and js/frame.js). It is the one place
+   colour is used; it never touches an area's background or text colour. */
+.acct-frame { border: 2px solid var(--line); border-image: var(--frame) 1; }
+.randomart-box.acct-frame.large { border-width: 4px; }
+.addr.acct-frame, #wallet .wallet-address.acct-frame { display: inline-block; padding: 0 6px; line-height: 1.5; white-space: nowrap; }
 .rows .row > .enft-identity { grid-column: span 2; }
 .enft-link { display: inline-flex; align-items: center; gap: 8px; min-width: 0; color: inherit; }
-.creator { display: inline-flex; align-items: center; gap: 8px; }
 
 .kv { display: grid; grid-template-columns: 150px 1fr; gap: 7px 12px; }
 .kv .k { opacity: .7; }

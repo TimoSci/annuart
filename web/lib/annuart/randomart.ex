@@ -1,14 +1,19 @@
 defmodule Annuart.Randomart do
   @moduledoc """
-  The "drunken bishop" picture OpenSSH draws for a key fingerprint, here drawn
-  for an address. A bishop starts in the middle of a 17 by 9 board and makes
+  Pictures to recognise things by. An ENFT gets the "drunken bishop" picture
+  OpenSSH draws for a key fingerprint (`enft_cells/2`); an account gets a frame
+  of coloured segments (`frame/1`), drawn around its ENFTs' pictures and around
+  its address wherever that is shown.
+
+  The picture: A bishop starts in the middle of a 17 by 9 board and makes
   four diagonal moves per byte (two bits each, lowest pair first), sliding
   along the walls; each square counts its visits. The same bytes always give
   the same picture and different bytes almost always a visibly different one,
-  so a creator can be recognised at a glance without reading 40 hex digits.
+  so an ENFT or an account can be recognised at a glance without reading 40
+  hex digits.
 
-  It is a recognition aid, not a proof: a determined attacker can search for
-  an address whose picture looks alike. The full address is the identity.
+  Both are recognition aids, not proofs: a determined attacker can search for
+  an address whose frame or picture looks alike. The full address is the identity.
   """
 
   @width 17
@@ -45,6 +50,59 @@ defmodule Annuart.Randomart do
       :error -> nil
     end
   end
+
+  @doc """
+  The picture of one ENFT: `cells/1` of a digest of its contract address and
+  token id, so every ENFT has its own. `nil` when `nft` is not a hex address.
+  """
+  @spec enft_cells(binary, non_neg_integer) :: [cell] | nil
+  def enft_cells(nft, token_id) when is_integer(token_id) and token_id >= 0 do
+    with {:ok, contract} <- bytes(nft),
+         true <- String.starts_with?(nft, "0x") do
+      <<seed::binary-size(20), _::binary>> =
+        :crypto.hash(:sha256, contract <> <<token_id::unsigned-size(256)>>)
+
+      cells(seed)
+    else
+      _ -> nil
+    end
+  end
+
+  def enft_cells(_, _), do: nil
+
+  @frame_segments 10
+
+  @doc """
+  The frame of an account, as a CSS `conic-gradient` of ten hard-edged segments
+  in one muted colour family. The address's first byte picks the family's hue;
+  each pair of its 20 bytes then gives one segment a small step away from that
+  hue (first byte) and its lightness (second byte). `assets/js/frame.js`
+  computes the same string in the browser. `nil` unless `address` is 20 bytes
+  of `0x` hex.
+  """
+  @spec frame(term) :: String.t() | nil
+  def frame("0x" <> hex) when byte_size(hex) == 40 do
+    case Base.decode16(hex, case: :mixed) do
+      {:ok, <<first, _::binary>> = bytes} ->
+        base = div(first * 360, 256)
+
+        stops =
+          for {<<step, light>>, i} <-
+                Enum.with_index(for(<<pair::binary-size(2) <- bytes>>, do: pair)) do
+            hue = Integer.mod(base + (rem(step, 5) - 2) * 18, 360)
+            from = div(i * 100, @frame_segments)
+            to = div((i + 1) * 100, @frame_segments)
+            "hsl(#{hue} 45% #{40 + rem(light, 4) * 8}%) #{from}% #{to}%"
+          end
+
+        "conic-gradient(" <> Enum.join(stops, ", ") <> ")"
+
+      :error ->
+        nil
+    end
+  end
+
+  def frame(_), do: nil
 
   @doc "The picture as OpenSSH prints it, without the frame: nine lines of 17 characters."
   @spec ascii(binary) :: String.t() | nil

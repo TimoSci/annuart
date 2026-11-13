@@ -117,7 +117,7 @@ includes one wait of an hour (step 6).
    the fee.` (the fee is cut to a tenth of the payout if the payout is under 0.00001 ETH),
    `Trigger payout` is gone, and the panel says `Next payout possible <date>.` (an hour after the
    request). Within a minute History gains `Automatic payout of <amount> ETH, fee 0.000001 ETH,
-   triggered by` and B's picture, and Last automatic payout shows the amount and time.
+   triggered by` and B's address in B's coloured frame, and Last automatic payout shows the amount and time.
 7. Switch back to A: if A sent nothing since, A's ETH balance has grown by exactly the payout
    less the fee (B paid the gas), and Claimable (Yours panel) reveals `0`.
 8. On Etherscan, open the contract's address and its latest transactions from B. The logs show

@@ -15,7 +15,8 @@ defmodule Annuart.RpcStub do
     errors: %{},
     log_queries: [],
     log_errors: %{},
-    call_log: []
+    call_log: [],
+    txs: %{}
   }
 
   def start_link(_ \\ []), do: Agent.start_link(fn -> @empty end, name: __MODULE__)
@@ -54,6 +55,18 @@ defmodule Annuart.RpcStub do
 
   @doc "`{to, data}` of every `eth_call/2`, oldest first."
   def eth_calls, do: get(&Enum.reverse(&1.call_log))
+
+  @doc "Canned `transaction/1` result for a hash: `%{from:, to:, input:, index:}`."
+  def put_tx(hash, tx), do: update(&put_in(&1.txs[String.downcase(hash)], tx))
+
+  def transaction(hash) do
+    failing(:transaction, fn ->
+      case get(&Map.get(&1.txs, String.downcase(hash))) do
+        nil -> {:error, :not_found}
+        tx -> {:ok, tx}
+      end
+    end)
+  end
 
   def put_head(number), do: update(&Map.put(&1, :head, number))
   def put_code(address, code), do: update(&put_in(&1.code[String.downcase(address)], code))

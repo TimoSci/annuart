@@ -776,4 +776,129 @@ defmodule Annuart.IndexerTest do
     assert Enfts.cursor(@nft)
     refute :enfts_reset in drain_enft_messages()
   end
+
+  describe "transactions" do
+    @claim "0x379607f5"
+    @faucet "0x2893c5b0"
+    @conf_transfer "0x" <> String.duplicate("c7", 32)
+
+    setup do
+      put_blocks(0..30)
+      RpcStub.put_head(20)
+      put_schedule(@nft, 1, [{1000, 1}])
+      :ok
+    end
+
+    defp tx_hash(block, index),
+      do: "0x" <> String.pad_leading(Integer.to_string(block * 100 + index, 16), 64, "0")
+
+    test "a transaction is recorded with its type, sender, token id and the addresses it involves" do
+      RpcStub.put_logs([
+        mint_log(@nft, 1, @alice, 10, 0),
+        # A claim: the token pays the owner an encrypted amount.
+        log(
+          @token,
+          [
+            @conf_transfer,
+            pad_topic(@nft),
+            pad_topic(@alice),
+            "0x" <> String.duplicate("9f", 32)
+          ],
+          "",
+          12,
+          0
+        ),
+        # The faucet: 500 units minted to bob, in the clear.
+        log(
+          @token,
+          [@conf_transfer, pad_topic(@zero), pad_topic(@bob), "0x" <> String.duplicate("8e", 32)],
+          "",
+          13,
+          0
+        )
+      ])
+
+      RpcStub.put_tx(tx_hash(12, 0), %{from: @alice, to: @nft, input: @claim <> word(1), index: 0})
+
+      RpcStub.put_tx(tx_hash(13, 0), %{
+        from: @bob,
+        to: @token,
+        input: @faucet <> word(0xB0B) <> word(500),
+        index: 3
+      })
+
+      Phoenix.PubSub.subscribe(Annuart.PubSub, "txs")
+      Indexer.sync_once()
+      assert_receive :txs_changed
+
+      # The mint's transaction is unknown to the node: skipped, and the ENFT is still stored.
+      assert Enfts.get_enft("mock", 1)
+
+      assert [claim] = Annuart.Txs.list_for(@alice)
+      assert claim.kind == "claim" and claim.token_id == 1 and claim.amount == nil
+      assert claim.from == @alice and claim.label == "mock" and claim.block_number == 12
+
+      assert [faucet] = Annuart.Txs.list_for(@bob)
+      assert faucet.kind == "faucet" and faucet.amount == 500 and faucet.amount_unit == "token"
+      assert faucet.tx_index == 3 and faucet.token_id == nil
+
+      # A second pass adds nothing.
+      Indexer.sync_once()
+      assert length(Repo.all(Annuart.Txs.Tx)) == 2
+    end
+
+    test "a failing transaction read stops the pass, which is retried" do
+      RpcStub.put_logs([
+        log(
+          @token,
+          [@conf_transfer, pad_topic(@zero), pad_topic(@bob), "0x" <> String.duplicate("8e", 32)],
+          "",
+          13,
+          0
+        )
+      ])
+
+      RpcStub.put_tx(tx_hash(13, 0), %{
+        from: @bob,
+        to: @token,
+        input: @faucet <> word(1) <> word(5),
+        index: 0
+      })
+
+      RpcStub.put_error(:transaction, :econnrefused)
+
+      assert capture_log(fn -> Indexer.sync_once() end) =~ "stopped this pass"
+      assert Annuart.Txs.list_for(@bob) == []
+      assert Enfts.cursor(@nft) == nil
+
+      RpcStub.clear_error(:transaction)
+      Indexer.sync_once()
+      assert [%{kind: "faucet"}] = Annuart.Txs.list_for(@bob)
+    end
+
+    test "a rebuilt contract drops its recorded transactions" do
+      RpcStub.put_logs([
+        log(
+          @token,
+          [@conf_transfer, pad_topic(@zero), pad_topic(@bob), "0x" <> String.duplicate("8e", 32)],
+          "",
+          13,
+          0
+        )
+      ])
+
+      RpcStub.put_tx(tx_hash(13, 0), %{
+        from: @bob,
+        to: @token,
+        input: @faucet <> word(1) <> word(5),
+        index: 0
+      })
+
+      Indexer.sync_once()
+      assert [_] = Annuart.Txs.list_for(@bob)
+
+      Enfts.reset_contract(@nft)
+      assert Annuart.Txs.list_for(@bob) == []
+    end
+  end
 end

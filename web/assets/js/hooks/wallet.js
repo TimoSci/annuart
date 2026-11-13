@@ -3,6 +3,7 @@
 // LiveView, so every mount builds its DOM from scratch out of the module-level
 // session in chain/signer.js, and tells the new LiveView the address again.
 import {availableSigners, connect, current, disconnect, onChange} from "../chain/signer.js";
+import {applyFrame} from "../frame.js";
 
 const KEY = "annuart:signer";
 
@@ -76,7 +77,8 @@ export const Wallet = {
     if (signers.length === 0) {
       children.push(el("span", {className: "wallet-note"}, "Not configured"));
     } else if (session) {
-      children.push(el("span", {className: "wallet-address", title: session.address}, shorten(session.address)));
+      children.push(applyFrame(
+        el("span", {className: "wallet-address", title: session.address}, shorten(session.address)), session.address));
       if (session.kind === "dev") children.push(this.devSelect(session));
       else children.push(el("button", {
         type: "button", className: "wallet-disconnect", textContent: "Disconnect",

@@ -88,7 +88,15 @@ defmodule AnnuartWeb.BrowseLiveTest do
     ids =
       Regex.scan(~r/data-activity-id="(nav:[a-z]+)"/, html) |> Enum.map(&List.last/1)
 
-    assert ids == ["nav:browse", "nav:create", "nav:mine", "nav:market", "nav:tokens"]
+    assert ids == [
+             "nav:browse",
+             "nav:create",
+             "nav:mine",
+             "nav:market",
+             "nav:tokens",
+             "nav:transactions"
+           ]
+
     assert html =~ "soon"
     assert html =~ ~s(id="wallet")
     assert html =~ ~s(id="clear-activity")

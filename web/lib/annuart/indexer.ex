@@ -10,14 +10,19 @@ defmodule Annuart.Indexer do
   `"enfts"` topic of `Annuart.PubSub` for every ENFT touched, and
   `:enfts_reset` when a contract was rebuilt from scratch or the rows of a
   contract no longer configured were removed.
+
+  It also records every transaction that left a log on a contract or on its
+  token (see `Annuart.Txs`), and broadcasts `:txs_changed` on the `"txs"` topic
+  when it recorded any.
   """
   use GenServer
   require Logger
 
   alias Annuart.Chain.{Abi, Config, Reader}
-  alias Annuart.Enfts
+  alias Annuart.{Enfts, Txs}
 
   @topic "enfts"
+  @txs_topic "txs"
   @local_chain 31_337
   @zero "0x0000000000000000000000000000000000000000"
 
@@ -172,29 +177,85 @@ defmodule Annuart.Indexer do
     to = min(from + Config.log_chunk() - 1, head)
 
     with {:ok, logs} <- fetch_logs(contract, from, to),
-         {:ok, touched} <- apply_logs(contract, logs),
+         {:ok, touched} <- apply_logs(contract, Enum.filter(logs, &from?(&1, contract.nft))),
+         {:ok, recorded} <- record_txs(contract, logs),
          {:ok, %{hash: hash}} <- rpc().block(to) do
       Enfts.put_cursor(contract.nft, to, hash)
       Enum.each(touched, fn id -> broadcast({:enft_changed, contract.label, id}) end)
+      if recorded, do: Phoenix.PubSub.broadcast(Annuart.PubSub, @txs_topic, :txs_changed)
       sync_range(contract, to + 1, head)
     end
   end
 
+  # Every log of the contract and of its token: the contract's own events feed
+  # the ENFT store, and all of them name the transactions to record.
   defp fetch_logs(contract, from, to) do
     rpc().get_logs(%{
-      address: contract.nft,
+      address: Enum.uniq([contract.nft, contract.token]),
       from_block: from,
       to_block: to,
-      topics: [
-        [
-          Abi.topic(:endowment_minted),
-          Abi.topic(:transfer),
-          Abi.topic(:auto_payout_set),
-          Abi.topic(:payout_requested),
-          Abi.topic(:payout_paid)
-        ]
-      ]
+      topics: []
     })
+  end
+
+  defp from?(log, address),
+    do: is_binary(log["address"]) and String.downcase(log["address"]) == address
+
+  ## Recording transactions
+
+  # One row per transaction that left a log. A transaction the node does not
+  # know (a reorg took it) is skipped; any other failure stops the pass, so the
+  # range is read again. Returns whether anything was recorded.
+  defp record_txs(contract, logs) do
+    logs
+    |> Enum.filter(&is_binary(&1["transactionHash"]))
+    |> Enum.group_by(& &1["transactionHash"])
+    |> Enum.reduce_while({:ok, false, %{}}, fn {hash, logs}, {:ok, recorded, blocks} ->
+      case record_tx(contract, hash, logs, blocks) do
+        {:ok, blocks} -> {:cont, {:ok, true, blocks}}
+        {:skip, blocks} -> {:cont, {:ok, recorded, blocks}}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, recorded, _blocks} -> {:ok, recorded}
+      error -> error
+    end
+  end
+
+  defp record_tx(contract, hash, [log | _] = logs, blocks) do
+    with {:ok, tx} <- rpc().transaction(hash),
+         block = to_int!(log["blockNumber"]),
+         {:ok, ts, blocks} <- timestamp(block, blocks) do
+      attrs =
+        contract
+        |> Txs.describe(tx, logs)
+        |> Map.merge(%{
+          nft: contract.nft,
+          label: contract.label,
+          tx_hash: hash,
+          block_number: block,
+          tx_index: tx.index,
+          at: DateTime.from_unix!(ts),
+          from: tx.from,
+          to: tx.to
+        })
+
+      case Txs.record(attrs) do
+        :ok ->
+          {:ok, blocks}
+
+        {:error, changeset} ->
+          Logger.warning(
+            "indexer: #{contract.label}: skipping transaction #{hash}: #{inspect(changeset.errors)}"
+          )
+
+          {:skip, blocks}
+      end
+    else
+      {:error, :not_found} -> {:skip, blocks}
+      {:error, _} = error -> error
+    end
   end
 
   ## Applying logs

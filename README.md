@@ -33,9 +33,11 @@ digits, space and `- _ . '`, with no space at either end; anything else reverts 
 
 Names are **not unique** and anyone can pick any name, so a name identifies nothing. The token id
 and the creator do. The web app therefore never shows a name alone: it is always next to the
-token number and a small picture of the creator's address (the "randomart" OpenSSH draws for key
-fingerprints, see `web/lib/annuart/randomart.ex`). The picture is a recognition aid, not a proof;
-the creator's full address is on the ENFT's page.
+token number and a small picture. The picture in the middle is the ENFT's own (the "randomart"
+OpenSSH draws for key fingerprints, here drawn from the contract address and token id), and the
+coloured frame around it is its creator's: every account has its own frame, shown around its
+address wherever the app displays it (see `web/lib/annuart/randomart.ex`). Both are recognition
+aids, not proofs; the creator's full address is on the ENFT's page.
 
 ### FHE cost model
 

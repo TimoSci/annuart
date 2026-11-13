@@ -201,13 +201,14 @@ defmodule Annuart.Enfts do
     |> Repo.one()
   end
 
-  @doc "Removes a contract's ENFTs, their transfers and its cursor."
+  @doc "Removes a contract's ENFTs, their transfers, its recorded transactions and its cursor."
   def reset_contract(nft) do
     nft = String.downcase(nft)
 
     Repo.transaction(fn ->
       Repo.delete_all(from e in Enft, where: e.nft == ^nft)
       Repo.delete_all(from c in Cursor, where: c.nft == ^nft)
+      Annuart.Txs.reset_contract(nft)
     end)
 
     :ok
@@ -224,7 +225,7 @@ defmodule Annuart.Enfts do
       Repo.transaction(fn ->
         {enfts, _} = Repo.delete_all(from e in Enft, where: e.nft not in ^nfts)
         {cursors, _} = Repo.delete_all(from c in Cursor, where: c.nft not in ^nfts)
-        enfts + cursors
+        enfts + cursors + Annuart.Txs.delete_unconfigured(nfts)
       end)
 
     removed > 0

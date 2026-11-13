@@ -20,6 +20,37 @@ defmodule Annuart.Chain.Rpc do
     end
   end
 
+  @doc "Sender, target (nil for a deployment), calldata and position in its block of a transaction."
+  @spec transaction(String.t()) ::
+          {:ok, %{from: String.t(), to: String.t() | nil, input: String.t(), index: integer}}
+          | {:error, term}
+  def transaction(hash) do
+    case call("eth_getTransactionByHash", [hash]) do
+      {:ok, %{"from" => from, "input" => input} = tx} when is_binary(from) and is_binary(input) ->
+        to = tx["to"]
+
+        {:ok,
+         %{
+           from: String.downcase(from),
+           to: (is_binary(to) && String.downcase(to)) || nil,
+           input: input,
+           index: tx_index(tx["transactionIndex"])
+         }}
+
+      {:ok, nil} ->
+        {:error, :not_found}
+
+      {:ok, other} ->
+        {:error, {:bad_response, other}}
+
+      error ->
+        error
+    end
+  end
+
+  defp tx_index("0x" <> _ = hex), do: to_int(hex)
+  defp tx_index(_), do: 0
+
   @spec get_logs(map) :: {:ok, [map]} | {:error, term}
   def get_logs(%{address: address, from_block: from, to_block: to, topics: topics}) do
     call("eth_getLogs", [
