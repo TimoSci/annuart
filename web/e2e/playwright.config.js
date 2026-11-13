@@ -2,8 +2,8 @@ import {defineConfig, devices} from "@playwright/test";
 
 // Starts, in order:
 //   1. a fresh Hardhat node with the FHEVM mock (repo root, port 8545);
-//   2. global-setup.js run as a script, which deploys the mock and wrapped
-//      variants (writing deployments/localhost.json), and then the Phoenix dev
+//   2. global-setup.js run as a script, which deploys the mock, wrapped and
+//      auto variants (writing deployments/localhost.json), and then the Phoenix dev
 //      server (web/, port 4000). Phoenix reads the deployment file when it
 //      starts, so the deploys must finish first. Playwright starts webServers
 //      before it runs globalSetup, which is why the deploy is part of this

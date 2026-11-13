@@ -464,11 +464,12 @@ test("automatic ENFT: created by one account, triggered by another, owner is pai
   await login(page, 2);
   await page.goto(`/enft/auto/${id}`);
   await connectedAs(page, 2);
-  await expect(page.locator("#panel-yours")).toHaveCount(0);
   const trigger = page.locator("#auto-payout button[data-role=trigger]");
   await expect(trigger).toHaveText("Trigger payout", {timeout: 60_000});
+  // The wallet's address has reached the page by now: account 2 does not own it.
+  await expect(page.locator("#panel-yours")).toHaveCount(0);
   const ownerBefore = BigInt(await rpc("eth_getBalance", [ACCOUNTS[1], "latest"]));
-  const tx = page.locator("#auto-payout div.tx");
+  const tx = page.locator("#auto-payout div.tx[data-action=triggerPayout]");
   await trigger.click();
   await expectDone(tx);
   for (const name of ["requestPayout", "decrypt", "payOut"]) await expect(step(tx, name)).toHaveAttribute("data-state", "done");

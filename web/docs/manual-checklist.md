@@ -79,9 +79,10 @@ deciding something failed.
 ## 3c. Automatic payouts
 
 This needs the `auto` variant deployed, and wrapped ETH in account A (section 2, step 3). Account
-B pays the transaction fees of the payout, so B needs a little Sepolia ETH too.
+B pays the transaction fees of the payout, so B needs a little Sepolia ETH too. The section
+includes one wait of an hour (step 6).
 
-1. Tokens: there is one cWETH card, labelled `wrapped`, not two. It lists both ENFT contracts,
+1. Tokens: there is one cWETH card, headed `wrapped (cWETH)`, not two. It lists both ENFT contracts,
    `wrapped` and `auto`, each with its own authorisation line and its own `Authorise` button. There
    is no separate card for `auto`.
 2. Create: pick `auto (cWETH, automatic payouts)`. A group appears with `Automatic payouts` ticked,
@@ -101,37 +102,36 @@ B pays the transaction fees of the payout, so B needs a little Sepolia ETH too.
    same three fields filled in and a `Save` button. History shows `Created by …`. Once the wallet
    is connected the panel says `A payout can be triggered now.` (the first payout needs no wait)
    and offers `Trigger payout`.
-5. Wait an hour or more so that something has accrued, then switch the wallet to account B and
-   open the ENFT. There is no Yours panel, no `Your settings`, and `Trigger payout` is offered
-   with `You pay the transaction fees.` Click it. Steps: Request the payout, Wait for decryption
-   (this takes a while on Sepolia), Pay out, Done; the wallet asks twice (the request and the
-   payout). Afterwards a line says `<amount> ETH was paid to the owner.`, `Trigger payout` is
-   gone, and the panel says `Next payout possible <date>.` (a day after the request). Within a
-   minute History gains `Automatic payout of <amount> ETH, triggered by` and B's picture, and
-   Last automatic payout shows the amount and time.
-6. Switch back to A: A's ETH balance has grown by exactly that amount (B paid the gas), and
-   Claimable (Yours panel) reveals `0`.
-7. On Etherscan, open the contract's address and its latest transaction from B. The logs show
+5. As A, change the settings before any payout: `At most once every` `1` `hours` (the minimum),
+   `Fee per payout (ETH)` `0.000001` (the line `= 0.000001 ETH` appears beside it). Click `Save`.
+   Steps: Confirm in your wallet, Done. The panel then shows Interval `At most once every 1 hour`
+   and Fee `0.000001 ETH per payout, never more than 10% of it`. Nothing has been paid yet, so
+   nothing waits on the new interval.
+6. This is the one wait of the section: wait an hour, so that something has accrued. Then switch the
+   wallet to account B and open the ENFT. There is no Yours panel and no `Your settings`, and
+   `Trigger payout` is offered with `You pay the transaction fees. You receive up to 0.000001 ETH
+   as the fee.` Click it, and close the tab once Request the payout is done. Reopen the ENFT: the
+   panel says `A payout is waiting to be finished.` and offers `Finish payout`. Click it. Steps:
+   Wait for decryption (this takes a while on Sepolia), Pay out, Done; the wallet asks for the
+   payout. Afterwards a line says `<amount> ETH was paid to the owner. 0.000001 ETH went to you as
+   the fee.` (the fee is cut to a tenth of the payout if the payout is under 0.00001 ETH),
+   `Trigger payout` is gone, and the panel says `Next payout possible <date>.` (an hour after the
+   request). Within a minute History gains `Automatic payout of <amount> ETH, fee 0.000001 ETH,
+   triggered by` and B's picture, and Last automatic payout shows the amount and time.
+7. Switch back to A: if A sent nothing since, A's ETH balance has grown by exactly the payout
+   less the fee (B paid the gas), and Claimable (Yours panel) reveals `0`.
+8. On Etherscan, open the contract's address and its latest transactions from B. The logs show
    `PayoutRequested` and `PayoutPaid`; `PayoutPaid` has `amountWei`, the same amount as the page
    shows, in plain sight. That amount is public by design. The remaining endowment is not, while the
    payouts keep matching the schedule: nothing on the page or in the logs says how much is left.
-8. As A, change the settings: `At most once every` `12` `hours`, `Fee per payout (ETH)`
-   `0.000001` (the line `= 0.000001 ETH` appears beside it). Click `Save`. Steps: Confirm in your
-   wallet, Done. The panel then shows `At most once every 12 hours` and `0.000001 ETH per payout,
-   never more than 10% of it`. As B, after the interval, the note by `Trigger payout` now adds `You
-   receive up to 0.000001 ETH as the fee.`, and the finished line adds `0.000001 ETH went to you as the fee.`
-   (when the payout is at least 0.00001 ETH; below that the fee is cut to a tenth of it).
-9. Interrupt one: as B, trigger a payout and close the tab once Request the payout is done.
-   Reopen the ENFT: the panel says `A payout is waiting to be finished.` and offers `Finish
-   payout`, which runs Wait for decryption, Pay out, Done.
-10. As A, untick `Automatic payouts` and `Save`. No question is asked. Status shows `Off`, and as B
-    `Trigger payout` is gone. Tick it again and `Save`: the page asks `Switch automatic payouts on?
-    Each payout amount becomes public.` Cancel: nothing is sent. Save again and accept, so that
-    Status is `On`.
-11. As A, Transfer the ENFT to B's address (section 3, step 5). Afterwards Status reads `Off`: a
+9. As A, untick `Automatic payouts` and `Save`. No question is asked. Status shows `Off`, and as B
+   `Trigger payout` is gone. Tick it again and `Save`: the page asks `Switch automatic payouts on?
+   Each payout amount becomes public.` Cancel: nothing is sent. Save again and accept, so that
+   Status is `On`.
+10. As A, Transfer the ENFT to B's address (section 3, step 5). Afterwards Status reads `Off`: a
     new owner never inherits public payouts. As B, `Your settings` shows `Automatic payouts`
     unticked, with the interval and fee unchanged.
-12. In the Network tab, no request or frame sent to the app's own host contains the endowment or a
+11. In the Network tab, no request or frame sent to the app's own host contains the endowment or a
     donation amount, as in section 8. The paid amounts of automatic payouts are public chain data
     and the page shows them, but nothing the page sends contains an amount you typed.
 
