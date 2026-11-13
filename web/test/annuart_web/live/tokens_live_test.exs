@@ -94,4 +94,55 @@ defmodule AnnuartWeb.TokensLiveTest do
     {_view, html} = connected(conn)
     refute html =~ ~r/<input[^>]*\bname=/
   end
+
+  describe "two contracts sharing a token" do
+    setup do
+      {:ok, chain} = Application.fetch_env(:annuart, :chain)
+
+      contract = fn label, kind ->
+        %Config.Contract{
+          label: label,
+          nft: nft(),
+          token: token(),
+          token_kind: kind,
+          underlying: if(kind == :wrapped, do: "0x" <> String.duplicate("c3", 20)),
+          deploy_block: 0
+        }
+      end
+
+      other = %Config.Contract{
+        label: "mock",
+        nft: nft(),
+        token: "0x" <> String.duplicate("d4", 20),
+        token_kind: :mock,
+        deploy_block: 0
+      }
+
+      Application.put_env(
+        :annuart,
+        :chain,
+        Keyword.put(chain, :contracts, [
+          other,
+          contract.("wrapped", :wrapped),
+          contract.("auto", :wrapped)
+        ])
+      )
+
+      :ok
+    end
+
+    test "render one card per token with an authorisation per contract", %{conn: conn} do
+      {view, _html} = connected(conn)
+      assert has_element?(view, "#token-mock")
+      assert has_element?(view, "#token-wrapped[data-labels='wrapped,auto']")
+      refute has_element?(view, "#token-auto")
+      assert has_element?(view, "#token-wrapped #tx-authorise-wrapped")
+      assert has_element?(view, "#token-wrapped #tx-authorise-auto")
+      assert has_element?(view, "#token-wrapped [data-role=authorisation][data-contract=auto]")
+      assert has_element?(view, "#token-wrapped #tx-wrap-wrapped")
+      refute has_element?(view, "#tx-wrap-auto")
+      assert has_element?(view, "#token-mock[data-labels=mock] #tx-authorise-mock")
+      refute has_element?(view, "#token-mock [data-contract]")
+    end
+  end
 end

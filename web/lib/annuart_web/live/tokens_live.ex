@@ -21,18 +21,26 @@ defmodule AnnuartWeb.TokensLive do
   # Nothing to do on "tx:confirmed": the hook re-reads the balances itself.
   def handle_event("tx:confirmed", _params, socket), do: {:noreply, socket}
 
-  # Label, kind, and the symbol and decimals read from the token; `nil` when the
-  # chain cannot be read, and the hook then refuses to parse amounts.
+  # One card per distinct token, named for the first contract using it. `labels`
+  # holds every contract using the token, in configuration order. The symbol and
+  # decimals are read from the token; `nil` when the chain cannot be read, and
+  # the hook then refuses to parse amounts.
   defp cards do
-    for %Config.Contract{label: label, token: token, token_kind: kind} <- Config.contracts() do
+    Config.contracts()
+    |> Enum.group_by(& &1.token)
+    |> Map.values()
+    |> Enum.sort_by(fn [first | _] -> Enum.find_index(Config.contracts(), &(&1 == first)) end)
+    |> Enum.map(fn [%Config.Contract{label: label, token: token, token_kind: kind} | _] = group ->
+      card = %{label: label, labels: Enum.map(group, & &1.label), kind: kind}
+
       case Reader.token_meta(token) do
         {:ok, %{symbol: symbol, decimals: decimals}} ->
-          %{label: label, kind: kind, symbol: symbol, decimals: decimals}
+          Map.merge(card, %{symbol: symbol, decimals: decimals})
 
         _ ->
-          %{label: label, kind: kind, symbol: nil, decimals: nil}
+          Map.merge(card, %{symbol: nil, decimals: nil})
       end
-    end
+    end)
   end
 
   def render(assigns) do
@@ -52,6 +60,7 @@ defmodule AnnuartWeb.TokensLive do
         phx-update="ignore"
         data-activity-id={"panel:tokens:#{c.label}"}
         data-label={c.label}
+        data-labels={Enum.join(c.labels, ",")}
         data-kind={c.kind}
         data-symbol={c.symbol}
         data-decimals={c.decimals}
@@ -71,7 +80,7 @@ defmodule AnnuartWeb.TokensLive do
           </span>
         </div>
 
-        <div class="field">
+        <div :if={match?([_], c.labels)} class="field">
           <label>ENFT contract</label>
           <span data-role="authorisation"></span>
           <TxComponents.action
@@ -79,6 +88,17 @@ defmodule AnnuartWeb.TokensLive do
             action="authorise"
             label="Authorise"
             contract_label={c.label}
+          />
+        </div>
+
+        <div :for={l <- if(match?([_], c.labels), do: [], else: c.labels)} class="field">
+          <label>{l}</label>
+          <span data-role="authorisation" data-contract={l}></span>
+          <TxComponents.action
+            id={"tx-authorise-#{l}"}
+            action="authorise"
+            label="Authorise"
+            contract_label={l}
           />
         </div>
 

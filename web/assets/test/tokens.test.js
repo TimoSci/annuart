@@ -353,3 +353,35 @@ test("a read failing for another reason keeps its text", async () => {
   await t.ctl.pending;
   assert.equal(q(t.el, "authorisation").textContent, "Authorisation unavailable.");
 });
+
+test("a card shared by two contracts reads and shows each one's authorisation", async () => {
+  const labels = ["weth", "auto"];
+  const {document, window} = parseHTML(`<html><body><div id="card" data-label="weth" data-labels="weth,auto" data-kind="wrapped" data-symbol="cWETH" data-decimals="9">
+    ${labels.map(l => `<span data-role="authorisation" data-contract="${l}"></span>`).join("")}
+    <span data-role="eth-balance"></span><div data-role="unwraps" hidden></div><div data-role="weth" hidden></div></div></body></html>`);
+  const el = document.getElementById("card");
+  const contracts = {weth: WRAPPED, auto: {label: "auto", nft: "0xauto", token: "0xtok", tokenKind: "wrapped"}};
+  const asked = [];
+  const ctl = new TokensController(el, {
+    session: () => SESSION,
+    onSession: () => {},
+    contract: l => contracts[l],
+    reads: {
+      operatorStatus: async (s, c) => { asked.push(c.label); return c.label === "auto" ? {authorised: true, until: null} : {authorised: false, until: null}; },
+      pendingUnwraps: async () => [], wethBalance: async () => 0n, ethBalance: async () => 0n,
+    },
+    tx: {session: () => SESSION, contract: l => contracts[l], actions: {}, push() {}, confirm: () => true, announce() {}, failed() {}},
+    target: document,
+  });
+  await ctl.pending;
+  assert.deepEqual(asked.sort(), ["auto", "weth"]);
+  const line = l => el.querySelector(`[data-role=authorisation][data-contract=${l}]`).textContent;
+  assert.equal(line("weth"), "Not authorised");
+  assert.equal(line("auto"), "Authorised");
+});
+
+test("a single-contract card reads authorisation once", async () => {
+  const t = make();
+  await t.ctl.pending;
+  assert.equal(t.counts.operatorStatus, 1);
+});

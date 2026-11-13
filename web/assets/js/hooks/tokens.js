@@ -34,6 +34,8 @@ export class TokensController {
     this.dynamic = [];
     this.pending = null;
     this.generation = 0;
+    // Every contract using this token; the card's own label is the first.
+    this.labels = (el.dataset.labels || el.dataset.label).split(",");
     this.wrapped = el.dataset.kind === "wrapped";
     // Kept across a refresh: the drawn actions by key, so one that failed
     // still shows why after the card is read again.
@@ -81,7 +83,7 @@ export class TokensController {
     const generation = ++this.generation;
     const session = this.deps.session();
     const contract = this.deps.contract(this.el.dataset.label);
-    const data = {};
+    const data = {auth: {}};
     if (session && contract) {
       const {reads} = this.deps;
       const read = async (name, fn) => {
@@ -91,7 +93,18 @@ export class TokensController {
           data[name] = {failed: true, wrongChain: err instanceof WrongChainError};
         }
       };
-      const tasks = [read("auth", () => reads.operatorStatus(session, contract))];
+      // One authorisation per contract using the token; the rest act through the first.
+      const tasks = this.labels.map(label => {
+        const c = this.deps.contract(label);
+        return (async () => {
+          try {
+            if (!c) throw new Error(`unknown contract ${label}`);
+            data.auth[label] = {value: await reads.operatorStatus(session, c)};
+          } catch (err) {
+            data.auth[label] = {failed: true, wrongChain: err instanceof WrongChainError};
+          }
+        })();
+      });
       if (this.wrapped) {
         tasks.push(
           read("eth", () => reads.ethBalance(session)),
@@ -109,8 +122,14 @@ export class TokensController {
   render(data, connected) {
     // A wallet on another network: one line for the card instead of each
     // field's failure. The reads never ask the wallet to switch.
-    const wrongChain = Object.values(data).some(d => d.wrongChain);
-    this.renderAuthorisation(data.auth, connected, wrongChain);
+    const wrongChain = Object.values(data).some(d => d.wrongChain)
+      || Object.values(data.auth).some(d => d.wrongChain);
+    for (const label of this.labels) {
+      const node = this.labels.length > 1
+        ? this.el.querySelector(`[data-role=authorisation][data-contract="${label}"]`)
+        : this.role("authorisation");
+      this.renderAuthorisation(node, data.auth[label], connected, wrongChain);
+    }
     if (!this.wrapped) return;
     const eth = this.role("eth-balance");
     if (eth) eth.textContent = data.eth?.value !== undefined ? `${formatAmount(data.eth.value, ETH_DECIMALS)} ETH` : "";
@@ -122,8 +141,7 @@ export class TokensController {
     this.retired.clear();
   }
 
-  renderAuthorisation(auth, connected, wrongChain) {
-    const node = this.role("authorisation");
+  renderAuthorisation(node, auth, connected, wrongChain) {
     if (!node) return;
     if (!connected) node.textContent = "";
     else if (wrongChain) node.textContent = WRONG_CHAIN;
