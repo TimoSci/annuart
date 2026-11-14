@@ -203,4 +203,21 @@ abstract contract RedTeamBase is FhevmTest {
     function _allowed(euint64 h, address who) internal view returns (bool) {
         return _acl.isAllowed(euint64.unwrap(h), who);
     }
+
+    /// @dev Whether the host ACL lets `who` use handle `h` PERSISTENTLY. This is the grant
+    ///      off-chain user-decryption requires (FhevmTest/plugin check persistAllowed); a
+    ///      transient grant that lives only inside one transaction does not enable it.
+    function _persistAllowed(euint64 h, address who) internal view returns (bool) {
+        return _acl.persistAllowed(euint64.unwrap(h), who);
+    }
+
+    /// @dev Whether handle `h` has been made publicly decryptable (FHE.makePubliclyDecryptable).
+    function _publicDecryptable(euint64 h) internal view returns (bool) {
+        return _acl.isAllowedForDecryption(euint64.unwrap(h));
+    }
+
+    /// @dev Whether the raw handle `h` (e.g. a payout request id) is publicly decryptable.
+    function _publicDecryptable(bytes32 h) internal view returns (bool) {
+        return _acl.isAllowedForDecryption(h);
+    }
 }
