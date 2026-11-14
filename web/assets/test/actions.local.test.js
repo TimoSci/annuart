@@ -199,6 +199,22 @@ test("create -> accrue -> reveal -> claim on the mock token", {skip}, async () =
   assert.equal(await actions.revealDistribution(alice, mock, tokenId), 0n);
 });
 
+test("the amount of a past create or claim is revealed to its sender only", {skip}, async () => {
+  await fund(alice);
+  const created = await actions.createEnft(alice, mock, createArgs(alice.address), steps());
+  assert.equal(await actions.revealTxAmount(alice, mock, created.hash), 2_000n);
+  await increaseTime(100);
+  const claimed = await actions.claim(alice, mock, {tokenId: created.tokenId}, steps());
+  const paid = await actions.revealTxAmount(alice, mock, claimed.hash);
+  assert.ok(paid >= 100n && paid <= 110n, `claimed ${paid}`);
+  await assert.rejects(
+    actions.revealTxAmount(bob, mock, claimed.hash),
+    err => explain(err) === "This transaction has no amount your account can read.");
+  await assert.rejects(
+    actions.revealTxAmount(alice, mock, "0x" + "00".repeat(32)),
+    err => explain(err) === "This transaction was not found on the connected network.");
+});
+
 test("a create with a name stores it on chain; without one the name is zero", {skip}, async () => {
   const {Contract, decodeBytes32String, ZeroHash} = await import("ethers");
   const nft = new Contract(mock.nft, ["function nameOf(uint256) view returns (bytes32)"], provider);

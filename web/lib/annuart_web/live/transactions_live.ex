@@ -44,7 +44,10 @@ defmodule AnnuartWeb.TransactionsLive do
 
   defp metas(txs) do
     for label <-
-          txs |> Enum.filter(&(&1.amount_unit == "token")) |> Enum.map(& &1.label) |> Enum.uniq(),
+          txs
+          |> Enum.filter(&(&1.amount_unit == "token" or Txs.private?(&1.kind)))
+          |> Enum.map(& &1.label)
+          |> Enum.uniq(),
         %Config.Contract{token: token} <- [Config.contract(label)],
         {:ok, meta} <- [Reader.token_meta(token)],
         into: %{},
@@ -86,6 +89,16 @@ defmodule AnnuartWeb.TransactionsLive do
     end
   end
 
+  # An encrypted amount can be decrypted, in the browser, by the two ends of the
+  # token movement. The sender is always one of them; so is whoever a plain
+  # token transfer went to.
+  defp revealable?(%{amount: nil} = tx, address) when is_binary(address) do
+    Txs.private?(tx.kind) and
+      (tx.from == address or (tx.kind == "token_transfer" and address in String.split(tx.parties)))
+  end
+
+  defp revealable?(_tx, _address), do: false
+
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current={:transactions}>
@@ -100,6 +113,12 @@ defmodule AnnuartWeb.TransactionsLive do
           Transactions sent to this app's ENFT contracts and their tokens that involve your
           address. Private means the amount is encrypted on chain; the transaction itself is
           always public. Conversions between ETH and WETH are not listed.
+        </p>
+        <p :if={Enum.any?(txs, &revealable?(&1, @address))} class="warning" id="reveal-warning">
+          Security warning: Reveal decrypts a hidden amount with your wallet and shows it on
+          this screen. Only use it in a browser and on a computer you trust. On a shared, public
+          or possibly infected machine the amount can be read by others. A revealed amount is
+          never sent to this app's server.
         </p>
         <table class="history" id="transactions">
           <thead>
@@ -124,7 +143,21 @@ defmodule AnnuartWeb.TransactionsLive do
                 <span :if={!t.token_id}>{t.label}</span>
               </td>
               <td><EnftComponents.address value={t.from} you={t.from == @address} /></td>
-              <td>{amount(t, metas)}</td>
+              <td>
+                <span
+                  :if={revealable?(t, @address)}
+                  id={"reveal-#{t.tx_hash}"}
+                  phx-hook="SecretValue"
+                  phx-update="ignore"
+                  data-secret="tx"
+                  data-tx={t.tx_hash}
+                  data-label={t.label}
+                  data-decimals={metas[t.label] && metas[t.label].decimals}
+                  data-symbol={metas[t.label] && metas[t.label].symbol}
+                >
+                </span>
+                <span :if={!revealable?(t, @address)}>{amount(t, metas)}</span>
+              </td>
               <td>{if Txs.private?(t.kind), do: "Private", else: "Public"}</td>
               <td><span class="addr" title={t.tx_hash}>{EnftComponents.short(t.tx_hash)}</span></td>
             </tr>

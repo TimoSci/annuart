@@ -72,3 +72,20 @@ test("destroy unsubscribes from session changes", () => {
   t.ctl.destroy();
   assert.equal(t.listeners.size, 0);
 });
+
+test("a transaction's amount is revealed by its hash", async () => {
+  const {document, window} = parseHTML(
+    `<html><body><span id="s" data-secret="tx" data-tx="0xabc" data-label="mock" data-decimals="2" data-symbol="TKN"></span></body></html>`);
+  const el = document.getElementById("s");
+  const seen = [];
+  const ctl = new SecretController(el, {
+    session: () => ({address: "0xa"}),
+    contract: () => CONTRACT,
+    reveal: {tx: async (_session, contract, hash) => { seen.push([contract.label, hash]); return 250n; }},
+    target: window,
+  });
+  el.querySelector("button").click();
+  await ctl.pending;
+  assert.deepEqual(seen, [["mock", "0xabc"]]);
+  assert.match(el.textContent, /2\.5 TKN/);
+});

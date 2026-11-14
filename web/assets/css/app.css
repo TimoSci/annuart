@@ -212,6 +212,7 @@ td.n, th.n { text-align: right; padding-right: 0; }
 .create .amount-echo, .create .tx-message, .create .total { font-size: 12px; margin: 4px 0; }
 .create .tx-message:empty, .create .warning:empty, .create .total:empty { display: none; }
 .create .warning { color: var(--hot-fg); border: 1px dashed var(--rest-fg); border-radius: 6px; padding: 8px; font-size: 13px; }
+#reveal-warning { color: var(--hot-fg); border: 1px dashed var(--rest-fg); border-radius: 6px; padding: 8px; font-size: 13px; margin: 0 0 16px; }
 .create .summary { border: 1px solid var(--rest-fg); border-radius: 8px; padding: 12px 14px; color: var(--hot-fg); }
 .create .summary button { margin-right: 8px; }
 .create ol.steps { list-style: none; padding: 0; margin: 4px 0 0; font-size: 13px; }

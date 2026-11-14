@@ -74,12 +74,54 @@ defmodule AnnuartWeb.TransactionsLiveTest do
     refute paid =~ "(you)"
 
     created = view |> element(~s(tr[data-kind="create"])) |> render()
-    assert created =~ "Create ENFT" and created =~ "Hidden" and created =~ "Private"
+    assert created =~ "Create ENFT" and created =~ "Private"
     assert created =~ "(you)"
 
     faucet = view |> element(~s(tr[data-kind="faucet"])) |> render()
     assert faucet =~ "Get test tokens" and faucet =~ "1500 TKN" and faucet =~ "Public"
     refute faucet =~ "/enft/"
+  end
+
+  test "the sender of a private transaction gets a reveal control and a security warning", %{
+    conn: conn
+  } do
+    {:ok, view, _} = live(conn, ~p"/transactions")
+    refute has_element?(view, "#reveal-warning")
+    render_hook(view, "wallet:changed", %{"address" => @alice})
+
+    hash = "0x" <> String.duplicate("2", 64)
+
+    assert has_element?(
+             view,
+             ~s(tr[data-kind="create"] #reveal-#{hash}[phx-hook="SecretValue"][data-secret="tx"]) <>
+               ~s([data-tx="#{hash}"][data-label="mock"][data-decimals="0"][data-symbol="TKN"])
+           )
+
+    assert view |> element("#reveal-warning") |> render() =~ "computer you trust"
+    # Public rows have nothing to reveal.
+    refute has_element?(view, ~s(tr[data-kind="faucet"] [phx-hook="SecretValue"]))
+  end
+
+  test "a private transaction someone else sent has no reveal control", %{conn: conn} do
+    record(6, %{kind: "donate", from: @bob, parties: [@bob, String.downcase(@alice)]})
+    {:ok, view, _} = live(conn, ~p"/transactions")
+    render_hook(view, "wallet:changed", %{"address" => @alice})
+
+    donated = view |> element(~s(tr[data-kind="donate"])) |> render()
+    assert donated =~ "Hidden"
+    refute donated =~ "SecretValue"
+
+    # The recipient of a plain token transfer is one of its two ends.
+    record(7, %{
+      kind: "token_transfer",
+      from: @bob,
+      to: token(),
+      token_id: nil,
+      parties: [@bob, String.downcase(@alice)]
+    })
+
+    Phoenix.PubSub.broadcast(Annuart.PubSub, "txs", :txs_changed)
+    assert has_element?(view, ~s(tr[data-kind="token_transfer"] [phx-hook="SecretValue"]))
   end
 
   test "an address without transactions is told so, and a new one appears when indexed", %{

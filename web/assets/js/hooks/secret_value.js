@@ -4,7 +4,7 @@
 import {formatAmount} from "../units.js";
 import {explain} from "../errors.js";
 import {current, onChange, chainInfo} from "../chain/signer.js";
-import {revealDistribution, revealBalance} from "../chain/actions.js";
+import {revealDistribution, revealBalance, revealTxAmount} from "../chain/actions.js";
 
 const HIDDEN = "•••••";
 
@@ -49,7 +49,7 @@ export class SecretController {
   }
 
   async reveal() {
-    const {secret, label, id, decimals, symbol} = this.el.dataset;
+    const {secret, label, id, tx, decimals, symbol} = this.el.dataset;
     const session = this.deps.session();
     if (!session) { this.note = "Connect a wallet first."; this.render(); return; }
     const contract = this.deps.contract(label);
@@ -63,9 +63,10 @@ export class SecretController {
     const generation = this.generation;
     this.render();
     try {
-      const value = secret === "balance"
-        ? await this.deps.reveal.balance(session, contract)
-        : await this.deps.reveal.distribution(session, contract, BigInt(id));
+      let value;
+      if (secret === "balance") value = await this.deps.reveal.balance(session, contract);
+      else if (secret === "tx") value = await this.deps.reveal.tx(session, contract, tx);
+      else value = await this.deps.reveal.distribution(session, contract, BigInt(id));
       if (generation !== this.generation) return;
       this.note = "";
       this.shown = `${formatAmount(value, Number(decimals))} ${symbol ?? ""}`.trim();
@@ -103,7 +104,7 @@ export const SecretValue = {
       session: current,
       onSession: onChange,
       contract: label => chainInfo().contracts.find(c => c.label === label),
-      reveal: {distribution: revealDistribution, balance: revealBalance},
+      reveal: {distribution: revealDistribution, balance: revealBalance, tx: revealTxAmount},
       target: window,
     });
   },

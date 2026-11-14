@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {parseHTML} from "linkedom";
 import {TokensController} from "../js/hooks/tokens.js";
 import {TxActionController} from "../js/hooks/tx_action.js";
-import {checkWrapFunds} from "../js/chain/actions.js";
+import {checkWrapFunds, transferHandle} from "../js/chain/actions.js";
 import {ActionError, explain} from "../js/errors.js";
 
 process.env.TZ = "UTC";
@@ -384,4 +384,24 @@ test("a single-contract card reads authorisation once", async () => {
   const t = make();
   await t.ctl.pending;
   assert.equal(t.counts.operatorStatus, 1);
+});
+
+test("transferHandle picks the confidential amount moved to or from the account", async () => {
+  const {Contract, zeroPadValue, id} = await import("ethers");
+  const {TOKEN_ABI} = await import("../js/chain/abi.js");
+  const tokenAddress = "0x" + "11".repeat(20);
+  const token = new Contract(tokenAddress, TOKEN_ABI);
+  const alice = "0x" + "aa".repeat(20), bob = "0x" + "bb".repeat(20), carol = "0x" + "cc".repeat(20);
+  const handle = "0x" + "07".repeat(32);
+  const topic = id("ConfidentialTransfer(address,address,bytes32)");
+  const log = (address, from, to, amount) =>
+    ({address, topics: [topic, zeroPadValue(from, 32), zeroPadValue(to, 32), amount], data: "0x"});
+  const receipt = {logs: [
+    log("0x" + "22".repeat(20), alice, bob, "0x" + "09".repeat(32)), // another token
+    log(tokenAddress, carol, bob, "0x" + "08".repeat(32)),
+    log(tokenAddress, bob, alice, handle),
+  ]};
+  assert.equal(transferHandle(receipt, token, alice.toUpperCase().replace("0X", "0x")), handle);
+  assert.equal(transferHandle(receipt, token, "0x" + "dd".repeat(20)), null);
+  assert.equal(transferHandle({logs: []}, token, alice), null);
 });

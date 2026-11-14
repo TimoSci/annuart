@@ -449,6 +449,34 @@ export async function revealBalance(session, contract) {
   return values.get(handle);
 }
 
+// The handle of the confidential amount a mined transaction moved to or from
+// `account`: the token grants both ends of a transfer access to it. Null when
+// the transaction moved no such amount.
+export function transferHandle(receipt, token, account) {
+  const who = account.toLowerCase();
+  for (const log of receipt?.logs ?? []) {
+    if (log.address.toLowerCase() !== token.target.toLowerCase()) continue;
+    let parsed = null;
+    try { parsed = token.interface.parseLog(log); } catch { /* not one of ours */ }
+    if (parsed?.name !== "ConfidentialTransfer") continue;
+    if (parsed.args.from.toLowerCase() === who || parsed.args.to.toLowerCase() === who) return parsed.args.amount;
+  }
+  return null;
+}
+
+// The amount a past transaction paid to or took from the caller, decrypted in
+// this browser.
+export async function revealTxAmount(session, contract, txHash) {
+  const s = await ensureChain(session);
+  const token = tokenOf(contract, s.provider);
+  const receipt = await s.provider.getTransactionReceipt(txHash);
+  if (!receipt) throw new ActionError("This transaction was not found on the connected network.");
+  const handle = transferHandle(receipt, token, s.address);
+  if (!handle) throw new ActionError("This transaction has no amount your account can read.");
+  const values = await (await getFhe(s)).userDecrypt([{handle, contractAddress: contract.token}], s);
+  return values.get(handle);
+}
+
 export async function operatorStatus(session, contract) {
   const s = await requireChain(session);
   const token = tokenOf(contract, s.provider);
