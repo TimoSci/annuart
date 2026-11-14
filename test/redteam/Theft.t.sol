@@ -5,6 +5,7 @@ import {FHE, euint64, externalEuint64} from "@fhevm/solidity/lib/FHE.sol";
 import {ACL} from "@fhevm/host-contracts/contracts/ACL.sol";
 import {InputVerifier} from "@fhevm/host-contracts/contracts/InputVerifier.sol";
 import {ERC7984} from "@openzeppelin/confidential-contracts/token/ERC7984/ERC7984.sol";
+import {IERC7984} from "@openzeppelin/confidential-contracts/interfaces/IERC7984.sol";
 import {ERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/token/ERC7984/extensions/ERC7984ERC20Wrapper.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {RedTeamBase} from "./RedTeamBase.sol";
@@ -47,6 +48,11 @@ contract Reenterer {
         onEth = onEth_;
         h = h_;
         p = p_;
+    }
+
+    /// @dev Points the calls at token `id` (a receiver learns it from onERC721Received instead).
+    function setTokenId(uint256 id) external {
+        tokenId = id;
     }
 
     function resultOf(uint8 i) external view returns (bytes4) {
@@ -100,6 +106,34 @@ contract Reenterer {
         // casting to bytes4 is safe: only the error selector is wanted
         // forge-lint: disable-next-line(unsafe-typecast)
         return bytes4(ret);
+    }
+}
+
+/// @dev A contract that a victim trusts as an operator on the token (a router, say). In one
+///      transaction it moves the victim's tokens to the NFT contract, which leaves it only a
+///      transient grant on the `transferred` handle, then passes that handle to mint with an
+///      empty proof.
+contract OperatorCaller {
+    bytes32 public transferred;
+
+    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
+        return this.onERC721Received.selector;
+    }
+
+    function run(IERC7984 tok, EndowmentNFT nft, address victim, externalEuint64 h, bytes calldata p)
+        external
+        returns (uint256 id)
+    {
+        euint64 t = tok.confidentialTransferFrom(victim, address(nft), h, p);
+        transferred = euint64.unwrap(t);
+        Segment[] memory s = new Segment[](1);
+        s[0] = Segment({duration: 1000, ratePerSec: 1});
+        id = nft.mint(address(this), externalEuint64.wrap(transferred), "", s, 0, false, bytes32(0));
+    }
+
+    /// @dev Lets `nft` pull this contract's own balance for deposits.
+    function authorise(IERC7984 tok, address nft) external {
+        tok.setOperator(nft, uint48(block.timestamp + 365 days));
     }
 }
 
@@ -469,10 +503,13 @@ contract TheftTest is RedTeamBase {
         assertEq(_dist(enft, id), 100);
     }
 
-    /// A handle that both the caller and the NFT contract may use (the caller's own token's
-    /// distribution) is accepted with no proof, but it only sets the amount: the funds still
-    /// come from the caller, and the source token is untouched.
-    function test_C2_4a_ownDistributionAsInput_pullsOnlyCallerFunds() public {
+    /// F-C2-4a (Low). A handle that both the caller and the NFT contract may use (here the
+    /// caller's own token's current distribution) is accepted as the deposit amount with an
+    /// empty proof. It only sets the amount: the funds still come from the caller, and the
+    /// source token is untouched.
+    // SECURE EXPECTATION: mint and topUp revert when inputProof is empty, so the amount can
+    // only come from a fresh encrypted input bound to the caller and this contract.
+    function test_FINDING_C2_4a_ownDistributionAsInput_acceptedWithoutProof() public {
         uint256 src = _mintSimple(mallory, 500, true);
         vm.warp(block.timestamp + 100);
         enft.accrue(src); // distribution 100, readable by mallory and the NFT contract
@@ -493,6 +530,60 @@ contract TheftTest is RedTeamBase {
         assertEq(_bal(mock, alice), 1000);
         assertEq(_dist(enft, src), 100, "source distribution touched");
         assertEq(_bal(mock, address(enft)), 500 + 200);
+    }
+
+    /// F-C2-4a. A previous owner still holds ACL on the distribution handle that was current
+    /// before the transfer (never revoked; the NFT contract holds it too) and can deposit with it.
+    // SECURE EXPECTATION: mint reverts because inputProof is empty.
+    function test_FINDING_C2_4a_previousOwnerOldDistributionAsInput_accepted() public {
+        uint256 id = _mintSimple(alice, 500, false);
+        vm.warp(block.timestamp + 100);
+        enft.accrue(id);
+        euint64 old = enft.distributionHandle(id); // 100, alice's while she owned the token
+        vm.prank(alice);
+        enft.transferFrom(alice, bob, id);
+        assertTrue(_acl.persistAllowed(euint64.unwrap(old), alice), "previous owner kept ACL");
+        _fundMock(alice, 1000);
+        _authorise(alice, enft);
+
+        externalEuint64 h = externalEuint64.wrap(euint64.unwrap(old));
+        vm.prank(alice);
+        uint256 m = enft.mint(alice, h, "", _seg(1000, 1), 0, false, bytes32(0));
+
+        assertEq(_endow(enft, m), 100);
+        assertEq(_bal(mock, alice), 900, "deposit came from the caller");
+        assertEq(_dist(enft, id), 100, "bob's distribution touched");
+        vm.prank(bob);
+        enft.claim(id);
+        assertEq(_bal(mock, bob), 100);
+    }
+
+    /// F-C2-4a, strongest member of the usable set. A contract the victim made an operator moves
+    /// 300 of the victim's tokens to the NFT contract and, in the same transaction, passes the
+    /// resulting `transferred` handle to mint with an empty proof. It holds only a transient
+    /// grant on that handle, so it could not user-decrypt it; but its value (300, or 0 had the
+    /// victim been short) now shows up in the caller's own balance. The caller learns whether
+    /// the victim held 300, which its operator right already let it learn (and the victim's
+    /// 300 moves only because of that right; the NFT contract credits it to no token).
+    // SECURE EXPECTATION: mint reverts because inputProof is empty.
+    function test_FINDING_C2_4a_operatorTransientHandleAsInput_accepted() public {
+        OperatorCaller op = new OperatorCaller();
+        _fundMock(alice, 1000);
+        vm.prank(alice);
+        mock.setOperator(address(op), uint48(block.timestamp + 365 days)); // the victim trusts op
+        _fundMock(address(op), 1000);
+        op.authorise(mock, address(enft));
+        (externalEuint64 h, bytes memory p) = _enc(300, address(op), address(mock));
+
+        uint256 m = op.run(mock, enft, alice, h, p);
+
+        bytes32 t = op.transferred();
+        assertFalse(_acl.persistAllowed(t, address(op)), "caller had a persistent grant");
+        assertTrue(_acl.persistAllowed(t, address(enft)));
+        assertEq(_endow(enft, m), 300, "deposit sized by the transient handle");
+        assertEq(_bal(mock, address(op)), 700, "deposit came from the caller");
+        assertEq(_bal(mock, alice), 700, "moved by the operator right");
+        assertEq(_bal(mock, address(enft)), 600, "victim's 300 sits uncredited in the pool");
     }
 
     // =====================================================================
@@ -550,14 +641,16 @@ contract TheftTest is RedTeamBase {
         assertEq(_dist(enft, id), 0);
     }
 
-    /// The new owner re-enters claim, mint and topUp from onERC721Received during mint, on a
-    /// token whose schedule is already over (so a claim would pay everything).
+    /// The new owner re-enters claim, mint and topUp from onERC721Received during mint. The
+    /// schedule started 2000 s ago and runs 4000 s, so 2000 is owed (capped at the 500 held):
+    /// a claim would pay everything, and a topUp would be accepted. Each call has valid
+    /// inputs and funds, so only the reentrancy guard stops it.
     function test_C2_5_reenterFromMintReceiver_blocked() public {
         Reenterer r = _reenterer(enft, 100);
         _arm(r, enft, M_CLAIM | M_TOPUP | M_MINT, true, false);
         _fundMock(creator, 500);
         _authorise(creator, enft);
-        uint256 id = _mint(enft, creator, address(r), 500, _seg(1000, 1), T0 - 2000, true, bytes32(0));
+        uint256 id = _mint(enft, creator, address(r), 500, _seg(4000, 1), T0 - 2000, true, bytes32(0));
 
         assertEq(r.resultOf(0), REENTRY, "claim");
         assertEq(r.resultOf(1), REENTRY, "topUp");
@@ -571,15 +664,16 @@ contract TheftTest is RedTeamBase {
         assertEq(_bal(mock, address(enft)), 0);
     }
 
-    /// As above for mintAuto, adding requestPayout and mintAuto. The id staged by mintAuto
-    /// cannot be taken by a mint inside the receiver callback (MintIdMismatch, AP.sol:121).
+    /// As above for mintAuto, adding requestPayout and mintAuto (payouts on, none requested
+    /// yet, schedule started: a request would be accepted). The id staged by mintAuto cannot be
+    /// taken by a mint inside the receiver callback (MintIdMismatch, AP.sol:121).
     function test_C2_5a_mintAutoReceiverReentry_cannotChangeId() public {
         Reenterer r = _reenterer(apnft, 100);
         _arm(r, apnft, M_CLAIM | M_TOPUP | M_MINT | M_REQUEST | M_MINT_AUTO, true, false);
         _fundCweth(creator, 500);
         _authorise(creator, apnft);
         uint256 id = _mintAuto(
-            creator, address(r), 500, _seg(1000, 1), T0 - 2000, true, bytes32(0), true, 3600, 0
+            creator, address(r), 500, _seg(4000, 1), T0 - 2000, true, bytes32(0), true, 3600, 0
         );
 
         for (uint8 i = 0; i < 5; i++) {
@@ -635,18 +729,23 @@ contract TheftTest is RedTeamBase {
     }
 
     /// Recipient and requester both re-enter every state-changing function from their ETH
-    /// receive during finalizePayout. All are blocked, and each is paid exactly once in ETH.
+    /// receive during finalizePayout, aimed at the real token, with half the 2000 s schedule
+    /// still to run. Without the guard, topUp, mint and mintAuto would succeed for both, and
+    /// claim for the recipient; claim by the requester (NotOwner), requestPayout (PayoutTooSoon)
+    /// and finalizePayout (NoPendingPayout) would fail anyway. All are blocked, and each party
+    /// is paid exactly once in ETH.
     function test_C2_5_reenterFromEthReceive_blocked() public {
         Reenterer owner_ = _reenterer(apnft, 10);
         Reenterer requester = _reenterer(apnft, 10);
         uint256 all = M_CLAIM | M_TOPUP | M_MINT | M_REQUEST | M_MINT_AUTO | M_FINALIZE;
         _arm(owner_, apnft, all, false, true);
         _arm(requester, apnft, all, false, true);
-        _fundCweth(creator, 1000);
+        _fundCweth(creator, 2000);
         _authorise(creator, apnft);
         uint256 id = _mintAuto(
-            creator, address(owner_), 1000, _seg(1000, 1), uint64(block.timestamp), true, bytes32(0), true, 3600, 1e10
+            creator, address(owner_), 2000, _seg(2000, 1), uint64(block.timestamp), true, bytes32(0), true, 3600, 1e10
         );
+        requester.setTokenId(id);
         vm.warp(block.timestamp + 1000);
 
         uint64 units = _payoutRoundTrip(id, address(requester), keeper);
@@ -664,7 +763,7 @@ contract TheftTest is RedTeamBase {
         assertEq(rid, bytes32(0));
         assertEq(_bal(cweth, address(owner_)), 10);
         assertEq(_bal(cweth, address(requester)), 10);
-        assertEq(_bal(cweth, address(apnft)), 0);
+        assertEq(_bal(cweth, address(apnft)), 1000, "the unaccrued half stays");
     }
 
     // =====================================================================
@@ -689,7 +788,9 @@ contract TheftTest is RedTeamBase {
         // ... so a further top-up moves zero instead of wrapping the endowment to 4
         _topUp(enft, donor, id, 5);
         assertEq(_endow(enft, id), MAX, "endowment wrapped");
-        // and a new deposit is credited zero
+        // and a new deposit is credited zero: the creator spent everything and nothing more can
+        // be minted, so this is just C2-2's zero-balance case. Once the supply is full, no
+        // sender can hold more, so no deposit can push any sum in the NFT contract past MAX.
         uint256 b = _mint(enft, creator, bob, 1, _seg(1000, 1), uint64(block.timestamp), false, bytes32(0));
         assertEq(_endow(enft, b), 0);
 

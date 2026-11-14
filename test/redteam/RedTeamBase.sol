@@ -152,8 +152,13 @@ abstract contract RedTeamBase is FhevmTest {
 
     /// @dev `who` requests a payout of token `id` with minFee 0; returns the request id.
     function _requestPayout(uint256 id, address who) internal returns (bytes32 rid) {
+        rid = _requestPayout(id, who, 0);
+    }
+
+    /// @dev `who` requests a payout of token `id`, refusing a fee below `minFee`; returns the request id.
+    function _requestPayout(uint256 id, address who, uint128 minFee) internal returns (bytes32 rid) {
         vm.prank(who);
-        rid = apnft.requestPayout(id, 0);
+        rid = apnft.requestPayout(id, minFee);
     }
 
     /// @dev The cleartext of request `rid` and a KMS decryption proof for it.
