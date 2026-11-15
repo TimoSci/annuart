@@ -110,7 +110,9 @@ the `wrapped` entry in `deployments/sepolia.json` and deploys no new token.
 CONFIRM_DEPLOY=sepolia NFT_KIND=auto npx hardhat run scripts/deploy.ts --network sepolia
 ```
 
-You do not need `WETH_ADDRESS` here. Expect `Using existing token:` followed by the
+This needs `WETH_ADDRESS` from step 2 as well: before deploying, the script checks that the
+shared token wraps a WETH contract and that it is the one `WETH_ADDRESS` names, because an
+automatic payout over any other token could never be finished. Expect `Using existing token:` followed by the
 `ConfidentialWETH` address (the same one as the `wrapped` entry), then an
 `AutoPayoutEndowmentNFT:` address, then:
 
@@ -154,7 +156,8 @@ unset PRIVATE_KEY
   see whether a contract was created, and if so use its address. Re-run the same command
   with `TOKEN_ADDRESS=<that address>` added; the script reuses the token instead of
   deploying another. For the wrapped variant it reads the WETH address from the token
-  itself, and refuses if your `WETH_ADDRESS` differs from it.
+  itself. It refuses if `WETH_ADDRESS` is not set, if it differs from what the token
+  reports, or if that address is not a WETH contract ("TOKEN_ADDRESS … does not wrap WETH").
 - **"WETH_ADDRESS … is not a WETH contract".** Before deploying the wrapper the script
   checks that `WETH_ADDRESS` has code, the symbol `WETH` and 18 decimals, as the
   pre-flight does. Fix the address (step 2) and re-run.

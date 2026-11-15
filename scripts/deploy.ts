@@ -1,7 +1,8 @@
 import { ethers, network } from "hardhat";
 import { readDeployments, upsertDeployment, type Deployment } from "../tasks/deployments";
-import { autoToken, deployRefusal, reusedUnderlying, sentLine } from "../tasks/deployGuard";
-import { redact, wethProblem } from "../tasks/preflight";
+import { autoToken, deployRefusal, sentLine } from "../tasks/deployGuard";
+import { redact } from "../tasks/preflight";
+import { reusedWrappedUnderlying, wethProblemAt } from "../tasks/wethCheck";
 
 // Deploys an EndowmentNFT with a confidential token and records it in
 // deployments/<network>.json so the task:* commands (and the web app) can find it.
@@ -10,8 +11,10 @@ import { redact, wethProblem } from "../tasks/preflight";
 //                  "wrapped" entry (or TOKEN_ADDRESS); default LABEL "auto"; TOKEN_KIND, if set, must be wrapped
 //   TOKEN_KIND     mock (default) | wrapped | plain
 //   LABEL          name of the entry in the deployment file (default: the token kind)
-//   WETH_ADDRESS   wrapped: the WETH to wrap, checked to be one (a MockWETH is deployed on localhost/hardhat if unset)
+//   WETH_ADDRESS   wrapped: the WETH to wrap, checked to be one (a MockWETH is deployed on localhost/hardhat if unset);
+//                  required on a public network when a wrapped token is reused, and must be its underlying
 //   TOKEN_ADDRESS  plain: an existing ERC7984 token; mock/wrapped: reuse this token instead of deploying one
+//                  (a reused wrapped token must wrap a WETH contract)
 //   CONFIRM_DEPLOY must equal the network name on a public network (e.g. sepolia)
 //   REPLACE        "1" to overwrite a label already recorded for this network
 // Deploys `name`, printing its address and transaction hash as soon as the transaction
@@ -27,15 +30,7 @@ async function deployContract(name: string, ...args: unknown[]) {
 
 // Refuses a WETH_ADDRESS that is not a WETH contract (the pre-flight's rule).
 async function checkWeth(address: string) {
-  const hasCode = (await ethers.provider.getCode(address)) !== "0x";
-  const c = new ethers.Contract(
-    address,
-    ["function symbol() view returns (string)", "function decimals() view returns (uint8)"],
-    ethers.provider,
-  );
-  const symbol = hasCode ? await c.symbol().then(String, () => null) : null;
-  const decimals = hasCode ? await c.decimals().then(Number, () => null) : null;
-  const problem = wethProblem({ address, hasCode, symbol, decimals });
+  const problem = await wethProblemAt(ethers.provider, address);
   if (problem) throw new Error(problem);
 }
 
@@ -97,10 +92,11 @@ async function main() {
   if (reuse) {
     tokenAddr = reuse;
     if (kind === "wrapped") {
-      const reported = await new ethers.Contract(reuse, ["function underlying() view returns (address)"], ethers.provider)
-        .underlying()
-        .then(String, () => null);
-      const r = reusedUnderlying({ reported, wethAddress: process.env.WETH_ADDRESS });
+      const r = await reusedWrappedUnderlying(ethers.provider, {
+        token: reuse,
+        wethAddress: process.env.WETH_ADDRESS,
+        isLocal,
+      });
       if ("refusal" in r) throw new Error(r.refusal);
       underlying = r.underlying;
     }

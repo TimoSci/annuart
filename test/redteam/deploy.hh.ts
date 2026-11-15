@@ -2,8 +2,7 @@ import { expect } from "chai";
 import { existsSync } from "fs";
 import { spawnSync } from "child_process";
 import { ethers } from "hardhat";
-import { reusedUnderlying } from "../../tasks/deployGuard";
-import { wethProblem } from "../../tasks/preflight";
+import { reusedWrappedUnderlying } from "../../tasks/wethCheck";
 
 // Task 9 (C5-1): the deploy script is the only guard that the token under an AutoPayoutEndowmentNFT
 // is a WETH wrapper (the contract itself only checks that underlying() is not the zero address).
@@ -60,37 +59,38 @@ describe("C5-1 deploy script refusals (script run for real, nothing sent)", func
 });
 
 describe("C5-1 the deploy script is the only WETH guard", () => {
-  // SECURE EXPECTATION: refuses a TOKEN_ADDRESS whose underlying() is not a WETH contract, as
-  // checkWeth already does for a WETH_ADDRESS the script wraps itself.
-  it("FINDING F-C5-1a: a wrapper over a non-WETH token passes the reused-token path and the contract accepts it", async () => {
-    const [deployer] = await ethers.getSigners();
+  async function wrapperOver(factory: string) {
+    const underlying = await (await ethers.getContractFactory(factory)).deploy();
+    const wrapper = await (await ethers.getContractFactory("ConfidentialWETH")).deploy(await underlying.getAddress());
+    return { underlying: await underlying.getAddress(), wrapper: await wrapper.getAddress() };
+  }
+
+  it("F-C5-1a (fixed): a reused wrapper over a non-WETH token is refused, with WETH_ADDRESS unset or set to that token", async () => {
     // Any contract can stand in as the "underlying": here the mock confidential token (symbol MOCK, 6 decimals).
-    const notWeth = await (await ethers.getContractFactory("MockConfidentialToken")).deploy();
-    const notWethAddr = await notWeth.getAddress();
-    const wrapper = await (await ethers.getContractFactory("ConfidentialWETH")).deploy(notWethAddr);
+    const bad = await wrapperOver("MockConfidentialToken");
+    for (const wethAddress of [undefined, bad.underlying]) {
+      const r = await reusedWrappedUnderlying(ethers.provider, { token: bad.wrapper, wethAddress, isLocal: true });
+      expect(r).to.have.property("refusal").match(/does not wrap WETH/);
+      expect(r).to.have.property("refusal").match(/symbol: MOCK, decimals: 6/);
+    }
+    const noCode = await reusedWrappedUnderlying(ethers.provider, { token: bad.underlying, wethAddress: undefined, isLocal: true });
+    expect(noCode).to.have.property("refusal").match(/not a ConfidentialWETH/);
+  });
 
-    // scripts/deploy.ts, reuse path, TOKEN_KIND=wrapped (also NFT_KIND=auto): it reads underlying()...
-    const reported = await new ethers.Contract(
-      await wrapper.getAddress(),
-      ["function underlying() view returns (address)"],
-      ethers.provider,
-    )
-      .underlying()
-      .then(String, () => null);
-    // ...and hands it to reusedUnderlying, with WETH_ADDRESS unset or set to that same address.
-    expect(reusedUnderlying({ reported, wethAddress: undefined })).to.deep.equal({ underlying: notWethAddr });
-    expect(reusedUnderlying({ reported, wethAddress: notWethAddr })).to.deep.equal({ underlying: notWethAddr });
+  it("F-C5-1a (fixed): a reused wrapper over WETH is accepted; on a public network only with WETH_ADDRESS naming that WETH", async () => {
+    const good = await wrapperOver("MockWETH");
+    expect(await reusedWrappedUnderlying(ethers.provider, { token: good.wrapper, wethAddress: undefined, isLocal: true }))
+      .to.deep.equal({ underlying: good.underlying });
+    expect(await reusedWrappedUnderlying(ethers.provider, { token: good.wrapper, wethAddress: good.underlying, isLocal: false }))
+      .to.deep.equal({ underlying: good.underlying });
+    // A token can call itself WETH, so on a public network the owner must name the WETH they expect.
+    expect(await reusedWrappedUnderlying(ethers.provider, { token: good.wrapper, wethAddress: undefined, isLocal: false }))
+      .to.have.property("refusal").match(/Set WETH_ADDRESS/);
+  });
 
-    // The WETH rule exists and would refuse it, but this path never applies it (checkWeth runs only
-    // when the script deploys the wrapper itself).
-    const symbol = await new ethers.Contract(notWethAddr, ["function symbol() view returns (string)"], ethers.provider)
-      .symbol()
-      .then(String, () => null);
-    expect(symbol).to.equal("MOCK");
-    expect(wethProblem({ address: notWethAddr, hasCode: true, symbol, decimals: 6 })).to.match(/is not a WETH contract/);
-
-    // And the contract takes it: NotWethWrapper fires only for the zero address.
-    const nft = await (await ethers.getContractFactory("AutoPayoutEndowmentNFT")).connect(deployer).deploy(await wrapper.getAddress());
-    expect(await nft.weth()).to.equal(notWethAddr);
+  it("C5-1: the contract itself refuses only a zero underlying, so the script's check is the only WETH guard", async () => {
+    const bad = await wrapperOver("MockConfidentialToken");
+    const nft = await (await ethers.getContractFactory("AutoPayoutEndowmentNFT")).deploy(bad.wrapper);
+    expect(await nft.weth()).to.equal(bad.underlying);
   });
 });

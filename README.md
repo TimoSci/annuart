@@ -252,7 +252,9 @@ Environment variables:
   where a `MockWETH` is deployed when it is unset. When set, the deploy refuses it unless it has
   code, the symbol `WETH` and 18 decimals.
 - `TOKEN_ADDRESS`: required for `plain`; for `mock` and `wrapped`, reuses that token instead of
-  deploying one (a wrapped token's `underlying` is read from the token itself).
+  deploying one. A wrapped token's `underlying` is read from the token itself and must be a
+  WETH contract (code, symbol `WETH`, 18 decimals); on a public network `WETH_ADDRESS` must
+  also be set and equal to it. `NFT_KIND=auto` reuses a token, so the same holds for it.
 - `CONFIRM_DEPLOY`: on a public network, must equal the network name. `REPLACE`: `1` overwrites a
   recorded label.
 

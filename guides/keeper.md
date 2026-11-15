@@ -41,12 +41,25 @@ smallest fee you are willing to pay gas for, in wei (1 ETH is 100000000000000000
 KEEPER_MIN_FEE=100000000000000 npx hardhat run scripts/keeper.ts --network localhost
 ```
 
-Due payouts whose fee is below that amount are then not requested. A payout that was
-already requested is still finished, whatever its fee, so nothing is left half done. The
+Due payouts expected to pay a fee below that amount are then not requested. The fee an
+owner sets is only an upper limit: the contract pays the fee or a tenth of the payout,
+whichever is less. So the keeper goes by the ENFT's last payout: it expects the set fee or
+a tenth of that payout, whichever is less. An ENFT that has never had a payout is judged by
+its set fee alone, so each one can cost you one payout before a small one is recognised.
+A payout that was already requested is still finished, whatever its fee, so nothing is left half done. The
 default is 0, which requests every due payout. The value must be a whole number written
 in digits only; anything else (a negative number, a decimal point, `1e15`) makes the
 script stop with `KEEPER_MIN_FEE must be a whole number of wei …` before it sends
 anything. The script prints the minimum it is using on the `Min fee:` line.
+
+### Waiting for a slow answer
+
+The keeper waits at most 60 seconds for one decryption, and for one transaction to be
+mined. After that it reports that ENFT as a failure for this run (`the decryption timed
+out after 60 s`, or `the transaction 0x… was not mined within 60 s`) and carries on with
+the others. Set `KEEPER_TIMEOUT` to another whole number of seconds if 60 is too short for
+the network, for example `KEEPER_TIMEOUT=300`. A transaction that timed out may still be
+mined later; the next run then finds the payout waiting and finishes it.
 
 ## Run it on the local chain
 
@@ -83,7 +96,7 @@ and sends nothing. Check that the `Keeper:` address it prints is the throwaway a
 you intended.
 
 If a transaction fails, the line says which ENFT (`auto #3: finishing: FAILED: …`), your
-RPC URL is shown as `<SEPOLIA_RPC_URL>`, a contract that cannot be read at all shows as `auto: reading tokens: FAILED: …` (counted as one failure), the other ENFTs are still handled, and the script
+RPC URL is shown as `<SEPOLIA_RPC_URL>`, an ENFT that cannot be read shows as `auto #3: reading: FAILED: …`, a contract that cannot be read at all shows as `auto: reading tokens: FAILED: …` (counted as one failure), the other ENFTs are still handled, and the script
 exits with a non-zero code. Run it again later; a payout that is requested but not yet
 finished is picked up first.
 

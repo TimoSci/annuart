@@ -1,17 +1,19 @@
 import { ethers, fhevm, network } from "hardhat";
 import { readDeployments } from "../tasks/deployments";
-import { keeperExitCode, keeperMinFee, keeperRefusal, runKeeperPass, type KeeperContract, type PublicDecrypt } from "../tasks/keeper";
+import { keeperExitCode, keeperMinFee, keeperRefusal, keeperTimeoutMs, runKeeperPass, type KeeperContract, type PublicDecrypt } from "../tasks/keeper";
 import { redact } from "../tasks/preflight";
 
 // One keeper pass: finishes pending automatic payouts, requests the due ones, and finishes
 // those too. Whoever runs it pays the gas and receives any fee the owners set.
 //
 //   KEEPER_INCLUDE_DRY  "1" to also request tokens whose last payout was zero
-//   KEEPER_MIN_FEE      wei; due tokens whose fee is below it are not requested (default 0)
+//   KEEPER_MIN_FEE      wei; due tokens expected to pay a fee below it are not requested (default 0)
+//   KEEPER_TIMEOUT      seconds to wait for one decryption or one mined transaction (default 60)
 //   CONFIRM_KEEPER      must equal the network name on a public network (e.g. sepolia)
 async function main() {
   // Checked first, so a mistyped value stops the run before anything is read or sent.
   const minFee = keeperMinFee(process.env.KEEPER_MIN_FEE);
+  const timeoutMs = keeperTimeoutMs(process.env.KEEPER_TIMEOUT);
   const isLocal = network.name === "localhost" || network.name === "hardhat";
   const signers = await ethers.getSigners();
   if (signers.length === 0) {
@@ -48,6 +50,7 @@ async function main() {
     publicDecrypt: (handles) => fhevm.publicDecrypt(handles as `0x${string}`[]) as unknown as ReturnType<PublicDecrypt>,
     includeDry: process.env.KEEPER_INCLUDE_DRY === "1",
     minFee,
+    timeoutMs,
     log: (line) => console.log(line),
     secrets: [process.env.SEPOLIA_RPC_URL],
   });

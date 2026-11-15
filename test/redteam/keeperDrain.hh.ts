@@ -100,7 +100,7 @@ function meter(e: Env, hooks: Hooks = {}) {
   return { m, c: c as unknown as KeeperContract & Record<string, any> };
 }
 
-async function pass(e: Env, o: { includeDry?: boolean; minFee?: bigint; hooks?: Hooks; contract?: any; decrypt?: any } = {}) {
+async function pass(e: Env, o: { includeDry?: boolean; minFee?: bigint; hooks?: Hooks; contract?: any; decrypt?: any; timeoutMs?: number } = {}) {
   const { m, c } = meter(e, o.hooks);
   const lines: string[] = [];
   const bal0 = await ethers.provider.getBalance(e.keeper.address);
@@ -109,6 +109,7 @@ async function pass(e: Env, o: { includeDry?: boolean; minFee?: bigint; hooks?: 
     publicDecrypt: o.decrypt ?? DECRYPT,
     includeDry: o.includeDry ?? false,
     minFee: o.minFee ?? 0n,
+    timeoutMs: o.timeoutMs,
     log: (l) => lines.push(l),
   });
   const bal1 = await ethers.provider.getBalance(e.keeper.address);
@@ -187,29 +188,31 @@ describe("Task 8 / C4-2: what can an attacker make a keeper spend", () => {
     expect(r.fees).to.equal(0n);
   });
 
-  it("FINDING F-C4-2a: dust-funded tokens defeat both defaults: every interval is requested, the keeper earns less than its gas, the attacker pays only the fee", async () => {
-    // 100k units (0.0001 ETH) in each token, 1 unit/s, hourly: a payout of ~3600 units (3.6e-6 ETH).
-    // The attacker is the recipient, so 90% of every payout comes back to him.
+  it("F-C4-2a (fixed): dust-funded tokens: a keeper with a minimum fee pays for one payout per token, then judges the fee by what was paid and stops", async () => {
+    // 100k units (0.0001 ETH) in each token, 1 unit/s, hourly: a payout of ~3600 units (3.6e-6 ETH),
+    // so a fee of ~3.6e-7 ETH however much is advertised. The attacker is the recipient.
     const tok: MintOpts = { funded: 100_000n, rate: 1, fee: 10n ** 18n };
-    for (const [label, cfg] of [
-      ["dust / default", {}],
-      ["dust / minFee=0.001 ETH", { minFee: 10n ** 15n }],
-      ["dust / includeDry", { includeDry: true }],
-    ] as const) {
+    const r = await campaign("dust / minFee=0.001 ETH", { minFee: 10n ** 15n }, tok);
+    // Never paid before, so only the advertised fee is known: requested once.
+    expect(r.rows[0].requested).to.equal(N);
+    expect(r.rows[0].income).to.be.lt(10n ** 15n * BigInt(N));
+    for (const row of r.rows.slice(1)) {
+      expect(row.requested).to.equal(0);
+      expect(row.finished).to.equal(0);
+      expect(row.keeperGas).to.equal(0n);
+    }
+  });
+
+  it("F-C4-2a: without a minimum fee the keeper still requests dust payouts every interval (the operator asked for no minimum)", async () => {
+    const tok: MintOpts = { funded: 100_000n, rate: 1, fee: 10n ** 18n };
+    for (const [label, cfg] of [["dust / default", {}], ["dust / includeDry", { includeDry: true }]] as const) {
       const r = await campaign(label, cfg, tok);
       for (const row of r.rows) {
-        // SECURE EXPECTATION: a keeper that sets a minimum fee should not be made to pay gas for
-        // a payout whose fee (10% of the payout) is far below that minimum.
         expect(row.requested).to.equal(N);
         expect(row.finished).to.equal(N);
         expect(row.income).to.be.gt(0n);
         expect(row.income).to.be.lt(row.gasWei / 100n); // earns under 1% of its gas
       }
-      // The attacker's per-interval cost equals what the keeper earned (the fee), and the keeper's gas
-      // is hundreds of times that: attacker pays ~1/N-th of a percent to burn the keeper's gas.
-      const perToken = r.rows[0].income / BigInt(N);
-      const gasPerToken = r.rows[0].gasWei / BigInt(N);
-      console.log(`    [C4-2] ${label}: keeper gas/attacker cost per token-interval = ${gasPerToken / perToken}x`);
     }
   });
 
@@ -419,31 +422,38 @@ describe("Task 8 / C5-5: keeper script review", () => {
     }
   });
 
-  it("FINDING F-C5-5a: one stalled call (a decrypt or a transaction wait that never returns) stops the whole pass; there is no timeout", async () => {
+  it("F-C5-5a (fixed): a decrypt that never answers times out: that token fails, the others finish, and a later pass finishes it", async () => {
     const e = await threeTokens();
     let first = true;
     const decrypt = (h: string[]) => {
       if (first) { first = false; return new Promise<never>(() => {}); } // relayer accepts the request and never answers
       return DECRYPT(h);
     };
-    // Token 1's requestPayout works; the first decrypt hangs. Everything after it is waiting.
-    const outcome = await Promise.race([
-      pass(e, { decrypt }).then(() => "finished"),
-      new Promise<string>((r) => setTimeout(() => r("stalled"), 3000)),
-    ]);
-    // SECURE EXPECTATION: a per-call timeout (or running the tokens independently) would let the pass
-    // fail that token and finish the other two.
-    expect(outcome).to.equal("stalled");
-    // The hung call came after token 1 and 2 and 3 were all requested, so none of them got finalised
-    // beyond whatever ran before it: 0 of 3 payouts are finalised yet.
-    const finished = (await e.nft.queryFilter(e.nft.filters.PayoutPaid())).length;
-    expect(finished).to.equal(0);
+    const p = await pass(e, { decrypt, timeoutMs: 300 });
+    expect(p.res).to.deep.equal({ requested: 3, finished: 2, failed: 1 });
+    expect(p.lines.join("\n")).to.match(/auto #1: finishing: FAILED: the decryption timed out after 0\.3 s/);
+    expect((await e.nft.queryFilter(e.nft.filters.PayoutPaid())).length).to.equal(2);
+    expect((await pass(e)).res).to.deep.equal({ requested: 0, finished: 1, failed: 0 });
   });
 
-  it("FINDING F-C5-5b: one unreadable token aborts the scan of its whole contract, including pending payouts that are owed", async () => {
+  it("F-C5-5a (fixed): a transaction wait that never returns times out: that token fails and the others are requested and finished", async () => {
     const e = await threeTokens();
-    // Token 1 has a pending payout; the keeper should finish it. Token 2's read fails (a transient RPC error
-    // or a token whose view call exceeds the node's eth_call gas cap).
+    const { c } = meter(e);
+    const request = c.requestPayout;
+    c.requestPayout = async (id: bigint, min: bigint) => {
+      const tx = await request(id, min);
+      return id === 1n ? { hash: tx.hash, wait: () => new Promise<never>(() => {}) } : tx;
+    };
+    const p = await pass(e, { contract: c, timeoutMs: 300 });
+    expect(p.res).to.deep.equal({ requested: 2, finished: 2, failed: 1 });
+    expect(p.lines.join("\n")).to.match(/auto #1: requesting: FAILED: the transaction 0x[0-9a-f]{64} was not mined within 0\.3 s/);
+    // Token 1's request was in fact mined, so the next pass finds it pending and finishes it.
+    expect((await pass(e)).res).to.deep.equal({ requested: 0, finished: 1, failed: 0 });
+  });
+
+  it("F-C5-5b (fixed): one unreadable token fails alone: a pending payout is still finished and a due one still requested", async () => {
+    const e = await threeTokens();
+    // Token 1 has a pending payout. Token 2's read fails (a transient RPC error or rate limit).
     await (await (e.nft.connect(e.keeper) as any).requestPayout(1n, 0n)).wait();
     const real = e.nft.connect(e.keeper) as any;
     const stub = {
@@ -451,20 +461,18 @@ describe("Task 8 / C5-5: keeper script review", () => {
       autoPayoutOf: async (i: bigint) => { if (i === 2n) throw new Error("eth_call exceeded gas cap"); return real.autoPayoutOf(i); },
     };
     const p = await pass(e, { contract: stub });
-    // SECURE EXPECTATION: tokens 1 and 3 (finish, and a due request) should still be processed.
-    expect(p.res).to.deep.equal({ requested: 0, finished: 0, failed: 1 });
-    expect(p.lines.join("\n")).to.match(/auto: reading tokens: FAILED: eth_call exceeded gas cap/);
-    expect((await e.nft.pendingPayoutOf(1n)).requestId).to.not.equal(ethers.ZeroHash);
+    expect(p.res).to.deep.equal({ requested: 1, finished: 2, failed: 1 });
+    expect(p.lines.join("\n")).to.match(/auto #2: reading: FAILED: eth_call exceeded gas cap/);
+    expect((await e.nft.pendingPayoutOf(1n)).requestId).to.equal(ethers.ZeroHash);
+    expect((await e.nft.queryFilter(e.nft.filters.PayoutRequested(2n))).length).to.equal(0);
   });
 
-  it("FINDING F-C5-5c: the scan reads every token ever minted, four calls each, every pass; anyone can grow it", async () => {
+  it("F-C5-5c (reduced): a token that is neither due nor pending costs two reads per pass, not four", async () => {
     const e = await env();
-    const mintCost: bigint[] = [];
-    for (let i = 0; i < 8; i++) mintCost.push((await mintOne(e, { funded: 0n, enabled: false })).mintGas);
+    for (let i = 0; i < 8; i++) await mintOne(e, { funded: 0n, enabled: false });
     const { m, res } = await pass(e);
-    // SECURE EXPECTATION: tokens with payouts off need no per-pass reads once known (cache), or the scan is bounded.
     expect(res).to.deep.equal({ requested: 0, finished: 0, failed: 0 });
-    expect(m.calls).to.equal(1 + 4 * 8);
-    console.log(`    [C5-5] 8 disabled tokens: ${m.calls} RPC calls per pass; each costs the attacker ${mintCost[0]} gas once`);
+    // totalMinted, then pendingPayoutOf and payoutDue for each. The scan still grows with every token minted.
+    expect(m.calls).to.equal(1 + 2 * 8);
   });
 });

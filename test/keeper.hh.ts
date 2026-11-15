@@ -1,10 +1,10 @@
 import { expect } from "chai";
 import { ethers, fhevm } from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
-import { keeperExitCode, keeperMinFee, keeperPlan, keeperRefusal, runKeeperPass, type KeeperToken } from "../tasks/keeper";
+import { keeperExitCode, keeperMinFee, keeperPlan, keeperTimeoutMs, keeperRefusal, runKeeperPass, type KeeperToken } from "../tasks/keeper";
 
 const t = (tokenId: bigint, o: Partial<KeeperToken> = {}): KeeperToken => ({
-  tokenId, pending: false, due: false, lastPaidZero: false, fee: 0n, ...o,
+  tokenId, pending: false, due: false, lastPaidWei: null, fee: 0n, ...o,
 });
 
 describe("keeperPlan", () => {
@@ -13,14 +13,25 @@ describe("keeperPlan", () => {
   it("requests due tokens", () =>
     expect(keeperPlan([t(1n, { due: true }), t(2n, { due: true })], { includeDry: false, minFee: 0n })).to.deep.equal({ finish: [], request: [1n, 2n] }));
   it("leaves out due tokens whose last payout was zero", () =>
-    expect(keeperPlan([t(1n, { due: true, lastPaidZero: true }), t(2n, { due: true })], { includeDry: false, minFee: 0n })).to.deep.equal({ finish: [], request: [2n] }));
+    expect(keeperPlan([t(1n, { due: true, lastPaidWei: 0n }), t(2n, { due: true })], { includeDry: false, minFee: 0n })).to.deep.equal({ finish: [], request: [2n] }));
   it("includes them with includeDry", () =>
-    expect(keeperPlan([t(1n, { due: true, lastPaidZero: true })], { includeDry: true, minFee: 0n })).to.deep.equal({ finish: [], request: [1n] }));
+    expect(keeperPlan([t(1n, { due: true, lastPaidWei: 0n })], { includeDry: true, minFee: 0n })).to.deep.equal({ finish: [], request: [1n] }));
   it("lists a pending and due token only in finish", () =>
     expect(keeperPlan([t(1n, { pending: true, due: true })], { includeDry: true, minFee: 0n })).to.deep.equal({ finish: [1n], request: [] }));
   it("leaves out a due token whose fee is below minFee and requests one at or above it", () =>
     expect(keeperPlan([t(1n, { due: true, fee: 99n }), t(2n, { due: true, fee: 100n }), t(3n, { due: true, fee: 101n })],
       { includeDry: false, minFee: 100n })).to.deep.equal({ finish: [], request: [2n, 3n] }));
+  // The contract pays the requester min(fee, payout / 10), so an advertised fee says little.
+  it("judges minFee by a tenth of the last payout when that is less than the advertised fee", () =>
+    expect(keeperPlan([
+      t(1n, { due: true, fee: 10n ** 18n, lastPaidWei: 999n }),  // would pay 99
+      t(2n, { due: true, fee: 10n ** 18n, lastPaidWei: 1000n }), // would pay 100
+      t(3n, { due: true, fee: 50n, lastPaidWei: 1_000_000n }),   // would pay its fee, 50
+      t(4n, { due: true, fee: 100n, lastPaidWei: null }),        // never paid: only the fee is known
+    ], { includeDry: false, minFee: 100n })).to.deep.equal({ finish: [], request: [2n, 4n] }));
+  it("with a minFee, leaves out a token whose last payout was zero even with includeDry", () =>
+    expect(keeperPlan([t(1n, { due: true, fee: 10n ** 18n, lastPaidWei: 0n })], { includeDry: true, minFee: 1n }))
+      .to.deep.equal({ finish: [], request: [] }));
   it("still finishes a pending token whose fee is below minFee", () =>
     expect(keeperPlan([t(1n, { pending: true, fee: 0n })], { includeDry: false, minFee: 100n })).to.deep.equal({ finish: [1n], request: [] }));
 });
@@ -36,6 +47,17 @@ describe("keeperMinFee", () => {
   });
   for (const bad of ["-1", "1.5", "1e15", "0x10", "abc", " 12", "12 "]) {
     it(`refuses ${JSON.stringify(bad)}`, () => expect(() => keeperMinFee(bad)).to.throw(/KEEPER_MIN_FEE must be a whole number of wei/));
+  }
+});
+
+describe("keeperTimeoutMs", () => {
+  it("is 60 seconds when unset or empty", () => {
+    expect(keeperTimeoutMs(undefined)).to.equal(60_000);
+    expect(keeperTimeoutMs("")).to.equal(60_000);
+  });
+  it("reads whole seconds", () => expect(keeperTimeoutMs("300")).to.equal(300_000));
+  for (const bad of ["0", "-1", "1.5", "abc", " 12"]) {
+    it(`refuses ${JSON.stringify(bad)}`, () => expect(() => keeperTimeoutMs(bad)).to.throw(/KEEPER_TIMEOUT must be a whole number of seconds/));
   }
 });
 

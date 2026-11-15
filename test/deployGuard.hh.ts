@@ -31,18 +31,22 @@ describe("deployRefusal", () => {
 describe("reusedUnderlying", () => {
   const w = "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14";
   it("takes what the token reports", () =>
-    expect(reusedUnderlying({ reported: w, wethAddress: undefined })).to.deep.equal({ underlying: w }));
+    expect(reusedUnderlying({ reported: w, wethAddress: undefined, isLocal: true })).to.deep.equal({ underlying: w }));
   it("accepts WETH_ADDRESS in a different case", () =>
-    expect(reusedUnderlying({ reported: w, wethAddress: w.toLowerCase() })).to.deep.equal({ underlying: w }));
+    expect(reusedUnderlying({ reported: w, wethAddress: w.toLowerCase(), isLocal: true })).to.deep.equal({ underlying: w }));
   it("refuses a WETH_ADDRESS that differs, naming both", () => {
     const other = "0x" + "2".repeat(40);
-    const r = reusedUnderlying({ reported: w, wethAddress: other }) as { refusal: string };
+    const r = reusedUnderlying({ reported: w, wethAddress: other, isLocal: true }) as { refusal: string };
     expect(r.refusal).to.include(w).and.include(other);
   });
+  it("on a public network, refuses without a WETH_ADDRESS to compare with", () =>
+    expect(reusedUnderlying({ reported: w, wethAddress: undefined, isLocal: false })).to.have.property("refusal").match(/Set WETH_ADDRESS/));
+  it("on a public network, accepts a matching WETH_ADDRESS", () =>
+    expect(reusedUnderlying({ reported: w, wethAddress: w, isLocal: false })).to.deep.equal({ underlying: w }));
   it("refuses the zero address", () =>
-    expect(reusedUnderlying({ reported: "0x" + "0".repeat(40), wethAddress: undefined })).to.have.property("refusal").match(/not a ConfidentialWETH/));
+    expect(reusedUnderlying({ reported: "0x" + "0".repeat(40), wethAddress: undefined, isLocal: true })).to.have.property("refusal").match(/not a ConfidentialWETH/));
   it("refuses an unreadable underlying", () =>
-    expect(reusedUnderlying({ reported: null, wethAddress: w })).to.have.property("refusal").match(/not a ConfidentialWETH/));
+    expect(reusedUnderlying({ reported: null, wethAddress: w, isLocal: true })).to.have.property("refusal").match(/not a ConfidentialWETH/));
 });
 
 describe("sentLine", () => {

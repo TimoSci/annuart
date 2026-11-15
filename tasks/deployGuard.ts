@@ -25,14 +25,18 @@ export function deployRefusal(i: GuardInput): string | null {
 }
 
 // For a reused wrapped token: what the token itself reports as its underlying is the truth.
-// `reported` is null when the underlying() call failed.
-export function reusedUnderlying(i: { reported: string | null; wethAddress: string | undefined }):
+// `reported` is null when the underlying() call failed. On a public network the owner must
+// also name the WETH they expect, because any token can call itself WETH.
+export function reusedUnderlying(i: { reported: string | null; wethAddress: string | undefined; isLocal: boolean }):
   { underlying: string } | { refusal: string } {
   if (i.reported === null || /^0x0{40}$/i.test(i.reported)) {
     return { refusal: "TOKEN_ADDRESS is not a ConfidentialWETH: its underlying() could not be read or is the zero address." };
   }
   if (i.wethAddress && i.wethAddress.toLowerCase() !== i.reported.toLowerCase()) {
     return { refusal: `WETH_ADDRESS ${i.wethAddress} differs from the underlying the token reports (${i.reported}). Unset WETH_ADDRESS or fix it.` };
+  }
+  if (!i.isLocal && !i.wethAddress) {
+    return { refusal: `Set WETH_ADDRESS to the WETH contract you expect the token to wrap. The token reports ${i.reported}; check that address before using it.` };
   }
   return { underlying: i.reported };
 }
