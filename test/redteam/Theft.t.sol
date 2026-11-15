@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {FHE, euint64, externalEuint64} from "@fhevm/solidity/lib/FHE.sol";
-import {ACL} from "@fhevm/host-contracts/contracts/ACL.sol";
+import {euint64, externalEuint64} from "@fhevm/solidity/lib/FHE.sol";
 import {InputVerifier} from "@fhevm/host-contracts/contracts/InputVerifier.sol";
 import {ERC7984} from "@openzeppelin/confidential-contracts/token/ERC7984/ERC7984.sol";
 import {IERC7984} from "@openzeppelin/confidential-contracts/interfaces/IERC7984.sol";
@@ -427,10 +426,8 @@ contract TheftTest is RedTeamBase {
         vm.expectPartialRevert(InputVerifier.InvalidSigner.selector);
         vm.prank(mallory);
         enft.mint(mallory, h, p, _seg(1000, 1), 0, false, bytes32(0));
-        // the used input handle, with no proof, is not usable by the attacker either
-        vm.expectRevert(
-            abi.encodeWithSelector(FHE.SenderNotAllowedToUseHandle.selector, externalEuint64.unwrap(h), mallory)
-        );
+        // the used input handle, with no proof, is refused before it is even looked at
+        vm.expectRevert(EndowmentNFT.EmptyInputProof.selector);
         vm.prank(mallory);
         enft.mint(mallory, h, "", _seg(1000, 1), 0, false, bytes32(0));
 
@@ -467,8 +464,8 @@ contract TheftTest is RedTeamBase {
     }
 
     /// Existing handles passed as the external input with an empty proof: a victim's balance,
-    /// another token's distribution and endowmentRemaining, and the attacker's own balance
-    /// (which the NFT contract may not use).
+    /// another token's distribution and endowmentRemaining, and the attacker's own balance.
+    /// Every one is refused for the empty proof alone, whoever may use the handle.
     function test_C2_4_existingHandleAsInput_reverts() public {
         _fundMock(alice, 1000);
         _fundMock(mallory, 1000);
@@ -484,16 +481,16 @@ contract TheftTest is RedTeamBase {
         ];
         for (uint256 i = 0; i < foreign.length; i++) {
             externalEuint64 h = externalEuint64.wrap(foreign[i]);
-            vm.expectRevert(abi.encodeWithSelector(FHE.SenderNotAllowedToUseHandle.selector, foreign[i], mallory));
+            vm.expectRevert(EndowmentNFT.EmptyInputProof.selector);
             vm.prank(mallory);
             enft.mint(mallory, h, "", _seg(1000, 1), 0, false, bytes32(0));
-            vm.expectRevert(abi.encodeWithSelector(FHE.SenderNotAllowedToUseHandle.selector, foreign[i], mallory));
+            vm.expectRevert(EndowmentNFT.EmptyInputProof.selector);
             vm.prank(mallory);
             enft.topUp(id, h, "");
         }
 
         externalEuint64 own = externalEuint64.wrap(euint64.unwrap(mock.confidentialBalanceOf(mallory)));
-        vm.expectRevert(abi.encodeWithSelector(ACL.SenderNotAllowed.selector, address(enft)));
+        vm.expectRevert(EndowmentNFT.EmptyInputProof.selector);
         vm.prank(mallory);
         enft.mint(mallory, own, "", _seg(1000, 1), 0, false, bytes32(0));
 
@@ -503,39 +500,37 @@ contract TheftTest is RedTeamBase {
         assertEq(_dist(enft, id), 100);
     }
 
-    /// F-C2-4a (Low). A handle that both the caller and the NFT contract may use (here the
-    /// caller's own token's current distribution) is accepted as the deposit amount with an
-    /// empty proof. It only sets the amount: the funds still come from the caller, and the
-    /// source token is untouched.
-    // SECURE EXPECTATION: mint and topUp revert when inputProof is empty, so the amount can
-    // only come from a fresh encrypted input bound to the caller and this contract.
-    function test_FINDING_C2_4a_ownDistributionAsInput_acceptedWithoutProof() public {
+    /// F-C2-4a (fixed). A handle that both the caller and the NFT contract may use (here the
+    /// caller's own token's current distribution) used to be accepted as the deposit amount
+    /// with an empty proof. mint and topUp now refuse an empty proof, so an amount can only
+    /// come from a fresh encrypted input bound to the caller and this contract.
+    function test_C2_4a_ownDistributionAsInput_emptyProof_reverts() public {
         uint256 src = _mintSimple(mallory, 500, true);
         vm.warp(block.timestamp + 100);
         enft.accrue(src); // distribution 100, readable by mallory and the NFT contract
         _fundMock(mallory, 1000);
         _authorise(mallory, enft);
-        _fundMock(alice, 1000);
-        _authorise(alice, enft);
 
         externalEuint64 h = externalEuint64.wrap(euint64.unwrap(enft.distributionHandle(src)));
+        vm.expectRevert(EndowmentNFT.EmptyInputProof.selector);
         vm.prank(mallory);
-        uint256 m = enft.mint(mallory, h, "", _seg(1000, 1), 0, false, bytes32(0));
+        enft.mint(mallory, h, "", _seg(1000, 1), 0, false, bytes32(0));
+        vm.expectRevert(EndowmentNFT.EmptyInputProof.selector);
         vm.prank(mallory);
         enft.topUp(src, h, "");
 
-        assertEq(_endow(enft, m), 100);
-        assertEq(_endow(enft, src), 500); // 400 left + 100 topped up by mallory
-        assertEq(_bal(mock, mallory), 800, "both deposits came from the caller");
-        assertEq(_bal(mock, alice), 1000);
+        assertEq(_bal(mock, mallory), 1000, "a refused deposit moved the caller's funds");
+        assertEq(_endow(enft, src), 400, "a refused top-up was credited");
         assertEq(_dist(enft, src), 100, "source distribution touched");
-        assertEq(_bal(mock, address(enft)), 500 + 200);
+        assertEq(_bal(mock, address(enft)), 500, "pool changed");
+        vm.expectRevert(EndowmentNFT.NonexistentToken.selector);
+        enft.scheduleOf(src + 1); // the refused mint created no token
     }
 
-    /// F-C2-4a. A previous owner still holds ACL on the distribution handle that was current
-    /// before the transfer (never revoked; the NFT contract holds it too) and can deposit with it.
-    // SECURE EXPECTATION: mint reverts because inputProof is empty.
-    function test_FINDING_C2_4a_previousOwnerOldDistributionAsInput_accepted() public {
+    /// F-C2-4a (fixed). A previous owner still holds ACL on the distribution handle that was
+    /// current before the transfer (never revoked; the NFT contract holds it too), but can no
+    /// longer deposit with it.
+    function test_C2_4a_previousOwnerOldDistributionAsInput_emptyProof_reverts() public {
         uint256 id = _mintSimple(alice, 500, false);
         vm.warp(block.timestamp + 100);
         enft.accrue(id);
@@ -547,26 +542,24 @@ contract TheftTest is RedTeamBase {
         _authorise(alice, enft);
 
         externalEuint64 h = externalEuint64.wrap(euint64.unwrap(old));
+        vm.expectRevert(EndowmentNFT.EmptyInputProof.selector);
         vm.prank(alice);
-        uint256 m = enft.mint(alice, h, "", _seg(1000, 1), 0, false, bytes32(0));
+        enft.mint(alice, h, "", _seg(1000, 1), 0, false, bytes32(0));
 
-        assertEq(_endow(enft, m), 100);
-        assertEq(_bal(mock, alice), 900, "deposit came from the caller");
+        assertEq(_bal(mock, alice), 1000, "a refused deposit moved the caller's funds");
         assertEq(_dist(enft, id), 100, "bob's distribution touched");
         vm.prank(bob);
         enft.claim(id);
         assertEq(_bal(mock, bob), 100);
     }
 
-    /// F-C2-4a, strongest member of the usable set. A contract the victim made an operator moves
-    /// 300 of the victim's tokens to the NFT contract and, in the same transaction, passes the
-    /// resulting `transferred` handle to mint with an empty proof. It holds only a transient
-    /// grant on that handle, so it could not user-decrypt it; but its value (300, or 0 had the
-    /// victim been short) now shows up in the caller's own balance. The caller learns whether
-    /// the victim held 300, which its operator right already let it learn (and the victim's
-    /// 300 moves only because of that right; the NFT contract credits it to no token).
-    // SECURE EXPECTATION: mint reverts because inputProof is empty.
-    function test_FINDING_C2_4a_operatorTransientHandleAsInput_accepted() public {
+    /// F-C2-4a (fixed), strongest member of the old usable set. A contract the victim made an
+    /// operator moves 300 of the victim's tokens to the NFT contract and, in the same
+    /// transaction, passes the resulting `transferred` handle to mint with an empty proof.
+    /// That used to size a deposit by a value the caller did not know. The mint now reverts,
+    /// and takes the whole transaction with it, so the victim's tokens never move.
+    function test_C2_4a_operatorTransientHandleAsInput_emptyProof_reverts() public {
+        _mintSimple(bob, 10, false); // an honest deposit, so the pool holds a known 10
         OperatorCaller op = new OperatorCaller();
         _fundMock(alice, 1000);
         vm.prank(alice);
@@ -575,15 +568,40 @@ contract TheftTest is RedTeamBase {
         op.authorise(mock, address(enft));
         (externalEuint64 h, bytes memory p) = _enc(300, address(op), address(mock));
 
-        uint256 m = op.run(mock, enft, alice, h, p);
+        vm.expectRevert(EndowmentNFT.EmptyInputProof.selector);
+        op.run(mock, enft, alice, h, p);
 
-        bytes32 t = op.transferred();
-        assertFalse(_acl.persistAllowed(t, address(op)), "caller had a persistent grant");
-        assertTrue(_acl.persistAllowed(t, address(enft)));
-        assertEq(_endow(enft, m), 300, "deposit sized by the transient handle");
-        assertEq(_bal(mock, address(op)), 700, "deposit came from the caller");
-        assertEq(_bal(mock, alice), 700, "moved by the operator right");
-        assertEq(_bal(mock, address(enft)), 600, "victim's 300 sits uncredited in the pool");
+        assertEq(op.transferred(), bytes32(0), "the operator transfer was kept");
+        assertEq(_bal(mock, address(op)), 1000, "a refused deposit moved the caller's funds");
+        assertEq(_bal(mock, alice), 1000, "victim's tokens moved");
+        assertEq(_bal(mock, address(enft)), 10, "pool changed");
+    }
+
+    /// F-C2-4a (fixed). A zero handle with an empty proof used to stand for an encrypted zero,
+    /// so a token could be minted, or topped up, with no input at all. All three deposit
+    /// entry points refuse it: mint, topUp and mintAuto.
+    function test_C2_4a_zeroHandle_emptyProof_reverts() public {
+        uint256 id = _mintSimple(bob, 500, true);
+        _fundMock(mallory, 1000);
+        _authorise(mallory, enft);
+        _fundCweth(mallory, 1000);
+        _authorise(mallory, apnft);
+        externalEuint64 zero = externalEuint64.wrap(bytes32(0));
+
+        vm.expectRevert(EndowmentNFT.EmptyInputProof.selector);
+        vm.prank(mallory);
+        enft.mint(mallory, zero, "", _seg(1000, 1), 0, false, bytes32(0));
+        vm.expectRevert(EndowmentNFT.EmptyInputProof.selector);
+        vm.prank(mallory);
+        enft.topUp(id, zero, "");
+        vm.expectRevert(EndowmentNFT.EmptyInputProof.selector);
+        vm.prank(mallory);
+        apnft.mintAuto(mallory, zero, "", _seg(1000, 1), 0, false, bytes32(0), true, 3600, 0);
+
+        assertEq(apnft.totalMinted(), 0, "a refused mintAuto created a token");
+        assertEq(_endow(enft, id), 500, "a refused top-up was credited");
+        assertEq(_bal(mock, mallory), 1000);
+        assertEq(_bal(cweth, mallory), 1000);
     }
 
     // =====================================================================

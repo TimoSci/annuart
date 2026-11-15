@@ -305,6 +305,10 @@ and any attempt to user-decrypt the endowment handle is rejected by the FHEVM AC
 - A final segment with `duration = 2^64 - 1` is indefinite and must have a non-zero rate.
 - `scheduleStart` plus all fixed (non-indefinite) durations must stay below `2^64 - 1`, else
   `mint` reverts `ScheduleTooLong`.
+- A schedule has at most 256 segments (`MAX_SEGMENTS`), else `mint` and `mintAuto` revert
+  `TooManySegments`.
+- `mint`, `mintAuto` and `topUp` take a fresh encrypted input only: an empty input proof
+  reverts `EmptyInputProof`.
 - cWETH has 9 decimals.
 
 For ad-hoc exploration, `npx hardhat console --network localhost` exposes `ethers` and

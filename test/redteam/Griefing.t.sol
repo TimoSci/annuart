@@ -14,12 +14,11 @@ import {Segment, INDEFINITE} from "../../src/libraries/Schedule.sol";
 /// @dev Task 7: breaking the contracts. Gas bombs (C4-1), stuck payouts (C4-3), time edges
 ///      (C4-5), ERC-721 corner cases (C4-6) and donation order dependence (C4-8).
 contract GriefingTest is RedTeamBase {
-    // Block gas limits to report against (Sepolia could not be pinned to one number; see report).
+    // Block gas limit to report against (Sepolia could not be pinned to one number; see report).
     uint256 internal constant LIMIT_30M = 30_000_000;
-    uint256 internal constant LIMIT_60M = 60_000_000;
 
     /// @dev An N-segment schedule, each segment 1e6 s at 1 unit/s. Finite end = start + N*1e6,
-    ///      which stays far below type(uint64).max for any N a block can mint.
+    ///      which stays far below type(uint64).max for any N used here.
     function _bigSchedule(uint64 n) internal pure returns (Segment[] memory s) {
         s = new Segment[](n);
         for (uint64 i = 0; i < n; i++) {
@@ -28,7 +27,7 @@ contract GriefingTest is RedTeamBase {
     }
 
     // =====================================================================================
-    // C4-1  Gas bombs: unbounded schedule length
+    // C4-1  Gas bombs: schedule length (capped at 256 segments since the F-C4-1 fix)
     // =====================================================================================
 
     struct Row {
@@ -93,9 +92,9 @@ contract GriefingTest is RedTeamBase {
         gRequest = g0 - gasleft();
     }
 
-    /// C4-1: measure every looping operation at 1/10/100/1000 segments, and show mint is the
-    ///       gas ceiling: at 1000 segments mint costs more than accrue, claim, transfer and
-    ///       requestPayout, so any token a single mint can create stays operable.
+    /// C4-1: measure every looping operation at 1/10/100 segments and at the cap of 256, and
+    ///       show mint is the gas ceiling: at the cap mint costs more than accrue, claim,
+    ///       transfer and requestPayout, and each of those stays under 5% of a 30M block.
     function test_C4_1_gasScaling_mintIsTheCeiling() public {
         // Harness relaxation (mock only, not a contract property): this one test runs many
         // logical transactions in a single test tx, which trips the mock's per-tx HCU depth
@@ -105,7 +104,7 @@ contract GriefingTest is RedTeamBase {
         // lets the measurement proceed. Per-call HCU on Sepolia is C5-3.
         disableHCUDepthLimit();
 
-        uint64[4] memory ns = [uint64(1), 10, 100, 1000];
+        uint64[4] memory ns = [uint64(1), 10, 100, 256];
         Row memory last;
         for (uint256 i = 0; i < ns.length; i++) {
             Row memory r;
@@ -119,53 +118,57 @@ contract GriefingTest is RedTeamBase {
             console2.log("  transfer  ", r.transfer);
             console2.log("  mintAuto  ", r.mintAuto);
             console2.log("  request   ", r.request);
-            if (r.n == 1000) last = r;
+            if (r.n == 256) last = r;
         }
 
-        // SECURE EXPECTATION: a fixed per-token segment cap (e.g. a few hundred) would keep
-        // these O(1). Unbounded, they grow linearly -- but mint, which SSTOREs every segment,
-        // grows ~10x faster per segment than the SLOAD-bound read operations, so mint is the
-        // binding constraint. A token small enough to mint is small enough to use.
-        assertGt(last.mint, last.accrue, "mint must cost more than accrue at N=1000");
-        assertGt(last.mint, last.claim, "mint must cost more than claim at N=1000");
-        assertGt(last.mint, last.transfer, "mint must cost more than transfer at N=1000");
-        assertGt(last.mintAuto, last.request, "mintAuto must cost more than requestPayout at N=1000");
+        // The loops grow linearly with the schedule, and mint, which SSTOREs every segment,
+        // grows ~15-20x faster per segment than the SLOAD-bound read operations. With the
+        // length capped at 256, the growth stops here.
+        assertGt(last.mint, last.accrue, "mint must cost more than accrue at the cap");
+        assertGt(last.mint, last.claim, "mint must cost more than claim at the cap");
+        assertGt(last.mint, last.transfer, "mint must cost more than transfer at the cap");
+        assertGt(last.mintAuto, last.request, "mintAuto must cost more than requestPayout at the cap");
+        assertLt(last.accrue, LIMIT_30M / 20, "accrue at the cap must stay under 5% of a 30M block");
+        assertLt(last.claim, LIMIT_30M / 20, "claim at the cap must stay under 5% of a 30M block");
+        assertLt(last.transfer, LIMIT_30M / 20, "transfer at the cap must stay under 5% of a 30M block");
+        assertLt(last.request, LIMIT_30M / 20, "requestPayout at the cap must stay under 5% of a 30M block");
     }
 
-    /// @dev Mints an N-segment token on `enft` to `creator` and returns only the mint gas.
-    function _mintGasOnly(uint64 n) internal returns (uint256 gMint) {
-        uint64 amount = 1_000_000;
-        _fundMock(creator, amount);
+    /// C4-1 (fixed): a schedule may have at most 256 segments. One more is refused by mint and
+    ///       by mintAuto, as is the 1211-segment token that used to fill a 30M block, and a
+    ///       refused mint moves no funds.
+    function test_C4_1_scheduleAboveSegmentCap_reverts() public {
+        _fundMock(creator, 1_000_000);
         _authorise(creator, enft);
-        Segment[] memory s = _bigSchedule(n);
-        (externalEuint64 h, bytes memory p) = _enc(amount, creator, address(enft));
+        _fundCweth(creator, 1_000_000);
+        _authorise(creator, apnft);
+        (externalEuint64 h, bytes memory p) = _enc(1_000_000, creator, address(enft));
+        (externalEuint64 hAuto, bytes memory pAuto) = _enc(1_000_000, creator, address(apnft));
+
+        Segment[] memory s = _bigSchedule(257);
+        vm.expectRevert(EndowmentNFT.TooManySegments.selector);
         vm.prank(creator);
-        uint256 g0 = gasleft();
-        enft.mint(creator, h, p, s, uint64(block.timestamp), false, bytes32(0));
-        gMint = g0 - gasleft();
+        enft.mint(alice, h, p, s, uint64(block.timestamp), false, bytes32(0));
+        vm.expectRevert(EndowmentNFT.TooManySegments.selector);
+        vm.prank(creator);
+        apnft.mintAuto(alice, hAuto, pAuto, s, uint64(block.timestamp), false, bytes32(0), true, 3600, 0);
+
+        s = _bigSchedule(1211);
+        vm.expectRevert(EndowmentNFT.TooManySegments.selector);
+        vm.prank(creator);
+        enft.mint(alice, h, p, s, uint64(block.timestamp), false, bytes32(0));
+
+        assertEq(_bal(IERC7984(address(mock)), creator), 1_000_000, "a refused mint moved funds");
+        assertEq(_bal(IERC7984(address(cweth)), creator), 1_000_000, "a refused mintAuto moved funds");
+        assertEq(apnft.totalMinted(), 0, "a refused mintAuto created a token");
     }
 
-    /// C4-1: find the largest schedule one mint fits in a block, mint it (handing it to a
-    ///       victim), and prove the token is still claimable and transferable within the same
-    ///       block limit -- i.e. a mintable token can never be bricked by its own length.
-    function test_C4_1_largestMintableToken_staysClaimableAndTransferable() public {
-        // Derive the mint-gas slope from two measured points on the same deployment.
-        uint256 gMint100 = _mintGasOnly(100);
-        uint256 gMint1000 = _mintGasOnly(1000);
-        uint256 slope = (gMint1000 - gMint100) / 900; // gas per extra segment
-        uint256 intercept = gMint100 - slope * 100;
-        // casts are safe: the quotients are ~1200 and ~2500, far within uint64.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint64 nMax30 = uint64((LIMIT_30M - intercept) / slope);
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint64 nMax60 = uint64((LIMIT_60M - intercept) / slope);
-        console2.log("mint gas/segment", slope);
-        console2.log("largest mint <= 30M block, segments", nMax30);
-        console2.log("largest mint <= 60M block, segments", nMax60);
-
-        // Mint the largest 30M-block token straight into a victim's wallet (to = alice),
-        // with a safety margin so the measured mint stays under 30M.
-        uint64 n = nMax30 - 20;
+    /// C4-1 (fixed): the largest schedule that can be minted, 256 segments, handed straight to
+    ///       a victim, is cheap to use and to pass on: mint fits a third of a 30M block, and
+    ///       accrue, claim and transfer each cost under 5% of one. What an indexer reads from
+    ///       scheduleOf is 16,448 bytes at most.
+    function test_C4_1_largestMintableToken_staysCheapToUse() public {
+        uint64 n = 256;
         uint64 amount = 1_000_000;
         _fundMock(creator, amount);
         _authorise(creator, enft);
@@ -177,7 +180,7 @@ contract GriefingTest is RedTeamBase {
         uint256 gMint = g0 - gasleft();
         console2.log("minted segments", n);
         console2.log("mint gas", gMint);
-        assertLt(gMint, LIMIT_30M, "largest token must mint within a 30M block");
+        assertLt(gMint, LIMIT_30M / 3, "the largest token must mint within a third of a 30M block");
 
         // The victim can use it. Warp so there is something to claim.
         vm.warp(block.timestamp + 10);
@@ -201,19 +204,19 @@ contract GriefingTest is RedTeamBase {
         console2.log("claim gas", gClaim);
         console2.log("transfer gas", gTransfer);
 
-        // SECURE EXPECTATION: unchanged -- these already hold. The point is the proof: the
-        // most expensive operation on the largest mintable token is far under the block limit
-        // that minted it, so neither the owner nor a victim can be locked out.
-        assertLt(gAccrue, LIMIT_30M, "accrue must fit a 30M block");
-        assertLt(gClaim, LIMIT_30M, "claim must fit a 30M block");
-        assertLt(gTransfer, LIMIT_30M, "transfer must fit a 30M block");
+        // Neither the owner nor a victim who was sent the largest token pays much to use it or
+        // to get rid of it.
+        assertLt(gAccrue, LIMIT_30M / 20, "accrue must stay under 5% of a 30M block");
+        assertLt(gClaim, LIMIT_30M / 20, "claim must stay under 5% of a 30M block");
+        assertLt(gTransfer, LIMIT_30M / 20, "transfer must stay under 5% of a 30M block");
         assertTrue(_bal(IERC7984(address(mock)), alice) >= 10, "victim actually received the claim");
         assertEq(enft.ownerOf(id), bob, "victim could pass the token on");
 
-        // Record scheduleOf's return size at this length (the web indexer reads it).
+        // scheduleOf's return size at the cap (the web indexer reads it): an offset word, a
+        // length word and 256 segments of two words each.
         uint256 scheduleBytes = abi.encode(enft.scheduleOf(id)).length;
-        console2.log("scheduleOf return bytes at N", n);
         console2.log("scheduleOf return bytes", scheduleBytes);
+        assertEq(scheduleBytes, 64 + 256 * 64, "scheduleOf at the cap must return 16,448 bytes");
     }
 
     // =====================================================================================

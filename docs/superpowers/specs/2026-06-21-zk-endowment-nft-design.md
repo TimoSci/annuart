@@ -102,7 +102,7 @@ uint256 internal _nextId;
 ## 6. Core functions
 
 ### `mint(address to, externalEuint64 encEndowment, bytes calldata proof, Segment[] calldata segments, uint64 scheduleStart, bool topUpsAllowed) → uint256 tokenId`
-1. `euint64 amount = FHE.fromExternal(encEndowment, proof)`.
+1. `euint64 amount = FHE.fromExternal(encEndowment, proof)`. An empty `proof` reverts `EmptyInputProof`: `fromExternal` would then verify nothing and take the handle as an existing value the caller may use (red team finding F-C2-4a).
 2. Pull tokens: `euint64 received = token.confidentialTransferFrom(msg.sender, address(this), amount)`. **Set `endowmentRemaining = received`** (the actual transferred handle, never the requested `amount`) so under-funding cannot desync accounting.
 3. `distribution = FHE.asEuint64(0)`; `lastAccrualAt = scheduleStart` (default `block.timestamp` if `scheduleStart == 0` and in the past is clamped to now at accrue time); store schedule + mode.
 4. ACL: `FHE.allowThis(endowmentRemaining)`, `FHE.allowThis(distribution)`, `FHE.allow(distribution, to)`. **Never** allow `to` on the endowment.
@@ -125,7 +125,7 @@ No plaintext is revealed. Post-exhaustion, `FHE.min` yields 0 and the operation 
 4. `token.confidentialTransfer(msg.sender, amt)` — the confidential token grants the recipient ACL on the transferred amount internally.
 
 ### `topUp(uint256 tokenId, externalEuint64 encAmount, bytes calldata proof)` — public, reverts if `!topUpsAllowed`
-1. `euint64 amount = FHE.fromExternal(encAmount, proof)`.
+1. `euint64 amount = FHE.fromExternal(encAmount, proof)`. An empty `proof` reverts `EmptyInputProof`, as in `mint`.
 2. `euint64 received = token.confidentialTransferFrom(msg.sender, address(this), amount)`.
 3. `endowmentRemaining = FHE.add(endowmentRemaining, received)`; `FHE.allowThis(endowmentRemaining)` (never allow any owner). The new total stays secret.
 
@@ -152,7 +152,7 @@ On owner change (mint and burn excluded as appropriate):
 - **Amount range** → `euint64`; document the maximum representable amount relative to the token's decimals.
 - **`topUp` on an immutable token** → revert.
 - **Unauthorized claim** → revert (owner-only).
-- **Schedule validation at mint** → reject empty schedule, zero-duration segments, and `Σ durations` overflow.
+- **Schedule validation at mint** → reject empty schedule, zero-duration segments, `Σ durations` overflow, and more than 256 segments (`MAX_SEGMENTS`; every accrual, claim and transfer reads the whole schedule — red team finding F-C4-1).
 
 ## 9. Testing
 

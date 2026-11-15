@@ -22,6 +22,10 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
         Segment[] schedule;
     }
 
+    /// @notice The most segments a schedule may have. Every accrual, claim and transfer
+    ///         reads the whole schedule, so its length bounds what they cost.
+    uint256 public constant MAX_SEGMENTS = 256;
+
     IERC7984 public immutable token;
     uint256 internal _nextId;
     mapping(uint256 => Endowment) internal _endowments;
@@ -46,6 +50,8 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
     error ScheduleEnded();
     error ScheduleTooLong();
     error InvalidName();
+    error EmptyInputProof();
+    error TooManySegments();
 
     constructor(IERC7984 token_) ERC721("Endowment NFT", "ENDOW") {
         token = token_;
@@ -75,11 +81,12 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
         bytes32 name_
     ) internal returns (uint256 tokenId) {
         if (segments.length == 0) revert EmptySchedule();
+        if (segments.length > MAX_SEGMENTS) revert TooManySegments();
         if (!_validName(name_)) revert InvalidName();
 
         uint64 start = scheduleStart == 0 ? uint64(block.timestamp) : scheduleStart;
 
-        euint64 amount = FHE.fromExternal(encEndowment, inputProof);
+        euint64 amount = _verifiedInput(encEndowment, inputProof);
         FHE.allowTransient(amount, address(token));
         euint64 received = token.confidentialTransferFrom(msg.sender, address(this), amount);
 
@@ -101,6 +108,14 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
         // Emit before _safeMint so the event precedes anything the receiver callback does.
         emit EndowmentMinted(tokenId, msg.sender, to, start, topUpsAllowed, name_);
         _safeMint(to, tokenId);
+    }
+
+    /// @dev The amount of a deposit, from a fresh encrypted input. An empty proof is refused:
+    ///      FHE.fromExternal would then verify nothing and take the handle as an existing
+    ///      value the caller may use, or as a zero.
+    function _verifiedInput(externalEuint64 encAmount, bytes calldata inputProof) internal returns (euint64) {
+        if (inputProof.length == 0) revert EmptyInputProof();
+        return FHE.fromExternal(encAmount, inputProof);
     }
 
     /// @dev Validates the segments and copies them into storage.
@@ -216,7 +231,7 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
         // Funds added after the end could never be scheduled, so refuse them.
         if (block.timestamp >= Schedule.scheduleEnd(e.schedule, e.scheduleStart)) revert ScheduleEnded();
 
-        euint64 amount = FHE.fromExternal(encAmount, inputProof);
+        euint64 amount = _verifiedInput(encAmount, inputProof);
         FHE.allowTransient(amount, address(token));
         euint64 received = token.confidentialTransferFrom(msg.sender, address(this), amount);
 
