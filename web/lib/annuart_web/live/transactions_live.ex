@@ -73,6 +73,9 @@ defmodule AnnuartWeb.TransactionsLive do
   }
   defp type(kind), do: Map.get(@types, kind, "Other")
 
+  # An unwrap request's amount is encrypted, but anyone may decrypt it.
+  defp amount(%{amount: nil, kind: "unwrap_request"}, _metas), do: "Not shown"
+
   defp amount(%{amount: nil} = tx, _metas),
     do: if(Txs.private?(tx.kind), do: "Hidden", else: "")
 
@@ -92,6 +95,9 @@ defmodule AnnuartWeb.TransactionsLive do
   # An encrypted amount can be decrypted, in the browser, by the two ends of the
   # token movement. The sender is always one of them; so is whoever a plain
   # token transfer went to.
+  defp visibility(%{kind: "unwrap_request"}), do: "Public"
+  defp visibility(tx), do: if(Txs.private?(tx.kind), do: "Private", else: "Public")
+
   defp revealable?(%{amount: nil} = tx, address) when is_binary(address) do
     Txs.private?(tx.kind) and
       (tx.from == address or (tx.kind == "token_transfer" and address in String.split(tx.parties)))
@@ -111,8 +117,7 @@ defmodule AnnuartWeb.TransactionsLive do
       <div :if={txs not in [nil, []]} class="area panel">
         <p class="sub">
           Transactions sent to this app's ENFT contracts and their tokens that involve your
-          address. Private means the amount is encrypted on chain; the transaction itself is
-          always public. Conversions between ETH and WETH are not listed.
+          address. Private means the amount is encrypted on chain, not that it is secret: the amount of a claim can often be worked out from the public schedule. The amount of an unwrap request can be decrypted by anyone. The transaction itself is always public. Conversions between ETH and WETH are not listed.
         </p>
         <p :if={Enum.any?(txs, &revealable?(&1, @address))} class="warning" id="reveal-warning">
           Security warning: Reveal decrypts a hidden amount with your wallet and shows it on
@@ -158,7 +163,7 @@ defmodule AnnuartWeb.TransactionsLive do
                 </span>
                 <span :if={!revealable?(t, @address)}>{amount(t, metas)}</span>
               </td>
-              <td>{if Txs.private?(t.kind), do: "Private", else: "Public"}</td>
+              <td>{visibility(t)}</td>
               <td><span class="addr" title={t.tx_hash}>{EnftComponents.short(t.tx_hash)}</span></td>
             </tr>
           </tbody>

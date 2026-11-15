@@ -206,11 +206,11 @@ test("anonymous visitor can browse and open an ENFT but sees no owner actions", 
   // The schedule is public (scheduleOf is readable): the Reader's revert
   // detection must not mistake it for a hidden one.
   await expect(panel(page, "schedule").locator("table.schedule")).toBeVisible();
-  await expect(panel(page, "schedule")).not.toContainText("Private schedule");
+  await expect(panel(page, "schedule")).not.toContainText("Schedule unavailable");
   await expect(panel(page, "schedule").locator("table.schedule tbody tr")).toHaveCount(1);
   // 1,000 a day is stored per second, rounded down: 11,574 base units a second.
   await expect(panel(page, "schedule").locator("table.schedule tbody")).toContainText("999.9936 / day");
-  await expect(panel(page, "details")).toContainText("Secret. Nobody can read this.");
+  await expect(panel(page, "details")).toContainText("Hidden while this ENFT pays its full schedule.");
 
   // No owner actions, no donate form: only the prompt to connect.
   await expect(page.locator("#panel-yours")).toHaveCount(0);

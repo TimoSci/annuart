@@ -18,6 +18,8 @@ const SELECTORS = {
   "0x8dba7587": "Only the last period can be indefinite.",
   "0x52c92d06": "An indefinite period needs a rate above zero.",
   "0xb1d04f08": "This ENFT does not exist.",
+  "0xda447a62": "A schedule can have at most 256 periods.",                       // TooManySegments()
+  "0xb2481d16": "The amount was not encrypted properly. Reload and try again.",  // EmptyInputProof()
   // Automatic payouts.
   "0xa6db1522": "It is too soon for the next automatic payout.",       // PayoutTooSoon(uint64)
   "0xc2cf8023": "Automatic payouts are switched off for this ENFT.",  // AutoPayoutDisabled()
@@ -31,6 +33,7 @@ const SELECTORS = {
 };
 
 export const NO_PENDING_PAYOUT = SELECTORS["0x645f76c6"];
+export const TOO_MANY_PERIODS = SELECTORS["0xda447a62"];
 
 function selectorOf(err) {
   for (const d of [err?.data, err?.info?.error?.data, err?.error?.data]) {
@@ -61,6 +64,7 @@ export function explainAmount(err, symbol) {
     case "rate_rounds_to_zero": return "This rate is too small to pay anything. Enter a larger rate.";
     case "indefinite_not_last": return SELECTORS["0x8dba7587"];
     case "too_long": return SELECTORS["0x15a7d4e1"];
+    case "too_many": return SELECTORS["0xda447a62"];
     case "zero_length": return SELECTORS["0x91378467"];
     case "bad_interval": return SELECTORS["0x5fabb610"];
     default: return String(err?.message || err);

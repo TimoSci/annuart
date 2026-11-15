@@ -130,7 +130,7 @@ test("the owner sees the settings form, prefilled from the chain", async () => {
   assert.equal(q(t.el, "set-fee").value, "0.02");
   assert.equal(q(t.el, "save").textContent, "Save");
   assert.match(q(t.el, "settings").textContent,
-    /Anyone can trigger these payouts, and you receive them as plain ETH\. Each automatic payout amount is public\. If the ENFT ever runs out, that reveals how much it held in total\./);
+    /Anyone can trigger these payouts, and you receive them as plain ETH\. Each automatic payout amount is public\. If the ENFT ever runs out, that reveals how much it held in total\. Donations made after it runs out, and any leftover when a fixed schedule ends, become public too\./);
   assert.match(q(t.el, "settings").textContent, /At most 10% of each payout is ever paid as a fee\./);
   // No input carries a name, so nothing typed can be submitted to the server.
   assert.equal(t.el.querySelectorAll("input[name], select[name]").length, 0);

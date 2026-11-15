@@ -55,7 +55,8 @@ defmodule AnnuartWeb.EnftLiveTest do
           "Payouts end",
           "Donations",
           "Last accrued",
-          "Secret. Nobody can read this.",
+          "Hidden while this ENFT pays its full schedule. Known only in hindsight: once it runs out, or when the leftover is released at the end.",
+          "Nobody can check how much an ENFT holds, and it can hold nothing. Only its creator knows what they put in, and they may disclose it.",
           "Payout schedule",
           "History",
           "Created by"
@@ -84,6 +85,10 @@ defmodule AnnuartWeb.EnftLiveTest do
     assert html =~ "Indefinitely"
     assert html =~ "until empty"
     refute html =~ "leftover"
+
+    assert html =~
+             "Hidden while this ENFT pays its full schedule. Known only in hindsight, once it runs out."
+
     # The indefinite period is drawn striped at a fixed 30% width.
     assert has_element?(view, ~s([data-role="bar"][data-indefinite][style*="width:30%"]))
     assert has_element?(view, ~s|[data-role="bar"]:not([data-indefinite])[style*="width:70%"]|)
@@ -106,10 +111,13 @@ defmodule AnnuartWeb.EnftLiveTest do
     refute html =~ "any leftover is paid to the owner at the end"
   end
 
-  test "hidden schedule shows Private schedule and no table", %{conn: conn} do
+  test "a schedule that was not loaded is called unavailable, not private, and has no table", %{
+    conn: conn
+  } do
     mint(schedule: nil)
     {:ok, view, html} = live(conn, ~p"/enft/mock/1")
-    assert html =~ "Private schedule"
+    assert html =~ "Schedule unavailable"
+    refute html =~ "Private schedule"
     refute has_element?(view, "table.schedule")
     refute has_element?(view, ~s([data-role="bar"]))
   end
@@ -309,7 +317,9 @@ defmodule AnnuartWeb.EnftLiveTest do
       {:ok, view, html} = live(conn, ~p"/enft/mock/1")
       assert html =~ "Connect a wallet to donate."
       refute has_element?(view, "#tx-donate")
-      assert html =~ "Encrypted before it leaves your browser."
+
+      assert html =~
+               "Encrypted before it leaves your browser. It stays hidden only while the ENFT still pays its full schedule."
 
       connect_as(view, @stranger)
       refute render(view) =~ "Connect a wallet to donate."
@@ -476,8 +486,11 @@ defmodule AnnuartWeb.EnftLiveTest do
 
       assert has_element?(view, "#auto-last", "None yet")
       assert has_element?(view, ".sub [data-role=auto-badge]", "Automatic")
-      # The remaining endowment is still secret.
-      assert render(view) =~ "Secret. Nobody can read this."
+      # The remaining endowment is still hidden.
+      assert render(view) =~
+               "Hidden while this ENFT pays its full schedule. Known only in hindsight: once it runs out, or when the leftover is released at the end."
+
+      refute render(view) =~ "Nobody can read this"
     end
 
     test "switched off, without a fee: Off and No fee, and no badge", %{conn: conn} do

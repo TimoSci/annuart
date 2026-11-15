@@ -302,6 +302,24 @@ test("a checked Indefinitely replaces the length, and unchecking restores it", (
   assert.equal(q(row, "length").hidden, false);
 });
 
+test("no more than 256 periods can be added", () => {
+  const t = make();
+  const add = q(t.el, "add-period");
+  for (let i = 0; i < 254; i++) click(add);
+  assert.equal(rows(t.el).length, 255);
+  assert.equal(add.disabled, false);
+  click(add);
+  assert.equal(rows(t.el).length, 256);
+  assert.equal(add.disabled, true);
+  assert.equal(add.title, "A schedule can have at most 256 periods.");
+  click(add);
+  assert.equal(rows(t.el).length, 256);
+  click(q(rows(t.el)[3], "remove-period"));
+  assert.equal(rows(t.el).length, 255);
+  assert.equal(add.disabled, false);
+  assert.equal(add.title, "");
+});
+
 test("the last remaining period cannot be removed", () => {
   const t = make();
   assert.equal(q(rows(t.el)[0], "remove-period"), null);

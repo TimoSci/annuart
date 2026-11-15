@@ -22,7 +22,7 @@ const DEFAULT_INTERVAL = 86400;
 
 export const SWITCH_ON_QUESTION = "Switch automatic payouts on? Each payout amount becomes public.";
 // The Create form's wording, word for word.
-const PRIVACY_NOTE = "Anyone can trigger these payouts, and you receive them as plain ETH. Each automatic payout amount is public. If the ENFT ever runs out, that reveals how much it held in total.";
+const PRIVACY_NOTE = "Anyone can trigger these payouts, and you receive them as plain ETH. Each automatic payout amount is public. If the ENFT ever runs out, that reveals how much it held in total. Donations made after it runs out, and any leftover when a fixed schedule ends, become public too.";
 const FEE_NOTE = "At most 10% of each payout is ever paid as a fee.";
 const NO_WALLET = "Connect a wallet to trigger a payout.";
 const UNAVAILABLE = "Automatic payout status is unavailable.";

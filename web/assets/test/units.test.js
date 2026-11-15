@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   U64_MAX, parseAmount, parseFee, formatAmount, durationSeconds, ratePerSecond, effectiveRate,
-  toSegments, scheduleTotal, amountWarning,
+  toSegments, scheduleTotal, amountWarning, MAX_PERIODS,
 } from "../js/units.js";
 
 test("parseAmount", () => {
@@ -149,4 +149,12 @@ test("parseFee reads ETH as wei, with zero and empty meaning no fee", () => {
   assert.throws(() => parseFee("-1"), {code: "negative"});
   assert.throws(() => parseFee("0.0000000000000000001"), {code: "too_many_decimals"});
   assert.throws(() => parseFee("19"), {code: "too_large"});
+});
+
+test("toSegments allows 256 periods and rejects more", () => {
+  const rows = n => Array.from({ length: n }, () => ({ length: 1, unit: "days", rate: "1", per: "day" }));
+  assert.equal(MAX_PERIODS, 256);
+  assert.equal(toSegments(rows(256), 6).length, 256);
+  assert.equal(toSegments([...rows(255), { rate: "1", per: "day", indefinite: true }], 6).length, 256);
+  assert.throws(() => toSegments(rows(257), 6), { code: "too_many" });
 });

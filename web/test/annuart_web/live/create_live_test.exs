@@ -32,7 +32,8 @@ defmodule AnnuartWeb.CreateLiveTest do
           "1. Endowment",
           "2. Payout schedule",
           "3. Options",
-          "Encrypted in your browser. Nobody but you will ever know this number.",
+          "Encrypted in your browser. The amount is hidden while the ENFT pays its full schedule. It becomes known to the owner if the ENFT runs out or its fixed schedule ends with money left, and public if automatic payouts are on.",
+          "A schedule can have at most 256 periods.",
           "A month is 30 days and a year is 365 days.",
           "+ Add period",
           "Payouts start",
@@ -82,7 +83,7 @@ defmodule AnnuartWeb.CreateLiveTest do
     assert html =~ "At most 10% of each payout is ever paid as a fee."
 
     assert html =~
-             "Anyone can trigger these payouts, and you receive them as plain ETH. Each automatic payout amount is public. If the ENFT ever runs out, that reveals how much it held in total."
+             "Anyone can trigger these payouts, and you receive them as plain ETH. Each automatic payout amount is public. If the ENFT ever runs out, that reveals how much it held in total. Donations made after it runs out, and any leftover when a fixed schedule ends, become public too."
 
     # The owner can change the automatic payout settings, unlike the name and donations.
     assert has_element?(

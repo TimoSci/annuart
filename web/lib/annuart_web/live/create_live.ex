@@ -183,7 +183,7 @@ defmodule AnnuartWeb.CreateLive do
             </span>
           </div>
           <p class="note">
-            Encrypted in your browser. Nobody but you will ever know this number.
+            Encrypted in your browser. The amount is hidden while the ENFT pays its full schedule. It becomes known to the owner if the ENFT runs out or its fixed schedule ends with money left, and public if automatic payouts are on.
           </p>
         </div>
 
@@ -194,6 +194,7 @@ defmodule AnnuartWeb.CreateLive do
           <div class="bars" data-role="chart" role="img" aria-label="Payout schedule chart"></div>
           <p data-role="total" class="total"></p>
           <p class="note">A month is 30 days and a year is 365 days.</p>
+          <p class="note">A schedule can have at most 256 periods.</p>
         </div>
 
         <div class="area panel" data-activity-id="panel:create:options">
@@ -274,7 +275,7 @@ defmodule AnnuartWeb.CreateLive do
               <span data-role="auto-fee-echo" class="amount-echo"></span>
             </div>
             <p class="note">
-              Anyone can trigger these payouts, and you receive them as plain ETH. Each automatic payout amount is public. If the ENFT ever runs out, that reveals how much it held in total.
+              Anyone can trigger these payouts, and you receive them as plain ETH. Each automatic payout amount is public. If the ENFT ever runs out, that reveals how much it held in total. Donations made after it runs out, and any leftover when a fixed schedule ends, become public too.
             </p>
           </div>
         </div>

@@ -91,8 +91,12 @@ export function effectiveRate(perSec, per, decimals, options) {
   return formatAmount(perSec * perSeconds(per), decimals, options);
 }
 
+// The contracts accept at most this many periods in one schedule.
+export const MAX_PERIODS = 256;
+
 export function toSegments(rows, decimals) {
   if (!rows || rows.length === 0) throw new ScheduleError("empty");
+  if (rows.length > MAX_PERIODS) throw new ScheduleError("too_many");
   let fixedTotal = 0n;
   const segments = rows.map((row, i) => {
     let duration;

@@ -19,6 +19,8 @@ export const NFT_ABI = [
   "error ScheduleEnded()",
   "error ScheduleTooLong()",
   "error InvalidName()",
+  "error EmptyInputProof()",
+  "error TooManySegments()",
 ];
 
 // The ENFT with automatic payouts: everything above, plus its own functions.

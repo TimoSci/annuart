@@ -102,6 +102,29 @@ defmodule AnnuartWeb.TransactionsLiveTest do
     refute has_element?(view, ~s(tr[data-kind="faucet"] [phx-hook="SecretValue"]))
   end
 
+  test "private is explained as encrypted, not secret, and an unwrap request is public", %{
+    conn: conn
+  } do
+    record(8, %{
+      kind: "unwrap_request",
+      from: @bob,
+      to: token(),
+      token_id: nil,
+      parties: [@bob, String.downcase(@alice)]
+    })
+
+    {:ok, view, _} = live(conn, ~p"/transactions")
+    render_hook(view, "wallet:changed", %{"address" => @alice})
+
+    assert render(view) =~
+             "Private means the amount is encrypted on chain, not that it is secret: the amount of a claim can often be worked out from the public schedule."
+
+    unwrap = view |> element(~s(tr[data-kind="unwrap_request"])) |> render()
+    assert unwrap =~ "Public" and unwrap =~ "Not shown"
+    refute unwrap =~ "Private"
+    refute unwrap =~ "Hidden"
+  end
+
   test "a private transaction someone else sent has no reveal control", %{conn: conn} do
     record(6, %{kind: "donate", from: @bob, parties: [@bob, String.downcase(@alice)]})
     {:ok, view, _} = live(conn, ~p"/transactions")

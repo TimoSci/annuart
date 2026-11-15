@@ -7,9 +7,9 @@
 import {isAddress} from "ethers";
 import {
   parseAmount, parseFee, formatAmount, intervalSeconds, intervalText, effectiveRate, toSegments, scheduleTotal, amountWarning,
-  ScheduleError, U64_MAX,
+  ScheduleError, U64_MAX, MAX_PERIODS,
 } from "../units.js";
-import {explainAmount} from "../errors.js";
+import {explainAmount, TOO_MANY_PERIODS} from "../errors.js";
 import {current, onChange, chainInfo} from "../chain/signer.js";
 import {createEnft} from "../chain/actions.js";
 import {nameProblem} from "../name.js";
@@ -106,7 +106,9 @@ export class CreateFormController {
       const button = event.target.closest?.("button[data-role]");
       if (!button || !this.el.contains(button) || button.disabled || button.hasAttribute("disabled")) return;
       switch (button.dataset.role) {
-        case "add-period": this.addRow(); this.edited(); break;
+        case "add-period":
+          if (this.periods().length >= MAX_PERIODS) break;
+          this.addRow(); this.edited(); break;
         case "remove-period": button.closest("[data-role=period]").remove(); this.syncRows(); this.edited(); break;
         case "run": case "retry": case "start-over": this.run(); break;
         case "confirm": this.confirm(); break;
@@ -234,6 +236,11 @@ export class CreateFormController {
   // row cannot be removed.
   syncRows() {
     const rows = this.periods();
+    const add = this.role("add-period");
+    if (add) {
+      add.disabled = rows.length >= MAX_PERIODS;
+      add.title = add.disabled ? TOO_MANY_PERIODS : "";
+    }
     rows.forEach((row, i) => {
       const last = i === rows.length - 1;
       const slot = row.querySelector("[data-role=indefinite-slot]");

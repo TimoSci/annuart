@@ -230,7 +230,7 @@ defmodule AnnuartWeb.EnftLive do
     end
   end
 
-  defp payouts_end(%{schedule: nil}), do: {:text, "Private schedule"}
+  defp payouts_end(%{schedule: nil}), do: {:text, "Schedule unavailable"}
 
   defp payouts_end(%{schedule: schedule, schedule_start: start}) do
     case Schedule.ends_at(schedule, start) do
@@ -238,6 +238,22 @@ defmodule AnnuartWeb.EnftLive do
       at -> {:time, at}
     end
   end
+
+  # What can be said about the remaining endowment: nobody can read it, but it
+  # shows in hindsight. Only a schedule with an end releases a leftover.
+  defp remaining_note(%{schedule: schedule, schedule_start: start}) when schedule != nil do
+    case Schedule.ends_at(schedule, start) do
+      :never ->
+        "Hidden while this ENFT pays its full schedule. Known only in hindsight, once it runs out."
+
+      _at ->
+        remaining_note(nil)
+    end
+  end
+
+  defp remaining_note(_enft),
+    do:
+      "Hidden while this ENFT pays its full schedule. Known only in hindsight: once it runs out, or when the leftover is released at the end."
 
   def render(assigns) do
     ~H"""
@@ -273,12 +289,15 @@ defmodule AnnuartWeb.EnftLive do
               <span class="k">Donations</span>
               <span>{if @enft.top_ups_allowed, do: "On", else: "Off"}</span>
               <span class="k">Remaining</span>
-              <span>Secret. Nobody can read this.</span>
+              <span>{remaining_note(@enft)}</span>
               <span class="k">Last accrued</span>
               <span>
                 <EnftComponents.datetime data-field="last-accrued" value={@last_accrual_at} />
               </span>
             </div>
+            <p class="note">
+              Nobody can check how much an ENFT holds, and it can hold nothing. Only its creator knows what they put in, and they may disclose it.
+            </p>
           </div>
 
           <div
@@ -336,7 +355,7 @@ defmodule AnnuartWeb.EnftLive do
                 symbol={@token_meta && @token_meta.symbol}
               />
             <% else %>
-              <p>Private schedule</p>
+              <p>Schedule unavailable</p>
             <% end %>
             <p :if={@settled == true} class="note">
               This schedule has ended and any leftover was released to the owner.
@@ -460,7 +479,9 @@ defmodule AnnuartWeb.EnftLive do
               />
             </TxComponents.action>
             <p :if={!@address}>Connect a wallet to donate.</p>
-            <p class="note">Encrypted before it leaves your browser.</p>
+            <p class="note">
+              Encrypted before it leaves your browser. It stays hidden only while the ENFT still pays its full schedule.
+            </p>
           </div>
 
           <div class="area panel" data-activity-id="panel:enft:maintenance">

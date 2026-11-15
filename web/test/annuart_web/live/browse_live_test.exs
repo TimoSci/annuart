@@ -142,10 +142,10 @@ defmodule AnnuartWeb.BrowseLiveTest do
     assert html =~ "#1" and html =~ "#2"
   end
 
-  test "hidden schedule shows Private schedule", %{conn: conn} do
+  test "a schedule that was not loaded is called unavailable", %{conn: conn} do
     mint(token_id: 1, schedule: nil)
     {:ok, _v, html} = live(conn, ~p"/")
-    assert html =~ "Private schedule"
+    assert html =~ "Schedule unavailable"
   end
 
   test "a new mint appears without reload", %{conn: conn} do

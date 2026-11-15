@@ -26,10 +26,10 @@ deciding something failed.
 1. Open the app without connecting a wallet. Browse lists the ENFTs on this chain, newest first,
    and the wallet control shows `Connect wallet`.
 2. Open an ENFT. Details, payout schedule (table and chart) and history show. The schedule shows
-   periods, not `Private schedule`.
+   periods, not `Schedule unavailable`.
 3. There is no Yours panel, no Claim, no Transfer. The Donate panel (if donations are open) says
    `Connect a wallet to donate.`
-4. Remaining reads `Secret. Nobody can read this.`
+4. Remaining starts `Hidden while this ENFT pays its full schedule.`
 
 ## 2. Connect, get tokens, create
 
@@ -190,9 +190,10 @@ includes one wait of an hour (step 6).
 2. Phone width (about 375 px): no horizontal scroll on any page; the navigation, wallet control
    and Clear link wrap cleanly; the ENFT page stacks its columns; Create's period rows wrap without
    overlapping; the Tokens cards and step lists fit; buttons are large enough to tap.
-3. The page never suggests the remaining endowment can be seen: no figure, bar, progress, estimate
-   or "runs out" wording next to an existing ENFT implies its remaining balance (the Create form's
+3. The page never suggests the remaining endowment can be seen: no figure, bar, progress
+   or estimate next to an existing ENFT implies its remaining balance (the Create form's
    warning is about the amount the creator is entering, before it is sealed). The only text for it
-   is `Secret. Nobody can read this.`
+   starts `Hidden while this ENFT pays its full schedule.` and says when it becomes known in
+   hindsight; the note under Details says nobody can check how much an ENFT holds.
 4. The wallet's own prompts (connect, switch network, sign the decryption permit, each
    transaction) read sensibly and appear only when the step list says they will.

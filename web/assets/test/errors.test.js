@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { explain, explainAmount } from "../js/errors.js";
 import { AmountError, ScheduleError } from "../js/units.js";
+import { Interface } from "ethers";
+import { NFT_ABI, AUTO_NFT_ABI } from "../js/chain/abi.js";
 
 const table = {
   "0x4067fd1b": "This ENFT does not accept donations.",
@@ -13,6 +15,8 @@ const table = {
   "0x8dba7587": "Only the last period can be indefinite.",
   "0x52c92d06": "An indefinite period needs a rate above zero.",
   "0xb1d04f08": "This ENFT does not exist.",
+  "0xda447a62": "A schedule can have at most 256 periods.",
+  "0xb2481d16": "The amount was not encrypted properly. Reload and try again.",
 };
 
 test("explain maps every selector in the table", () => {
@@ -39,6 +43,7 @@ test("explainAmount", () => {
   assert.equal(explainAmount(new AmountError("separator"), "USDC"), "Use a period for decimals and no separators, for example 1500.25.");
   assert.equal(explainAmount(new ScheduleError("indefinite_not_last"), "USDC"), "Only the last period can be indefinite.");
   assert.equal(explainAmount(new ScheduleError("too_long"), "USDC"), "This schedule runs too far into the future.");
+  assert.equal(explainAmount(new ScheduleError("too_many"), "USDC"), "A schedule can have at most 256 periods.");
   assert.equal(explainAmount(new ScheduleError("empty"), "USDC"), "Add at least one period.");
 });
 
@@ -66,4 +71,12 @@ test("explain maps the automatic payout errors", () => {
     assert.equal(explain({ info: { error: { data: sel } } }), msg);
   }
   assert.equal(explainAmount(new ScheduleError("bad_interval"), "ETH"), "The interval must be between 1 hour and 365 days.");
+});
+
+test("the contracts' newer errors are in both ABIs and have their own sentences", () => {
+  for (const abi of [NFT_ABI, AUTO_NFT_ABI]) {
+    const iface = new Interface(abi);
+    assert.equal(explain({ data: iface.getError("TooManySegments").selector }), "A schedule can have at most 256 periods.");
+    assert.equal(explain({ data: iface.getError("EmptyInputProof").selector }), "The amount was not encrypted properly. Reload and try again.");
+  }
 });

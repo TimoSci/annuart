@@ -50,7 +50,8 @@ defmodule Annuart.ScheduleTest do
     assert Schedule.ends_at(fixed, 5) == 15
   end
 
-  test "summary of a hidden schedule", do: assert(Schedule.summary(nil, 6) == "Private schedule")
+  test "summary of a schedule that was not loaded",
+    do: assert(Schedule.summary(nil, 6) == "Schedule unavailable")
 
   test "summary of a single indefinite period" do
     # 1 base unit/sec at 6 decimals = 86_400 / 10^6 per day

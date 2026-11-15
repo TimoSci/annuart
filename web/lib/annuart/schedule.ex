@@ -49,7 +49,7 @@ defmodule Annuart.Schedule do
   One-line description, e.g. `"100 / day for 18 months, then 2 more periods"` or
   `"25 / day, indefinitely"`. Amounts are per day in whole token units.
   """
-  def summary(nil, _decimals), do: "Private schedule"
+  def summary(nil, _decimals), do: "Schedule unavailable"
   def summary([], _decimals), do: "Empty schedule"
 
   def summary([first | rest], decimals) do
