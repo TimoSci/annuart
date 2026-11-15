@@ -23,6 +23,7 @@ Each `EndowmentNFT` token holds an encrypted endowment of a confidential ERC-20 
 - Endowment **exhaustion is only observable retroactively**: once the distribution stops growing (no accrual increase), an owner can infer the endowment is spent — but the exact remaining balance is never revealed.
 - The current owner can decrypt their **distribution** balance off-chain via the relayer SDK (`FHE.allow`-ed to `ownerOf`).
 - In **immutable mode**, the original creator knows the initial endowment amount they funded. In **top-ups-allowed mode**, third-party top-ups can obscure even that.
+- A creator who knows the endowment **may disclose it**, to anyone or publicly, even after giving the token away, and the current owner cannot prevent it. If you receive an immutable-mode token, its remaining endowment stays private from the public only as long as its creator keeps it private.
 
 ### Names
 

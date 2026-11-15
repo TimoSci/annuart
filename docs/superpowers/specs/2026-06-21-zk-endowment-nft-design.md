@@ -41,7 +41,7 @@ The contract code is **chain-agnostic**; the only per-network difference is the 
 |---|---|
 | Token / NFT model | ERC-721; one token = one endowment/income stream. |
 | Value medium | Zama `ConfidentialFungibleToken` (encrypted-balance ERC-20), referenced by interface — pooled and escrowed by the contract. |
-| Endowment visibility | Secret from everyone, including the owner. ACL grants the contract only — never the owner. |
+| Endowment visibility | Secret from everyone, including the owner. ACL grants the contract only — never the owner. The creator knows what they funded and may disclose it (see §3). |
 | Distribution visibility | Owner-readable (ACL granted to current owner) but **not** plaintext on-chain. |
 | Accrual function | Piecewise-linear schedule: segments of `{duration, ratePerSec}`. Integrated in plaintext over elapsed time, then capped by the encrypted endowment via `FHE.min`. |
 | Accrual trigger | Lazy / pull. `accrue(tokenId)` is **public** (anyone may poke; harmless, no leak). |
@@ -58,10 +58,13 @@ The contract code is **chain-agnostic**; the only per-network difference is the 
 
 - **Endowment secrecy** is enforced by never calling `FHE.allow(endowmentRemaining, owner)`. Only `FHE.allowThis` is ever applied to it. The owner has no ACL entry, so relayer user-decryption of that handle is rejected.
 - **ACL is permanent and non-revocable** in FHEVM, but every FHE operation produces a *fresh ciphertext handle*. We exploit this: on transfer, the distribution handle is refreshed (`distribution = FHE.add(distribution, FHE.asEuint64(0))`) and `FHE.allow`'d to the new owner only — so the previous owner has no read access to any post-transfer value. (A previous owner may have decrypted the pre-transfer value while they held the token; that is inherent and acceptable.)
-- **Whom the remaining balance is hidden from:**
-  - Always hidden from: the public, and any owner who received the NFT by transfer.
-  - In **Immutable** mode: the original creator knows the initial endowment (they encrypted it) and can compute remaining from the public schedule + elapsed time until exhaustion.
-  - In **Top-ups allowed** mode: once third parties contribute amounts the creator did not choose, the remaining balance becomes hidden even from the original creator.
+- **Whom the remaining balance is hidden from** (amended 2026-11-15, see the note below):
+  - The contract never discloses it: it grants the handle to no owner and never makes it public. An owner who received the NFT by transfer cannot read it, and the public cannot read it from the contract.
+  - In **Immutable** mode: the original creator knows the initial endowment (they encrypted it) and can compute remaining from the public schedule + elapsed time until exhaustion. **The creator may also disclose it**, to anyone or to the public, and may be able to do so verifiably on chain, including after transferring the NFT away. The current owner cannot prevent this. So in Immutable mode the remaining balance is private from the public only for as long as the creator keeps it private.
+  - In **Top-ups allowed** mode: the same holds while every contribution came from the creator. Once third parties contribute amounts the creator did not choose, the remaining balance becomes hidden even from the original creator, who can then neither compute nor disclose it. Values from before that top-up stay known to the creator.
+  - Nobody other than the creator is meant to be able to learn or disclose the remaining balance, and the creator only because they already know every amount that went in.
+
+  > **Amendment, 2026-11-15 (red-team finding F-C3-4a).** This list used to say the remaining balance was "always hidden from: the public, and any owner who received the NFT by transfer", which contradicted the creator's knowledge in Immutable mode: a creator who knows the amount can reveal it, and the review argued they can make the stored value itself publicly decryptable. The owner accepted this as intended behaviour: a creator may disclose the endowment they funded. The acceptance covers only that. It assumes the live Zama ACL lets a party re-derive a value only when they already hold access to everything it was computed from; the Sepolia check in `docs/security/2026-11-red-team-report.md` must confirm that before production, and a looser ACL is not covered by this amendment.
 - **Exhaustion** is observable only retroactively and only to the owner: when the decrypted distribution stops tracking the public schedule, the owner infers the endowment ran dry. The public never learns whether an accrual was capped (the result is encrypted) — only the schedule's *maximum possible* accrual is public.
 
 ## 4. Architecture
