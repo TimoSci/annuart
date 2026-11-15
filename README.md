@@ -1,6 +1,6 @@
 # EndowmentNFT
 
-An ERC-721 on [Zama FHEVM](https://docs.zama.org/protocol) where each token is a transferable income stream backed by a **secret encrypted endowment**.
+An ERC-721 on [Zama FHEVM](https://docs.zama.org/protocol) where each token is a transferable income stream backed by an **encrypted endowment** (its size is hidden; the schedule and every accrual time are public).
 
 Full design: [`docs/superpowers/specs/2026-06-21-zk-endowment-nft-design.md`](docs/superpowers/specs/2026-06-21-zk-endowment-nft-design.md)
 
@@ -8,19 +8,21 @@ Full design: [`docs/superpowers/specs/2026-06-21-zk-endowment-nft-design.md`](do
 
 ## Overview
 
-Each `EndowmentNFT` token holds an encrypted endowment of a confidential ERC-20 token (OpenZeppelin `ERC7984`). A per-token **distribution account** accrues over time according to a creator-defined **piecewise-linear schedule**; each accrual drains the secret endowment, capped via `FHE.min` so exhaustion never leaks. The current owner can read (decrypt) their distribution balance but not the endowment — enforced by the FHEVM ACL (the endowment handle is never `FHE.allow`-ed to any owner). Everything — endowment, distribution, schedule, unclaimed balance — travels with the NFT on transfer, with the ACL handed off to the new owner.
+Each `EndowmentNFT` token holds an encrypted endowment of a confidential ERC-20 token (OpenZeppelin `ERC7984`). A per-token **distribution account** accrues over time according to a creator-defined **piecewise-linear schedule**; each accrual drains the encrypted endowment, capped via `FHE.min`, so exhaustion is not visible inside a transaction; it shows afterwards, to the owner as a claim below the schedule and to everyone as a short automatic payout. The current owner can read (decrypt) their distribution balance but not the endowment — enforced by the FHEVM ACL (the endowment handle is never `FHE.allow`-ed to any owner). Everything — endowment, distribution, schedule, unclaimed balance — travels with the NFT on transfer, with the ACL handed off to the new owner.
 
 ### Two creator modes (fixed at mint)
 
 | Mode | Description |
 |---|---|
-| **Immutable** | The initial funding is sealed at mint. No further top-ups are possible. The original creator is the only party who ever knows the initial endowment amount. |
-| **Top-ups allowed** | Anyone can call `topUp(tokenId, encryptedAmount, ...)` to add secret funds. After the first third-party top-up, even the original creator cannot know the total endowment. |
+| **Immutable** | The initial funding is fixed at mint. No further top-ups are possible. Only the original creator knows the amount from the start; others can learn it in hindsight, or from the creator (see Privacy model). |
+| **Top-ups allowed** | Anyone can call `topUp(tokenId, encryptedAmount, ...)` to add encrypted funds. After the first third-party top-up, even the original creator cannot know the total endowment. A donation's amount stays hidden while the token still pays its full schedule; after it has run dry, or at the end of a fixed schedule, it can become public (see Privacy cost). |
 
 ### Privacy model
 
-- The endowment balance is **hidden from the owner and from the public**. The on-chain ACL never grants the endowment handle to any owner address.
-- Endowment **exhaustion is only observable retroactively**: once the distribution stops growing (no accrual increase), an owner can infer the endowment is spent — but the exact remaining balance is never revealed.
+- The remaining endowment is **hidden from the public and from the owner while the token keeps paying its full schedule**. The on-chain ACL never grants the endowment handle to any owner address. It becomes known when it runs out (as zero, with the total ever held known in hindsight) and, for a fixed schedule, when the leftover is released to the owner at the end.
+- Endowment **exhaustion is only observable retroactively**: the owner sees a claim below the schedule, and with automatic payouts on everyone sees a short payout.
+- **Claim amounts can usually be worked out** from the public schedule and the times of accruals and claims. What stays hidden is the remaining endowment and whether a claim was capped.
+- **Nobody can check how much a token holds.** A token can be minted with nothing in it and looks the same as a funded one; only its creator's word, or a disclosure the creator chooses to make, vouches for it.
 - The current owner can decrypt their **distribution** balance off-chain via the relayer SDK (`FHE.allow`-ed to `ownerOf`).
 - In **immutable mode**, the original creator knows the initial endowment amount they funded. In **top-ups-allowed mode**, third-party top-ups can obscure even that.
 - A creator who knows the endowment **may disclose it**, to anyone or publicly, even after giving the token away, and the current owner cannot prevent it. If you receive an immutable-mode token, its remaining endowment stays private from the public only as long as its creator keeps it private.
@@ -162,7 +164,7 @@ npm run claim
 npm run try-endow
 ```
 
-`npm run try-endow` demonstrates the privacy guarantee: attempting to decrypt the endowment handle will fail (the ACL does not grant owner access), confirming the endowment is sealed.
+`npm run try-endow` demonstrates the privacy guarantee: attempting to decrypt the endowment handle will fail (the ACL does not grant owner access), confirming that the owner cannot read the endowment. This shows the handle is unreadable, not that the amount can never be learned (see Privacy model).
 
 ---
 
@@ -392,6 +394,9 @@ inputs have no `name`, sit in `phx-update="ignore"` regions, and are never sent 
 event, form or URL; the server only hears `tx:confirmed` with an action, a contract label, a token
 id and a transaction hash. The server never holds a private key and never signs, encrypts or
 decrypts. `web/e2e` checks this in a real browser.
+
+The server can still compute how much a token may have accrued from its public schedule; the
+privacy rule is about what the browser sends, not about what the schedule gives away.
 
 The one exception is the amount of an automatic payout (see "Automatic payouts" above): it is
 public chain data once paid, so the server indexes and shows it.
