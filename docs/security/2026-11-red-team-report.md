@@ -7,8 +7,9 @@ In scope: `src/EndowmentNFT.sol`, `src/AutoPayoutEndowmentNFT.sol`, `src/Confide
 | Item | Value |
 |---|---|
 | Baseline commit | `8c80d58` (branch `security/red-team`, working tree clean) |
-| `forge test` | 117 passed, 0 failed, 0 skipped (4 suites) |
-| `npx hardhat test` | 78 passing, 0 failing (default in-process network) |
+| `forge test` (baseline) | 117 passed, 0 failed, 0 skipped (4 suites) |
+| `npx hardhat test` (baseline) | 78 passing, 0 failing (default in-process network) |
+| Final run (Task 10), at commit `71b53f5` (branch `security/red-team`, before the Task 10 commit) | `forge test`: 221 passed, 0 failed, 0 skipped (13 suites). `npx hardhat test`: 101 passing, 0 failing (default in-process network). |
 | solc | 0.8.27 (Foundry: optimizer 200 runs, cancun; Hardhat: optimizer 800 runs, cancun) |
 | forge | 1.7.1 (4072e48705, 2026-05-08) |
 | `@fhevm/solidity` | 0.11.1 (installed and pinned in package.json) |
@@ -27,7 +28,87 @@ In scope: `src/EndowmentNFT.sol`, `src/AutoPayoutEndowmentNFT.sol`, `src/Confide
 
 ## Summary
 
-<!-- Left for Task 10. -->
+**Verdict: GO, conditional.** The review found no Critical, High or Medium finding. Seven Low findings remain, and several privacy wordings in the README and the app overstate how secret things are. Nothing found is a blocker. Two conditions apply: run the Sepolia-only checks after a testnet deploy, and decide on the cheap fixes listed below, because the contracts cannot be changed after deployment.
+
+### What was tested and how
+
+- Ten areas: deposits and theft (C2), confidentiality and inference (C3), griefing, gas and schedule maths (C4), and deployment, configuration and the keeper script (C5).
+- 11 test files under `test/redteam/` plus one shared base (Foundry and Hardhat). The final run, at commit `71b53f5`: `forge test` 221 passed, 0 failed; `npx hardhat test` 101 passing, 0 failing. Every attack was really attempted; a "Held" result needs a test that would have failed if the attack had worked.
+- Solvency invariant: random sequences of mint, top-up, accrue, claim, transfer, payout request and finalise across both NFT contracts and all three tokens (7,680 calls per run, zero reverts). After every call the decrypted books balance: the contract always holds at least what it owes, and nobody is paid more than was deposited.
+- Confidentiality tests: for each role (creator, donor, owner, previous owner, operator, requester, outsider) which encrypted values it can read, checked with the real decryption plugin; a search of every log, return value and calldata for the secret amounts (none on the wire); and a predictor that tries to work out hidden amounts from public data only.
+
+### Findings by severity
+
+No Critical, High or Medium findings. Seven Low findings (this list matches the Findings table).
+
+**On-chain contracts (2)**
+
+| ID | In plain words | Suggested fix |
+|---|---|---|
+| F-C2-4a | A deposit can be sized by an existing encrypted value the caller may already use, passed with an empty proof. Only the caller's own funds move and nothing new is learned. | Reject empty input proofs in `mint`, `mintAuto` and `topUp` (one line), or document it. |
+| F-C4-1 | There is no limit on how many segments a schedule has. No token can ever be locked by this, but a creator can send someone a very large token that costs about 12 times more gas to pass on, and it bloats what the web indexer reads. | Cap the segment count (for example 64 to 256). |
+
+**Operational: these affect the keeper the owner runs, not the on-chain contracts (5)**
+
+| ID | In plain words | Suggested fix |
+|---|---|---|
+| F-C4-2a | An attacker holding many tiny-funded ENFTs makes the keeper spend about 800k gas per token per interval while earning almost nothing, and both built-in defences (skip-zero and `KEEPER_MIN_FEE`) do not stop it. The spec accepts that the caller carries this risk (automatic-payout spec 4.5). The "about 2,267 times" cost ratio was measured at about 1 gwei and grows at real gas prices; the gas ratio is the price-independent figure. | Judge the minimum fee against what will really be paid, `min(advertised fee, last payout / 10)`. |
+| F-C5-5a | The keeper has no timeout, so one stalled decrypt or transaction wait freezes the whole run. | Add a timeout (for example 60 s) and move on. |
+| F-C5-5b | One token whose read fails stops the scan of all tokens of that contract, including payouts already owed. | Read each token separately (`Promise.allSettled`) and finish pending payouts first. |
+| F-C5-5c | The keeper reads every token ever minted on every pass; anyone can grow that by minting. | Skip tokens with payouts off between passes, read the cheapest view first, or page the scan. |
+| F-C5-1a | The deploy script does not check that a reused wrapper is over real WETH. A wrong `TOKEN_ADDRESS` deploys cleanly and the first automatic payout would then be stuck for good. Only the owner can trigger it. | Run the existing WETH check on the wrapper's underlying token in the script. Until then, check `underlying()` by hand. |
+
+### By-design behaviours users must be warned about
+
+These are accepted by the specs, but the current wording and app screens do not make them clear.
+
+- **What automatic payouts reveal over time.** Each payout amount is public. A short payout shows the endowment ran out, and the sum of all payouts is then exactly the secret original endowment. A donation made after the token runs dry, and any leftover when a fixed schedule ends, become public with the next payout. Even without automatic payouts, a claim amount can usually be worked out from the public schedule; what stays hidden is the remaining endowment and whether a claim was capped (D-C3-3).
+- **An under-funded ENFT looks exactly like a funded one (D-C2-2, D-C4-7a).** A creator can mint an ENFT with nothing in it. Nobody, including the buyer, can check. Only the creator's word vouches for it.
+- **Creators can prove, not only claim, what they funded (D-C3-4).** This reasoning is analytical and needs confirmation by a Zama or FHEVM expert.
+- **No admin, no pause, no upgrade (D-C5-6).** A fix after deployment means new contracts and no migration of existing ENFTs.
+- **Donation order (D-C4-8):** after a token runs dry, a donation may be claimable at once or stream forward, depending on whether someone accrues first.
+- **Keepers (D-C4-2, D-C4-2b):** an unfunded token costs a keeper two transactions once; do not set `KEEPER_INCLUDE_DRY` unattended.
+
+**Wording changes that currently overstate privacy (D-C3-3a..k).** Exact text is in the By design table.
+
+| Where | Change |
+|---|---|
+| README.md:3 | "secret encrypted endowment" becomes "encrypted endowment (its size is hidden; the schedule and every accrual time are public)". |
+| README.md:11 | "so exhaustion never leaks": say exhaustion shows afterwards (owner: a short claim; everyone: a short automatic payout). |
+| README.md:22-23 and :164 | "never revealed" and "sealed": the remaining amount is hidden while the full schedule is paid; it becomes known when it runs out or when a fixed schedule's leftover is released. |
+| README.md:18 | "add secret funds": a donation is hidden only until the token runs dry or its fixed schedule ends. |
+| README.md:382 | "No amount ever reaches the server": add that the server can still compute accruals from the public schedule. |
+| `enft_live.ex:276` | "Remaining: Secret. Nobody can read this." becomes "Hidden while the token pays its full schedule. Known only in hindsight." |
+| `enft_live.ex:233`, `:339` | "Private schedule" becomes "Schedule unavailable"; the schedule is public. |
+| `create_live.ex:186` | "Nobody but you will ever know this number" is false in three cases (see D-C3-3h); use the replacement text there. |
+| `create_live.ex:277` | Add that donations after it runs out and the end-of-schedule leftover become public too. |
+| `transactions_live.ex:114,161`, `txs.ex:50` | "Private" and "Hidden" become "Encrypted on chain"; claim amounts can often be worked out, and an unwrap amount can be decrypted by anyone. |
+| `enft_live.ex:463` | Donate panel: add that it stays hidden only while the ENFT still pays its full schedule. |
+
+**Missing app-level warnings (D-C4-7a..e).**
+
+- (a) Beside "Remaining" and on any future buy button: "This ENFT's funding cannot be verified. A token can hold nothing."
+- (b) "Anyone can choose any name" next to names; show a short creator address in lists; flag duplicate or look-alike names.
+- (c) "You were sent this ENFT. Anyone can send you one. Do not trust its name.", plus a way to hide it.
+- (d) For any future market: "The seller can empty the claimable balance before the transfer lands. Value an ENFT by its remaining schedule."
+- (e) The "Authorise" step lets the contract pull any amount for a year, to be given only to the contract named; outside the app, refuse any `setApprovalForAll` or `setOperator` request from another site.
+
+### Checks that can only be done on Sepolia
+
+Several results rest on the local mock and **must be confirmed on Sepolia after deploying**, using small amounts. The "Sepolia-only checks" section says how, with a pass condition for each:
+
+- HCU (computation) limits on the heavy paths: `mint`, `topUp`, `claim`, `requestPayout`, and a transfer of a long-scheduled token. Local tests lifted some caps.
+- KMS decryption timing and real proof formats for `finalizePayout`.
+- The host-contract `getVersion()` match with `@fhevm/solidity` 0.11.1 (not confirmed).
+- The real-ACL confirmation of F-C2-4a (an empty proof is accepted) and of D-C3-4 (transient access by recomputation). If the real ACL is looser than the mock for D-C3-4, treat it as Critical.
+- The canonical-WETH 2300-gas forward (no fork was possible). The `receive()` needs about 95 gas, so a wide margin is expected.
+- Also: update `@openzeppelin/confidential-contracts` from 0.4.1 to 0.4.2 (GHSA-29h2-jr22-frmh, patched in 0.4.2; see the advisories list). The review did not settle exactly what it exposes here.
+
+### Go / no-go
+
+The review found no Critical, High or Medium finding. The solvency invariant and the endowment-confidentiality property both hold. The contracts have no admin role and no upgrade path, so this is the one chance to fix anything before deploy.
+
+**Recommendation: GO, conditional on** (a) the owner running the Sepolia-only checks after deploying to a testnet and before relying on it, and (b) deciding on each Low finding's cheap fix and the privacy-wording fixes. The Low findings and the wording are the owner's call, not blockers. No fix has been applied; all are proposals for the owner to approve.
 
 ## Findings
 
@@ -84,7 +165,7 @@ In scope: `src/EndowmentNFT.sol`, `src/AutoPayoutEndowmentNFT.sol`, `src/Confide
 
 ### F-C4-2a: Dust-funded tokens drain a keeper through its own defences
 
-- **Severity:** Low (the spec accepts that a caller "cannot know whether it covers the fee", automatic-payout spec 4.5; rated Low for that reason, Medium if the owner reads the spec's mitigations as a promise). The cost to the attacker is real but tiny against the keeper's.
+- **Severity:** Low. Automatic-payout spec section 4.5 explicitly assigns the fee-coverage risk to the caller ("A caller cannot know whether it covers the fee ... that risk is the caller's"), and skip-zero (section 8) is the only spec-mandated mitigation. `KEEPER_MIN_FEE` is an implementer addition, so defeating it does not push the drain past what the spec accepts. The cost to the attacker is real but tiny against the keeper's.
 - **Affected:** `keeperPlan` in `tasks/keeper.ts`: the min-fee test compares the *advertised* fee, and the skip-zero rule only matches a last payout of exactly zero. `requestPayout` pays the keeper `min(fee, payout/10)`.
 - **PoC test:** `FINDING F-C4-2a` in `test/redteam/keeperDrain.hh.ts`.
 - **Attack:** the attacker mints N tokens to himself, funded with 100,000 units (0.0001 ETH) each, one unit per second, interval one hour, advertised fee 1 ETH. Each interval the payout is about 3,600 units (3.6e-6 ETH), the attacker is the recipient and gets 90% back, the keeper gets the capped fee of about 3.6e-7 ETH. Measured on Hardhat (gas price about 1 gwei), 3 tokens, 3 intervals, identical in all three configurations (default, `KEEPER_MIN_FEE=1e15`, `KEEPER_INCLUDE_DRY=1`):
@@ -95,7 +176,7 @@ In scope: `src/EndowmentNFT.sol`, `src/AutoPayoutEndowmentNFT.sol`, `src/Confide
   | interval 2 | 783,976 | 0.000784 | 0.00000036 | 0.00000036 |
   | interval 3 | 782,106 | 0.000782 | 0.00000036 | 0.00000036 |
 
-  Keeper gas is about 2,267 times the attacker's per-interval cost. The attacker also paid one mint (about 676,000 gas) per token, which is about one interval of the keeper's spend, so over a day of hourly intervals the keeper spends roughly 25-30 times what the attacker did, over a month more than 500 times. The attacker also gets the endowment back as it pays out, so the cost of locking it is only the time value.
+  Keeper gas is about 2,267 times the attacker's per-interval cost. **That ratio is gas-price-sensitive:** it was measured at Hardhat's gas price of about 1 gwei and grows at realistic gas prices (the attacker's cost is the fee, a share of the payout, which does not scale with gas price; the keeper's cost does). The price-independent comparison is the gas ratio: the keeper uses about 800,000 gas per token per interval. The attacker also paid one mint (about 676,000 gas) per token, which is about one interval of the keeper's spend, so over a day of hourly intervals the keeper spends roughly 25-30 times what the attacker did, over a month more than 500 times. The attacker also gets the endowment back as it pays out, so the cost of locking it is only the time value.
 - **Why the defaults do not help:** skip-zero needs a zero payout and these are not; `KEEPER_MIN_FEE` is compared with the fee the owner *advertises*, not what will be paid.
 - **Impact:** a keeper operator can be made to burn gas on tokens that pay it nothing worth having. No funds of anyone else are at risk.
 - **Suggested fix:** the keeper already reads `lastPayoutOf`. Use an estimated fee, `min(advertised fee, last.amountWei / 10)`, for the min-fee test whenever there is a previous payout (and for never-paid tokens apply the test only after the first one). An attacker then has to pay a fee of at least the keeper's minimum every interval, which makes the attack cost the attacker what it earns the keeper.
@@ -112,12 +193,15 @@ In scope: `src/EndowmentNFT.sol`, `src/AutoPayoutEndowmentNFT.sol`, `src/Confide
 
 - **Severity:** Low. It needs a failing read; none is reachable on-chain today (every view for a minted token succeeds, and the C4-1 schedule ceiling keeps `payoutDue` far below a node's call gas cap), but a transient RPC error or rate limit is enough, and the scan issues 4N calls in parallel.
 - **Affected:** the scan `try` in `runKeeperPass` covers the whole contract, so one rejected `Promise.all` entry discards every token's state.
+- **Impact:** one failing read (for example an RPC rate limit) makes the keeper skip every token of that contract for the pass, including payouts already pending and owed to their recipients; they are delayed, not lost.
 - **PoC test:** `FINDING F-C5-5b` in `test/redteam/keeperDrain.hh.ts`: token 2's `autoPayoutOf` throws; token 1 (pending, owed) and token 3 (due) are not processed: `{ requested: 0, finished: 0, failed: 1 }`.
 - **Suggested fix:** read each token in its own `try` (or `Promise.allSettled`) and plan with the tokens that were read; also finish pending payouts before the failed ones are retried.
 
 ### F-C5-5c: Scan cost grows with every token ever minted
 
 - **Severity:** Low. Costs the keeper RPC calls (quota, time), not gas.
+- **Affected:** `runKeeperPass` in `tasks/keeper.ts`: the scan makes four view calls for every token id from 1 to the token count, on every pass.
+- **Impact:** anyone can mint cheap tokens to make every keeper pass slower and more RPC-hungry, which raises the odds of F-C5-5a and F-C5-5b. No funds at risk.
 - **PoC test:** `FINDING F-C5-5c` in `test/redteam/keeperDrain.hh.ts`: 8 tokens with payouts off give 33 RPC calls per pass; each token costs the attacker about 727,000 gas once and the keeper four calls on every pass for ever, increasing the chance of F-C5-5b and F-C5-5a.
 - **Suggested fix:** remember tokens that are not enabled between passes within a run, read in `payoutDue` only first, or page with a cursor; and see F-C5-5b.
 
@@ -151,7 +235,7 @@ In scope: `src/EndowmentNFT.sol`, `src/AutoPayoutEndowmentNFT.sol`, `src/Confide
 | D-C4-7b | **Look-alike names.** Contract: names are public, unique to nobody, immutable, and checked only for character set (`_validName`). An exact duplicate and a look-alike (`G0Id Pension` for `Gold Pension`) are both accepted (`test_C4_7_lookAlikeNames_accepted`); I/l and 0/O are inside the allowed set. App: `EnftComponents.identity` never shows a name without the token number, its own picture and the creator's frame (title tooltip holds the address); that is the right mitigation. Missing: the frame is a colour gradient (hard to compare by eye), the app does not flag that another ENFT already has the same or a near-identical name, and does not show the shortened creator address beside the name in lists. | Endowment spec §2 (names), `_validName` comment ("a token is identified by its id and creator, never by its name") | Yes: add "Anyone can choose any name" next to names, and show a short creator address in lists. |
 | D-C4-7c | **Unsolicited ENFTs.** Contract: `mint` sends to any `to` with no consent (`_safeMint` only checks contract receivers), so any creator can put a token, with a name such as `Visit evil.com to claim`, into a victim's wallet (`test_C4_7_unsolicitedEnft_landsWithoutConsent`). It costs the sender at least a unit. The victim can only transfer it away. App: My ENFTs lists every owned token with its name and creator frame; there is no "received from an address you have not dealt with" marker, no hide/dismiss. Names render as text (not links). Missing warning: "You were sent this ENFT. Anyone can send you one. Do not trust its name." and a way to hide it. | Endowment spec §2 | Yes, as stated. |
 | D-C4-7d | **Seller claims, or requests a payout, just before a sale.** Contract: `claim` takes the whole distribution and a transfer carries only what is left. A seller who claims right before `transferFrom` leaves the buyer a zero distribution (`test_C4_7_sellerFrontRun_claimBeforeSale_buyerGetsEmptyDistribution`; control: without it the buyer gets the 500, `..._control_noFrontRun_buyerGetsAccrual`). With automatic payouts, any account (the seller, a keeper it pays) can `requestPayout` first: the recipient is fixed at request time, so finalising after the sale still pays the seller in ETH, and the buyer's distribution is zero (`test_C4_7_sellerFrontRun_requestPayoutBeforeSale_paysSellerAfterSale`). The transfer also switches payouts off for the buyer. The harm is bounded by the accrual since the last claim, which is public (D-C3-3), but the buyer cannot see the actual claimable balance before buying (only the owner can). App: the owner's panel tells the seller "Unclaimed balance goes with the ENFT. Claim first if you want to keep it." (enft_live.ex:428, :433); that is accurate and also the instruction to do this. Nothing is shown to a buyer, and there is no sale flow yet. Missing warning for any future market: "The seller can empty the claimable balance at any moment before the transfer lands. Value this ENFT by its remaining schedule, not by an unclaimed balance." | Endowment spec §3 (a previous owner may have read the pre-transfer value), §6 transfer hook | Yes, as stated. |
-| D-C4-7e | **Approval phished from an owner.** Contract: an ERC-721 approval or `setApprovalForAll` lets the approved address `transferFrom` the token together with its unclaimed balance and then claim it (an operator cannot claim itself: `NotOwner`) (`test_C4_7_phishedErc721Approval_takesTokenAndAccrual`). A confidential-token `setOperator` lets the operator move the holder's whole balance for the chosen period (`test_C4_7_phishedTokenOperator_drainsBalance`). App: has no ERC-721 approval screen; its one approval is "Authorise" on the Tokens page, which grants the ENFT contract a one-year operator right on the token, shown only as an authorisation status; a transfer confirmation says "Unclaimed balance goes with the ENFT". Missing warnings: that Authorise lets the contract pull any amount for a year and should be given only to the contract named, and, outside the app, that any `setApprovalForAll`/`setOperator` signature request from another site can empty the wallet and should be refused. | None; standard ERC-721 / ERC-7984 behaviour | Yes, as stated. |
+| D-C4-7e | **Approval phished from an owner.** Contract: an ERC-721 approval or `setApprovalForAll` lets the approved address `transferFrom` the token together with its unclaimed balance and then claim it (an operator cannot claim itself: `NotOwner`) (`test_C4_7_phishedErc721Approval_takesTokenAndAccrual`). A confidential-token `setOperator` lets the operator move the holder's whole balance for the chosen period (`test_C4_7_phishedTokenOperator_drainsBalance`). App: has no ERC-721 approval screen; its one approval is "Authorise" on the Tokens page, which grants the ENFT contract a one-year operator right on the token, shown only as an authorisation status; a transfer confirmation says "Unclaimed balance goes with the ENFT". Missing warnings: that Authorise lets the contract pull any amount for a year and should be given only to the contract named, and, outside the app, that any `setApprovalForAll`/`setOperator` signature request from another site can empty the wallet and should be refused. | Endowment spec §1 (line 29: a standard ERC-721 that any marketplace recognises, hence standard approval semantics) and the Sepolia client step at line 171 (operator/approval on the confidential token). No spec section addresses phishing; it is accepted as standard ERC-721 / ERC-7984 behaviour | Yes, as stated. |
 | D-C4-8 | **Donation order dependence.** `topUp` (ET:212-225) does not `_accrue` first, so once a token has run dry with no accrual since, how much of a donation becomes claimable at once depends on transaction order. Measured on a token drained at T0+100 (endowment 100, claimed), clock parked, now T0+200 (backlog 100 of elapsed schedule), donation 70: **donate-then-accrue** releases the whole 70 at once (`distribution` = min(backlog 100, 70) = 70, immediately claimable; `test_C4_8_donateThenAccrue_wholeDonationClaimableAtOnce`); **accrue-then-donate** releases 0 at once and streams the 70 forward at the schedule rate (30 of 70 claimable 30 s later; `test_C4_8_accrueThenDonate_streamsGoingForward`). Who chooses the order: the donor calls `topUp`, but `accrue` is public (anyone, including a block proposer, can poke it before or after the donation), so no party is guaranteed the order. Neither spec warns: the endowment spec's `topUp` steps (§6, lines 127-130) list no pre-accrue and no donor note, and the automatic-payout spec does not mention it. The app's Donate panel (`enft_live.ex:463`) says only "Encrypted before it leaves your browser" (D-C3-3k). Harm is bounded: the owner is the only beneficiary either way and the donation is never lost, only released sooner or later. Low / by design. | Endowment spec §6 (`topUp`, lines 127-130), §8 ("Under-funding at mint/top-up"); automatic-payout spec §3 | Yes: tell donors that a donation made after a token has run dry may be claimable immediately (against elapsed time) or stream forward, depending on whether someone accrues first, and that the order is not under the donor's control. |
 | D-C4-2 | **Unfunded or zero-payout tokens cost the keeper two transactions, once.** A token with payouts on, the minimum interval and a large advertised fee gets one request plus one finalise (about 763k gas per token, 1.12 times the attacker's own mint, 676-683k) and pays the keeper nothing (fee capped at a tenth of a zero payout). With the default the zero payout is remembered and the token is skipped for good; with `KEEPER_MIN_FEE` set below the advertised fee it behaves the same (the threshold sees only the advertised fee); with `KEEPER_INCLUDE_DRY=1` the keeper pays every interval and the attacker nothing after the mint. A fee lowered, payouts disabled, or a competing requester between the scan and the request fails that token's request for free (the estimate reverts, no transaction is sent). An owner who claims just before the request leaves a payout of a second or two of accrual. A recipient that burns all gas costs the finaliser about 138k extra gas (`SEND_GAS` is capped; the share is paid in WETH). Tests: `C4-2:` guards in `test/redteam/keeperDrain.hh.ts`. | Automatic-payout spec 4.5, section 8 | None; keeper operators should read 4.5 and not set `KEEPER_INCLUDE_DRY` unattended. |
 | D-C4-2b | **A rival who requests first makes the keeper finalise unpaid.** The finalise phase finishes every pending payout whatever its fee or last payout. The rival pays about 583k gas per request against the keeper's 170k per finalise, so it costs the attacker 3.4 times as much (`C4-2 / D-C4-2b`). | Automatic-payout spec section 8 ("finish every pending payout it can") | None. |
