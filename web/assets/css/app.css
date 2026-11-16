@@ -219,3 +219,14 @@ td.n, th.n { text-align: right; padding-right: 0; }
 .create ol.steps:empty { display: none; }
 .create ol.steps li[data-state=waiting] { opacity: .5; }
 .create ol.steps li[data-state=active], .create ol.steps li[data-state=failed] { color: var(--hot-fg); }
+
+/* User guide: stacked sections of running text. */
+.guide { display: flex; flex-direction: column; gap: 12px; max-width: 760px; }
+.guide p, .guide li { font-size: 14px; line-height: 1.55; }
+.guide p { margin: 0 0 10px; }
+.guide ul, .guide ol { margin: 0 0 10px; padding-left: 22px; }
+.guide li { margin: 0 0 6px; }
+.guide h3 { font-size: 14px; font-weight: 600; margin: 16px 0 8px; }
+.guide a { text-decoration: underline; }
+.guide section { scroll-margin-top: 12px; }
+.guide .note { font-size: 12px; }

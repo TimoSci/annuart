@@ -27,6 +27,8 @@ Each `EndowmentNFT` token holds an encrypted endowment of a confidential ERC-20 
 - In **immutable mode**, the original creator knows the initial endowment amount they funded. In **top-ups-allowed mode**, third-party top-ups can obscure even that.
 - A creator who knows the endowment **may disclose it**, to anyone or publicly, even after giving the token away, and the current owner cannot prevent it. If you receive an immutable-mode token, its remaining endowment stays private from the public only as long as its creator keeps it private.
 
+For the steps a creator and an owner must take to keep an endowment's total from the public, see [`guides/keeping-the-endowment-private.md`](guides/keeping-the-endowment-private.md). The web app has the same text in its user guide (the Guide page).
+
 ### Names
 
 An ENFT can be given a name at mint (`mint`'s last argument, a `bytes32`; zero for none). A name

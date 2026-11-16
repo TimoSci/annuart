@@ -81,6 +81,13 @@ defmodule AnnuartWeb.Layouts do
         >
           Transactions
         </.link>
+        <.link
+          navigate={~p"/guide"}
+          class={["nav-item", @current == :guide && "current"]}
+          data-activity-id="nav:guide"
+        >
+          Guide
+        </.link>
         <span class="spacer"></span>
         <div id="wallet" phx-hook="Wallet" phx-update="ignore"></div>
         <button type="button" id="clear-activity" class="clear">Clear my activity history</button>

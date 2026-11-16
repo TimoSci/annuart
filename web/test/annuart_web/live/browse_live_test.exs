@@ -94,7 +94,8 @@ defmodule AnnuartWeb.BrowseLiveTest do
              "nav:mine",
              "nav:market",
              "nav:tokens",
-             "nav:transactions"
+             "nav:transactions",
+             "nav:guide"
            ]
 
     assert html =~ "soon"
@@ -113,7 +114,8 @@ defmodule AnnuartWeb.BrowseLiveTest do
           {"nav:create", "/create"},
           {"nav:mine", "/mine"},
           {"nav:market", "/market"},
-          {"nav:tokens", "/tokens"}
+          {"nav:tokens", "/tokens"},
+          {"nav:guide", "/guide"}
         ] do
       assert has_element?(
                view,
