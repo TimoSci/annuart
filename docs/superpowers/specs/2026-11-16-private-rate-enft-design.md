@@ -182,8 +182,9 @@ lastAccrualAt = now
   to within one base unit.
 - **Encrypted operations per accrual:** one multiply, one add, one shift, one mask, two
   casts, one min, then the same subtract and add as today. All are in
-  `@fhevm/solidity` 0.11.1; that was checked. Their computation cost against the
-  network's per-transaction limit was **not** checked, and section 9 makes it a test.
+  `@fhevm/solidity` 0.11.1. By the cost table in `@fhevm/host-contracts` `HCULimit.sol`
+  they come to about 1.65 million computation units, against limits of 20 million per
+  transaction and 5 million per chain of dependent operations. Section 9 still tests it.
 
 ### 4.5 The rest
 
