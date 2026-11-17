@@ -1,7 +1,7 @@
 // Two roles, both about the deployment the flows run against.
 //
 // Run as a script (`node e2e/global-setup.js`, from the Phoenix webServer
-// command in playwright.config.js): deploys the mock, wrapped and automatic-payout variants to
+// command in playwright.config.js): deploys the mock, wrapped, automatic-payout and private-rate variants to
 // the Hardhat node at 8545, writing deployments/localhost.json. This runs
 // before `mix phx.server`, because Phoenix reads that file when it starts and
 // the indexer's first sync follows straight after.
@@ -18,7 +18,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(here, "../..");
 export const DEPLOYMENTS = path.join(REPO_ROOT, "deployments/localhost.json");
 export const RPC_URL = "http://127.0.0.1:8545";
-export const KINDS = ["mock", "wrapped", "auto"];
+export const KINDS = ["mock", "wrapped", "auto", "private-mock"];
 
 export function deploy() {
   // Start from an empty file: a label left over from other local work would point
@@ -28,9 +28,13 @@ export function deploy() {
     execFileSync("npx", ["hardhat", "run", "scripts/deploy.ts", "--network", "localhost"], {
       cwd: REPO_ROOT,
       // "auto" is an NFT kind, not a token kind: it shares the wrapped entry's token.
+      // "private-mock" is the private-rate NFT over a mock token of its own (a fresh
+      // one, since no TOKEN_ADDRESS is given); it gets its own card and faucet on Tokens.
       env: kind === "auto"
         ? {...process.env, NFT_KIND: "auto", LABEL: kind}
-        : {...process.env, TOKEN_KIND: kind, LABEL: kind},
+        : kind === "private-mock"
+          ? {...process.env, NFT_KIND: "private", TOKEN_KIND: "mock", LABEL: kind}
+          : {...process.env, TOKEN_KIND: kind, LABEL: kind},
       stdio: "inherit",
     });
   }

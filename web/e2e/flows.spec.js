@@ -92,10 +92,10 @@ async function fundMock(index, whole) {
 }
 
 // Faucet on the Tokens page: 1000 MOCK per run.
-async function getTestTokens(page, index, runs = 1) {
+async function getTestTokens(page, index, runs = 1, label = "mock") {
   await page.goto("/tokens");
   await connectedAs(page, index);
-  const faucet = page.locator("#tx-faucet-mock");
+  const faucet = page.locator(`#tx-faucet-${label}`);
   for (let i = 0; i < runs; i++) await runTx(faucet);
 }
 
@@ -540,6 +540,55 @@ test("create with a later start, two periods ending indefinitely, for another ad
   await expect(panel(page, "schedule").locator("table.schedule tbody tr")).toHaveCount(2);
   await expect(panel(page, "schedule").locator("table.schedule tbody")).toContainText("Indefinitely");
   await expect(panel(page, "schedule").locator("[data-indefinite]")).toHaveCount(1);
+});
+
+// Written, not yet run against a node: the first run may need its selectors or
+// the text of the rate adjusted.
+test("create a private-rate ENFT, reveal its rate, claim", async ({page}) => {
+  await page.goto("/");
+  await login(page, 0);
+  // The private-rate contract was deployed with a mock token of its own, so it has its own faucet.
+  await getTestTokens(page, 0, 1, "private-mock");
+  await page.goto("/create");
+  const form = page.locator("#create-form");
+  await expect(form).toBeVisible();
+  // The option names the kind; picking it shows the base payout and hides nothing else.
+  await expect(form.locator("select[data-role=token] option[value=private-mock]")).toHaveText(/private payout rate/);
+  await form.locator("select[data-role=token]").selectOption("private-mock");
+  await expect(form.locator("[data-role=base-fields]")).toBeVisible();
+  await expect(form.locator("[data-role=private-note]")).toBeVisible();
+  await form.locator("[data-role=amount]").fill("500");
+  await form.locator("[data-role=base]").fill("10");
+  await form.locator("[data-role=base-per]").selectOption("day");
+
+  // One period of 30 days at 100% of the base payout.
+  const row = form.locator("[data-role=period]").last();
+  await row.locator("[data-role=indefinite]").uncheck();
+  await row.locator("[data-role=length]").fill("30");
+  await row.locator("[data-role=unit]").selectOption("days");
+  await expect(row.locator("[data-role=percent]")).toHaveValue("100");
+
+  await form.locator("button[data-role=run]").click();
+  await expect(form.locator("[data-role=summary]")).toBeVisible();
+  await form.locator("[data-role=summary] button[data-role=confirm]").click();
+  await page.waitForURL(/\/enft\/private-mock\/\d+$/, {timeout: 90_000});
+
+  // The creator is the owner, so the base rate can be revealed.
+  await expect(page.locator("#panel-yours")).toBeVisible();
+  const rate = page.locator('[data-secret="rate"]');
+  await expect(rate.locator(".secret-value")).toHaveText("•••••");
+  const shown = await reveal(rate);
+  expect(shown).toMatch(/MOCK/);
+  expect(amountOf(shown)).toBeGreaterThan(0);
+
+  // An hour of income, then accrue and claim.
+  await advanceTime(3600);
+  const claimable = page.locator("#secret-claimable");
+  await runTx(page.locator("#tx-accrue"));
+  expect(amountOf(await reveal(claimable))).toBeGreaterThan(0);
+  await runTx(page.locator("#tx-claim"));
+  await expect(claimable.locator(".secret-value")).toHaveText("•••••");
+  expect(await reveal(claimable)).toBe("0 MOCK");
 });
 
 test("a failed action shows its reason and can be retried", async ({page}) => {

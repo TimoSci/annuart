@@ -27,6 +27,8 @@ Each `EndowmentNFT` token holds an encrypted endowment of a confidential ERC-20 
 - In **immutable mode**, the original creator knows the initial endowment amount they funded. In **top-ups-allowed mode**, third-party top-ups can obscure even that.
 - A creator who knows the endowment **may disclose it**, to anyone or publicly, even after giving the token away, and the current owner cannot prevent it. If you receive an immutable-mode token, its remaining endowment stays private from the public only as long as its creator keeps it private.
 
+**Private-rate ENFT.** A third kind, `PrivateRateEndowmentNFT`, hides the payout rate too. On the Create page its option reads "(SYMBOL, private payout rate)". The creator types one secret base payout (per day, month or year) and a public percentage for each period. What is hidden: the base payout rate (encrypted on chain), each claim amount and the endowment remaining. What stays public: that the ENFT exists, the period lengths, each period's share of the base rate, the start and the end, and that and when an accrual, claim, donation or transfer happened. The creator and every owner so far can read the base rate; a past owner keeps that access and it cannot be taken back. There are no automatic payouts on this kind, because they would publish each payout and so the rate. Three consequences: one public amount reveals the rate (if an owner converts an identifiable claim to ETH, anyone can divide it by the elapsed weighted time and learn the base rate, and so every payout while the endowment lasts); a seller still knows what the ENFT pays the buyer; and a zero rate cannot be refused, because the contract cannot see the rate (on a schedule with an end it pays nothing until the end and then releases everything, on a schedule with no end the endowment is locked for good; the owner can check by revealing the rate, a donor cannot). This contract has had no red-team review.
+
 For the steps a creator and an owner must take to keep an endowment's total from the public, see [`guides/keeping-the-endowment-private.md`](guides/keeping-the-endowment-private.md). The web app has the same text in its user guide (the Guide page).
 
 ### Names
@@ -237,6 +239,7 @@ npx hardhat node                                        # terminal 1
 npx hardhat run scripts/deploy.ts --network localhost   # terminal 2 (mock token)
 TOKEN_KIND=wrapped npx hardhat run scripts/deploy.ts --network localhost
 NFT_KIND=auto npx hardhat run scripts/deploy.ts --network localhost   # automatic payouts; after the wrapped deploy
+NFT_KIND=private npx hardhat run scripts/deploy.ts --network localhost   # private-rate ENFT over a mock token (label private-mock)
 ```
 
 For Sepolia, follow [`guides/sepolia-deployment.md`](guides/sepolia-deployment.md): a no-cost
@@ -245,7 +248,10 @@ refuses to run unless `CONFIRM_DEPLOY=<network name>` (for example `CONFIRM_DEPL
 
 Environment variables:
 
-- `NFT_KIND`: `standard` (default, `EndowmentNFT`) or `auto` (`AutoPayoutEndowmentNFT`). `auto` deploys
+- `NFT_KIND`: `standard` (default, `EndowmentNFT`), `auto` (`AutoPayoutEndowmentNFT`) or `private`
+  (`PrivateRateEndowmentNFT`, the private-rate ENFT). `private` deploys over the token that
+  `TOKEN_KIND` chooses, as `standard` does; its default `LABEL` is `private-mock` (mock token),
+  `private` (wrapped) or `private-plain`. For `auto`: `auto` deploys
   no token: it shares the token of the `wrapped` entry (or `TOKEN_ADDRESS`), so deploy `wrapped` first.
   The default `LABEL` is `auto`, and `TOKEN_KIND`, if set, must be `wrapped`.
 - `TOKEN_KIND`: `mock` (default, `MockConfidentialToken`, dev only: its constructor reverts on
@@ -419,6 +425,7 @@ npx hardhat node                                                     # terminal 
 npx hardhat run scripts/deploy.ts --network localhost                # terminal 2: mock token
 TOKEN_KIND=wrapped npx hardhat run scripts/deploy.ts --network localhost
 NFT_KIND=auto npx hardhat run scripts/deploy.ts --network localhost
+NFT_KIND=private npx hardhat run scripts/deploy.ts --network localhost   # optional: private-rate ENFT
 
 # the app
 cd web
@@ -474,7 +481,7 @@ mix test
 # three variants deployed, and are skipped without one.
 node --test "assets/test/**/*.test.js"
 
-# Browser end to end (web/e2e/). Starts its own Hardhat node, deploys the three variants and starts
+# Browser end to end (web/e2e/). Starts its own Hardhat node, deploys the variants (mock, wrapped, auto and private-mock) and starts
 # the Phoenix dev server, so ports 8545 and 4000 must be free.
 cd e2e
 npm install

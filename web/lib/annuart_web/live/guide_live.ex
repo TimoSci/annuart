@@ -180,6 +180,13 @@ defmodule AnnuartWeb.GuideLive do
             would run out before the schedule ends, or when money would be left over at the end.
             Leftover money is paid to the owner when a schedule with an end finishes.
           </p>
+          <p>
+            <strong>A private-rate ENFT</strong>
+            hides the payout rate as well. On the Create page its option reads
+            "(SYMBOL, private payout rate)". You type one secret base payout, per day, month or
+            year, and a public percentage for each period. Each period pays that share of the base
+            payout. This kind has no automatic payouts.
+          </p>
           <p class="note">
             An ENFT pays only what was really put in. Nobody but the creator can check that amount,
             so an ENFT can look funded and hold nothing.
@@ -296,6 +303,17 @@ defmodule AnnuartWeb.GuideLive do
               work out what an ENFT may have paid from its public schedule.
             </li>
           </ul>
+          <p>
+            <strong>A private-rate ENFT</strong>
+            hides more. The base payout rate is hidden, because it is encrypted on chain. So are
+            the amount of each claim and the endowment left. These stay public: that the ENFT
+            exists, the period lengths, each period's share of the base rate, the start and the
+            end, and that and when an accrual, claim, donation or transfer happened.
+          </p>
+          <p>
+            The creator and every owner so far can read the base rate. A past owner keeps that
+            access, and it cannot be taken back.
+          </p>
         </.part>
 
         <.part id="keeping-the-total-private">
@@ -370,6 +388,31 @@ defmodule AnnuartWeb.GuideLive do
               schedule. Only the remaining endowment, and whether a claim fell short, stay hidden.
             </li>
           </ul>
+
+          <h3>If the ENFT has a private payout rate</h3>
+          <p>
+            Only the base rate is hidden, not the periods. There is no automatic payout on this
+            kind, because it would publish each payout and so the rate. Three things to know.
+          </p>
+          <ol>
+            <li>
+              <strong>One public amount reveals the rate.</strong>
+              If an owner converts an identifiable claim to ETH, anyone can divide it by the
+              elapsed weighted time and learn the base rate. That shows every payout for as long
+              as the endowment lasts.
+            </li>
+            <li>
+              <strong>A past owner keeps the rate.</strong>
+              A seller still knows what the ENFT pays the buyer. Access cannot be taken back.
+            </li>
+            <li>
+              <strong>A zero rate cannot be refused.</strong>
+              The contract cannot see the rate. On a schedule with an end, a zero rate pays
+              nothing until the end and then releases everything. On a schedule with no end, the
+              endowment is locked for good. The owner can check by revealing the rate. A donor
+              cannot.
+            </li>
+          </ol>
         </.part>
       </div>
     </Layouts.app>

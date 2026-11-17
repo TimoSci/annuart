@@ -135,6 +135,29 @@ includes one wait of an hour (step 6).
     donation amount, as in section 8. The paid amounts of automatic payouts are public chain data
     and the page shows them, but nothing the page sends contains an amount you typed.
 
+## 3d. Private-rate ENFT
+
+This needs the private-rate variant deployed (`NFT_KIND=private`, label `private-mock` or
+`private`) and tokens for the same token in account A. Use two accounts, A and B.
+
+1. Create: pick the option that ends `private payout rate`. A `Base payout` field with a `day`,
+   `month` and `year` choice appears, and a note says period lengths and shares are public and the
+   base payout is hidden. Each period shows a percent field (starts at `100`). Pick a standard
+   token: the field goes.
+2. Pick the private option again. Amount `0.01`, base payout `0.001` per `day`, one period of 30
+   days at `100` percent, donations on. Create ENFT, confirm in the summary, and wait for the page.
+3. As A (creator and owner), the Base rate line has a Reveal button. Reveal it (the wallet asks to
+   sign once): it shows the base rate you typed. The note under it says the creator and every owner
+   so far can read it.
+4. After a while, Update accrual, reveal Claimable, Claim, reveal again: `0`.
+5. Switch to B. The Base rate line reads `Hidden` and has no Reveal button.
+6. As A, transfer to B. As B, open the ENFT: the Base rate now has Reveal, and it shows the same
+   rate. Switch back to A: A is no longer the owner, but is the creator, so A can still reveal it.
+   A past owner who was not the creator also keeps access (try it by passing the ENFT from B to a
+   third account, then back in B's wallet: B can still reveal).
+7. In the Network tab, no request or frame sent to the app's own host contains the base payout or
+   the amount, as in section 8.
+
 ## 4. Unwrap
 
 1. Tokens, wrapped card (the one cWETH card, which also serves the `auto` contract): unwrap `0.005`. Steps: Check your balance, Encrypt the amount, Request unwrap, Wait for

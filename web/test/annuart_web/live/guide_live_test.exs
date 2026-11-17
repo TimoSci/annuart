@@ -65,6 +65,27 @@ defmodule AnnuartWeb.GuideLiveTest do
         do: assert(section =~ text, "missing: #{text}")
   end
 
+  test "the guide describes the private-rate ENFT", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/guide")
+    section = fn id -> view |> element("section##{id}") |> render() end
+
+    assert section.("creating") =~ "private payout rate"
+
+    privacy = section.("privacy")
+    assert privacy =~ "base payout rate is hidden"
+    assert privacy =~ "period lengths"
+    assert privacy =~ "share of the base rate"
+
+    total = section.("keeping-the-total-private")
+
+    for text <- [
+          "One public amount reveals the rate",
+          "A past owner keeps the rate",
+          "A zero rate cannot be refused"
+        ],
+        do: assert(total =~ text, "missing: #{text}")
+  end
+
   test "the guide links to the pages it describes", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/guide")
 
