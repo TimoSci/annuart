@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   U64_MAX, parseAmount, parseFee, formatAmount, durationSeconds, ratePerSecond, effectiveRate,
   toSegments, scheduleTotal, amountWarning, MAX_PERIODS,
+  percentToWeight, baseUnit, toWeightSegments, effectiveSegments, unitPerDay,
 } from "../js/units.js";
 
 test("parseAmount", () => {
@@ -157,4 +158,43 @@ test("toSegments allows 256 periods and rejects more", () => {
   assert.equal(toSegments(rows(256), 6).length, 256);
   assert.equal(toSegments([...rows(255), { rate: "1", per: "day", indefinite: true }], 6).length, 256);
   assert.throws(() => toSegments(rows(257), 6), { code: "too_many" });
+});
+
+test("percentToWeight", () => {
+  assert.equal(percentToWeight("100"), 1000n);
+  assert.equal(percentToWeight("12.5"), 125n);
+  assert.equal(percentToWeight("0"), 0n);
+  assert.equal(percentToWeight(" 250 "), 2500n);
+  assert.equal(percentToWeight("429496729.5"), 4294967295n);
+  for (const bad of ["12.55", "-1", "", "abc", "1e3", "429496729.6"]) {
+    assert.throws(() => percentToWeight(bad), { name: "ScheduleError", code: "bad_percent" }, bad);
+  }
+});
+
+test("baseUnit", () => {
+  assert.equal(baseUnit("1", "day", 9), 49710269629n);
+  assert.equal(baseUnit("0.5", "month", 9), 828504493n);
+  assert.throws(() => baseUnit("0.000000001", "year", 9), { name: "AmountError", code: "rate_rounds_to_zero" });
+  assert.throws(() => baseUnit("18446744073709551615", "day", 0), { name: "AmountError", code: "too_large" });
+});
+
+test("unitPerDay", () => {
+  assert.equal(unitPerDay(49710269629n, 9), "0.999999999");
+  assert.equal(unitPerDay(1n << 32n, 0), "86,400,000");
+});
+
+test("toWeightSegments", () => {
+  assert.deepEqual(
+    toWeightSegments([{ length: "100", unit: "days", percent: "100" }, { indefinite: true, percent: "50" }]),
+    [{ duration: 8640000n, ratePerSec: 1000n }, { duration: U64_MAX, ratePerSec: 500n }],
+  );
+  assert.throws(() => toWeightSegments([{ indefinite: true, percent: "0" }]), { code: "zero_percent_indefinite" });
+  const many = Array.from({ length: MAX_PERIODS + 1 }, () => ({ length: "1", unit: "days", percent: "1" }));
+  assert.throws(() => toWeightSegments(many), { code: "too_many" });
+  assert.throws(() => toWeightSegments([]), { code: "empty" });
+});
+
+test("effectiveSegments", () => {
+  assert.equal(effectiveSegments([{ duration: 100n, ratePerSec: 1000n }], 49710269629n)[0].ratePerSec, 11574n);
+  assert.equal(effectiveSegments([{ duration: 100n, ratePerSec: 1000n }], 49710269629n)[0].duration, 100n);
 });

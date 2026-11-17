@@ -186,3 +186,62 @@ export function intervalText(seconds) {
   const n = seconds / per;
   return `${n} ${name}${n === 1 ? "" : "s"}`;
 }
+
+// Private-rate schedules: one secret base rate, and per period a public
+// percentage of it. On chain a period carries weight = percent * 10 (100% is
+// 1000) and the base rate is an encrypted fixed-point `unit`: base units per
+// second per one unit of weight, times 2^32.
+export const UNIT_SHIFT = 32n;
+export const BASE_WEIGHT = 1000n;
+export const MAX_WEIGHT = 4294967295n;
+
+// "12.5" -> 125n. At most one decimal place; read as text, never as a float.
+export function percentToWeight(text) {
+  const m = /^(\d+)(?:\.(\d))?$/.exec(String(text ?? "").trim());
+  if (!m) throw new ScheduleError("bad_percent");
+  const weight = BigInt(m[1]) * 10n + BigInt(m[2] ?? "0");
+  if (weight > MAX_WEIGHT) throw new ScheduleError("bad_percent");
+  return weight;
+}
+
+// The base rate (an amount per day, month or year) as a fixed-point unit,
+// rounded down. Throws if it rounds to zero or does not fit a uint64.
+export function baseUnit(amountText, per, decimals) {
+  const amount = parseAmount(amountText, decimals);
+  const unit = (amount << UNIT_SHIFT) / (perSeconds(per) * BASE_WEIGHT);
+  if (unit === 0n) throw new AmountError("rate_rounds_to_zero", decimals);
+  if (unit > U64_MAX) throw new AmountError("too_large", decimals);
+  return unit;
+}
+
+// Rows are {length, unit, indefinite, percent}; ratePerSec holds the weight.
+export function toWeightSegments(rows) {
+  if (!rows || rows.length === 0) throw new ScheduleError("empty");
+  if (rows.length > MAX_PERIODS) throw new ScheduleError("too_many");
+  let fixedTotal = 0n;
+  return rows.map((row, i) => {
+    let duration;
+    if (row.indefinite) {
+      if (i !== rows.length - 1) throw new ScheduleError("indefinite_not_last");
+      duration = U64_MAX;
+    } else {
+      duration = fixedDuration(row.length, row.unit);
+      fixedTotal += duration;
+      if (fixedTotal >= U64_MAX) throw new ScheduleError("too_long");
+    }
+    const weight = percentToWeight(row.percent);
+    if (row.indefinite && weight === 0n) throw new ScheduleError("zero_percent_indefinite");
+    return { duration, ratePerSec: weight };
+  });
+}
+
+// What each period pays per second once the secret unit is known, for the
+// browser's own warnings.
+export function effectiveSegments(segments, unit) {
+  return segments.map((s) => ({ duration: s.duration, ratePerSec: (unit * s.ratePerSec) >> UNIT_SHIFT }));
+}
+
+// The base rate (weight 1000) as an amount per day.
+export function unitPerDay(unit, decimals, options) {
+  return formatAmount((unit * BASE_WEIGHT * 86400n) >> UNIT_SHIFT, decimals, options);
+}

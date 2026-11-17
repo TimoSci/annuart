@@ -65,6 +65,8 @@ export function explainAmount(err, symbol) {
     case "indefinite_not_last": return SELECTORS["0x8dba7587"];
     case "too_long": return SELECTORS["0x15a7d4e1"];
     case "too_many": return SELECTORS["0xda447a62"];
+    case "bad_percent": return "Enter a percentage with at most one decimal place.";
+    case "zero_percent_indefinite": return "A period with no end must pay more than 0%.";
     case "zero_length": return SELECTORS["0x91378467"];
     case "bad_interval": return SELECTORS["0x5fabb610"];
     default: return String(err?.message || err);
