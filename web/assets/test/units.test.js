@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   U64_MAX, parseAmount, parseFee, formatAmount, durationSeconds, ratePerSecond, effectiveRate,
   toSegments, scheduleTotal, amountWarning, MAX_PERIODS,
-  percentToWeight, baseUnit, toWeightSegments, effectiveSegments, unitPerDay,
+  percentToWeight, baseUnit, toWeightSegments, scaledSegments, privatePayout, unitPerDay,
 } from "../js/units.js";
 
 test("parseAmount", () => {
@@ -194,7 +194,14 @@ test("toWeightSegments", () => {
   assert.throws(() => toWeightSegments([]), { code: "empty" });
 });
 
-test("effectiveSegments", () => {
-  assert.equal(effectiveSegments([{ duration: 100n, ratePerSec: 1000n }], 49710269629n)[0].ratePerSec, 11574n);
-  assert.equal(effectiveSegments([{ duration: 100n, ratePerSec: 1000n }], 49710269629n)[0].duration, 100n);
+test("scaledSegments", () => {
+  const [seg] = scaledSegments([{ duration: 100n, ratePerSec: 1000n }], 49710269629n);
+  assert.equal(seg.ratePerSec, 49710269629000n);
+  assert.equal(seg.duration, 100n);
+});
+
+test("privatePayout rounds once, over the whole stretch", () => {
+  assert.equal(privatePayout(49710269629n, 1000n, 86400n), 999999999n);
+  // Half a base unit a second pays 5 in 10 seconds; a per-second floor would give 0.
+  assert.equal(privatePayout(1n << 31n, 1n, 10n), 5n);
 });

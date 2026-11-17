@@ -7,7 +7,7 @@
 import {isAddress} from "ethers";
 import {
   parseAmount, parseFee, formatAmount, intervalSeconds, intervalText, effectiveRate, toSegments, scheduleTotal, amountWarning,
-  toWeightSegments, effectiveSegments, baseUnit, ScheduleError, U64_MAX, MAX_PERIODS, BASE_WEIGHT, UNIT_SHIFT,
+  toWeightSegments, scaledSegments, privatePayout, perSeconds, baseUnit, ScheduleError, U64_MAX, MAX_PERIODS, BASE_WEIGHT, UNIT_SHIFT,
 } from "../units.js";
 import {explainAmount, TOO_MANY_PERIODS} from "../errors.js";
 import {current, onChange, chainInfo} from "../chain/signer.js";
@@ -73,6 +73,17 @@ function warningText(warning, {symbol, decimals}, format) {
       return `At these rates the endowment runs out around ${dateText(warning.at)}.`;
   }
 }
+
+// A warning worked out on segments scaled by 2^shift, back in base units. The
+// leftover is the amount less the floored total, which is what the contract
+// pays back, so it rounds up.
+function unscaled(warning, shift) {
+  if (warning?.kind !== "leftover") return warning;
+  return {...warning, extra: (warning.extra + (1n << shift) - 1n) >> shift};
+}
+
+// A weight as the percentage it stands for: 750n is "75", 125n is "12.5".
+const percentText = weight => `${weight / 10n}${weight % 10n === 0n ? "" : `.${weight % 10n}`}`;
 
 function autoText(auto) {
   if (!auto) return "";
@@ -375,7 +386,12 @@ export class CreateFormController {
       const per = priv ? this.role("base-per").value : rows[i].per;
       if (priv) {
         if (unit === null) return;
-        segment = effectiveSegments([segment], unit)[0];
+        const weight = segment.ratePerSec;
+        effective.textContent = `= ${formatAmount(privatePayout(unit, weight, perSeconds(per)), decimals, TYPED)} ${symbol} per ${per}`;
+        upto.textContent = segment.duration === U64_MAX
+          ? "Pays until the endowment runs out"
+          : `Up to ${formatAmount(privatePayout(unit, weight, segment.duration), decimals)} ${symbol}`;
+        return;
       }
       effective.textContent = `= ${effectiveRate(segment.ratePerSec, per, decimals, TYPED)} ${symbol} per ${per}`;
       upto.textContent = segment.duration === U64_MAX
@@ -395,20 +411,24 @@ export class CreateFormController {
       this.role("total").textContent = explainAmount(err, symbol);
       return;
     }
+    // A private schedule is worked out in 2^-32 base units, exactly, and
+    // shifted back only to be shown.
+    let shift = 0n;
     if (priv) {
       this.role("total").textContent = baseProblem && `Base payout: ${baseProblem}`;
       if (unit === null) return;
-      segments = effectiveSegments(segments, unit);
+      segments = scaledSegments(segments, unit);
+      shift = UNIT_SHIFT;
     }
     const total = scheduleTotal(segments);
     this.role("total").textContent = total === null
       ? "Schedule pays until the endowment runs out."
-      : `Schedule pays up to ${formatAmount(total, decimals)} ${symbol} in total over ${lengthText(this.fixedSeconds(segments))}.`;
+      : `Schedule pays up to ${formatAmount(total >> shift, decimals)} ${symbol} in total over ${lengthText(this.fixedSeconds(segments))}.`;
 
     if (amount !== null) {
       const now = BigInt(Math.floor(this.deps.now() / 1000));
       const start = this.chosenStart() ?? now;
-      this.role("warning").textContent = warningText(amountWarning(segments, start, amount), {symbol, decimals});
+      this.role("warning").textContent = warningText(unscaled(amountWarning(segments, start, amount << shift), shift), {symbol, decimals});
     }
   }
 
@@ -546,12 +566,13 @@ export class CreateFormController {
       args: {to, amount, segments, start: start ?? 0n, topUps: isChecked(this.role("donations")), name, symbol, decimals, auto, unit},
       label, symbol, decimals, contract, rows, other, now,
       // What each period pays, for the summary's warning; never sent anywhere.
-      paid: priv ? effectiveSegments(segments, unit) : segments,
+      paid: priv ? scaledSegments(segments, unit) : segments,
+      shift: priv ? UNIT_SHIFT : 0n,
       basePer: priv ? this.role("base-per").value : null,
     };
   }
 
-  summaryText({args, symbol, decimals, rows, other, now, paid, basePer}) {
+  summaryText({args, symbol, decimals, rows, other, now, paid, shift, basePer}) {
     const me = other ? args.to : `${args.to} (you)`;
     const startText = args.start === 0n
       ? "Payouts start as soon as the transaction is mined."
@@ -562,15 +583,15 @@ export class CreateFormController {
     const donations = args.topUps ? "Donations are allowed" : "Donations are not allowed";
     const words = rows.map((row, i) => {
       const rate = args.unit !== undefined
-        ? `${row.percent.trim()}% of the base payout`
+        ? `${percentText(args.segments[i].ratePerSec)}% of the base payout`
         : `${effectiveRate(args.segments[i].ratePerSec, row.per, decimals, TYPED)} ${symbol} per ${row.per}`;
       if (row.indefinite) return `${i === 0 ? "" : "then "}indefinitely at ${rate}`;
       const n = row.length.trim();
       const unit = Number(n) === 1 ? row.unit.replace(/s$/, "") : row.unit;
       return `${i === 0 ? "" : "then "}${n} ${unit} at ${rate}`;
     }).join(", ");
-    const base = args.unit === undefined ? "" : `The base payout is ${effectiveRate((args.unit * BASE_WEIGHT) >> UNIT_SHIFT, basePer, decimals, TYPED)} ${symbol} per ${basePer}. It is encrypted with the amount; each period's length and percentage are public.`;
-    const warning = warningText(amountWarning(paid, args.start === 0n ? now : args.start, args.amount), {symbol, decimals}, TYPED);
+    const base = args.unit === undefined ? "" : `The base payout is ${formatAmount(privatePayout(args.unit, BASE_WEIGHT, perSeconds(basePer)), decimals, TYPED)} ${symbol} per ${basePer}. It is encrypted with the amount; each period's length and percentage are public.`;
+    const warning = warningText(unscaled(amountWarning(paid, args.start === 0n ? now : args.start, args.amount << shift), shift), {symbol, decimals}, TYPED);
     return [
       `You are about to lock ${formatAmount(args.amount, decimals, TYPED)} ${symbol} in a new ENFT.`,
       args.name

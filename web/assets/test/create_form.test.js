@@ -952,12 +952,14 @@ test("the private summary lists the base payout and each period's percent", () =
   fillPrivate(t.el);
   type(q(rows(t.el)[0], "percent"), "75");
   click(q(t.el, "add-period"));
-  fillPercentRow(rows(t.el)[1], {indefinite: true, percent: "12.5"});
+  // Shown from its weight, not as typed.
+  fillPercentRow(rows(t.el)[1], {indefinite: true, percent: " 12.5 "});
+  type(q(rows(t.el)[0], "percent"), "075");
   click(q(t.el, "run"));
   const text = q(t.el, "summary").textContent;
   for (const part of [
     "You are about to lock 150 TKN in a new ENFT.",
-    "The base payout is 0.9999936 TKN per day.",
+    "The base payout is 0.999999999 TKN per day.",
     "The schedule is 100 days at 75% of the base payout, then indefinitely at 12.5% of the base payout.",
   ]) assert.ok(text.includes(part), `summary mentions ${part}: ${text}`);
   // A percentage is never shown as a token amount.
@@ -986,4 +988,43 @@ test("switching to a standard type and back keeps no private fields on a standar
   await submit(t);
   assert.equal(t.calls[0].args.unit, undefined);
   assert.deepEqual(t.calls[0].args.segments, [{duration: 18n * 30n * 86400n, ratePerSec: 100_000_000n / 86400n}]);
+});
+
+test("a private type with 0 decimals shows the exact total and the leftover, not a per-second floor", () => {
+  const t = make({tokens: [["mock", "TKN", 6], ["private", "TKN", 0, "private"]]});
+  pick(q(t.el, "token"), "private");
+  // unit = 2^32 / 86,400,000 = 49 (floored): 100 days pay 49 * 1000 * 8,640,000 >> 32 = 98.
+  fillPrivate(t.el, {amount: "100"});
+  const [row] = rows(t.el);
+  assert.equal(q(row, "upto").textContent, "Up to 98 TKN");
+  assert.equal(q(t.el, "total").textContent, "Schedule pays up to 98 TKN in total over 100 days.");
+  // The contract pays 98 over the schedule and the remaining 2 as a lump sum.
+  assert.equal(q(t.el, "warning").textContent, "2 TKN extra will be paid to the owner as a lump sum when the schedule ends.");
+});
+
+test("a private row's rate text is what that period pays, rounded once", () => {
+  const t = privatePage();
+  fillPrivate(t.el);
+  const [row] = rows(t.el);
+  assert.equal(q(row, "effective").textContent, "= 0.999999999 TKN per day");
+  assert.equal(q(row, "upto").textContent, "Up to 99.999999998 TKN");
+  assert.equal(q(t.el, "total").textContent, "Schedule pays up to 99.999999998 TKN in total over 100 days.");
+});
+
+test("switching from standard rates to a private type sends weights from the percents and a unit", async () => {
+  const t = make({tokens: PRIVATE_TOKENS});
+  fillDefault(t.el);
+  pick(q(t.el, "token"), "private");
+  type(q(t.el, "base"), "1");
+  const [first, second] = rows(t.el);
+  type(q(first, "percent"), "50");
+  type(q(second, "percent"), "25");
+  await submit(t);
+  assert.equal(t.calls.length, 1);
+  const {args} = t.calls[0];
+  assert.equal(args.unit, 49710269629n);
+  assert.deepEqual(args.segments, [
+    {duration: 18n * 30n * 86400n, ratePerSec: 500n},
+    {duration: U64_MAX, ratePerSec: 250n},
+  ]);
 });

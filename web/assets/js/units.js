@@ -75,7 +75,7 @@ export function durationSeconds(n, unit) {
   return BigInt(n) * s;
 }
 
-function perSeconds(per) {
+export function perSeconds(per) {
   const s = PER_SECONDS[per];
   if (s === undefined) throw new RangeError(`unknown period ${per}`);
   return s;
@@ -235,10 +235,18 @@ export function toWeightSegments(rows) {
   });
 }
 
-// What each period pays per second once the secret unit is known, for the
-// browser's own warnings.
-export function effectiveSegments(segments, unit) {
-  return segments.map((s) => ({ duration: s.duration, ratePerSec: (unit * s.ratePerSec) >> UNIT_SHIFT }));
+// What each period pays once the secret unit is known, for the browser's own
+// display. The contract rounds only once over any stretch (carrying the
+// fraction), so rates stay in 2^-32 base units per second: exact. Pass these to
+// scheduleTotal / runsDryAt / amountWarning with the amount shifted left by
+// UNIT_SHIFT, and shift totals right again to show them.
+export function scaledSegments(segments, unit) {
+  return segments.map((s) => ({ duration: s.duration, ratePerSec: unit * s.ratePerSec }));
+}
+
+// Base units paid over `seconds` at `weight` (1000 is 100%).
+export function privatePayout(unit, weight, seconds) {
+  return (unit * weight * seconds) >> UNIT_SHIFT;
 }
 
 // The base rate (weight 1000) as an amount per day.
