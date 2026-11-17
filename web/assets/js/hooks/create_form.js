@@ -7,7 +7,7 @@
 import {isAddress} from "ethers";
 import {
   parseAmount, parseFee, formatAmount, intervalSeconds, intervalText, effectiveRate, toSegments, scheduleTotal, amountWarning,
-  ScheduleError, U64_MAX, MAX_PERIODS,
+  toWeightSegments, effectiveSegments, baseUnit, ScheduleError, U64_MAX, MAX_PERIODS, BASE_WEIGHT, UNIT_SHIFT,
 } from "../units.js";
 import {explainAmount, TOO_MANY_PERIODS} from "../errors.js";
 import {current, onChange, chainInfo} from "../chain/signer.js";
@@ -19,6 +19,9 @@ const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const ZERO_ADDRESS = /^0x0{40}$/;
 const UNITS = ["days", "weeks", "months", "years"];
 const PERS = ["day", "month", "year"];
+// A row's fields for a rate typed per period, and for a share of a private base payout.
+const RATE_ROLES = ["rate", "symbol", "per-lbl", "per"];
+const PERCENT_ROLES = ["percent", "percent-lbl"];
 // Largest first, for describing a length as one whole unit.
 const LENGTH_UNITS = [["year", 31536000n], ["month", 2592000n], ["day", 86400n]];
 const INDEFINITE_SHARE = 30;
@@ -158,6 +161,21 @@ export class CreateFormController {
   // The automatic payout settings apply only to an automatic contract.
   isAuto() { return this.token().kind === "auto"; }
 
+  // A private-rate contract: one secret base payout, and per period a public percentage of it.
+  isPrivate() { return this.token().kind === "private"; }
+
+  // The base payout as the contract's fixed-point unit; throws as parseAmount does.
+  typedUnit(decimals) {
+    const text = this.role("base").value;
+    if (text.trim() === "") throw new InputError("Enter a base payout.");
+    return baseUnit(text, this.role("base-per").value, decimals);
+  }
+
+  // The schedule as segments the contract takes: rates, or for a private type weights.
+  segmentsOf(rows, decimals) {
+    return this.isPrivate() ? toWeightSegments(rows) : toSegments(rows, decimals);
+  }
+
   // The interval as seconds, or throws ScheduleError("bad_interval").
   autoInterval() {
     return intervalSeconds(this.role("auto-interval").value, this.role("auto-interval-unit").value);
@@ -173,9 +191,13 @@ export class CreateFormController {
       // A balance revealed for the previous token must not stay on screen.
       if (announce) this.deps.announce();
     }
-    this.tokenSymbols();
+    this.syncRows();
     const auto = this.role("auto");
     if (auto) setHidden(auto, !this.isAuto());
+    for (const name of ["base-fields", "private-note"]) {
+      const node = this.role(name);
+      if (node) setHidden(node, !this.isPrivate());
+    }
   }
 
   // Schedule rows
@@ -189,6 +211,7 @@ export class CreateFormController {
       unit: get("unit").value,
       rate: get("rate").value,
       per: get("per").value,
+      percent: get("percent").value,
       indefinite: isChecked(get("indefinite")),
     };
   }
@@ -219,11 +242,15 @@ export class CreateFormController {
     const rate = make("input", {role: "rate", type: "text", placeholder: "Amount"});
     rate.setAttribute("inputmode", "decimal");
     rate.setAttribute("autocomplete", "off");
+    const percent = make("input", {role: "percent", type: "text", placeholder: "Percent", value: "100"});
+    percent.setAttribute("inputmode", "decimal");
+    percent.setAttribute("autocomplete", "off");
     row.append(
       make("span", {className: "lbl"}, "Lasts"), length, select("unit", UNITS, "months"),
       make("span", {role: "indefinite-slot"}),
       make("span", {className: "lbl"}, "Pays"), rate,
-      make("span", {role: "symbol"}), make("span", {className: "lbl"}, "per"), select("per", PERS),
+      make("span", {role: "symbol"}), make("span", {role: "per-lbl", className: "lbl"}, "per"), select("per", PERS),
+      percent, make("span", {role: "percent-lbl", className: "lbl"}, "% of the base payout"),
       make("span", {role: "effective", className: "effective"}),
       make("span", {role: "upto", className: "upto"}),
       make("span", {role: "remove-slot"}),
@@ -236,6 +263,7 @@ export class CreateFormController {
   // row cannot be removed.
   syncRows() {
     const rows = this.periods();
+    const priv = this.isPrivate();
     const add = this.role("add-period");
     if (add) {
       add.disabled = rows.length >= MAX_PERIODS;
@@ -262,6 +290,8 @@ export class CreateFormController {
       const indefinite = isChecked(box);
       setHidden(row.querySelector("[data-role=length]"), indefinite);
       setHidden(row.querySelector("[data-role=unit]"), indefinite);
+      for (const name of RATE_ROLES) setHidden(row.querySelector(`[data-role=${name}]`), priv);
+      for (const name of PERCENT_ROLES) setHidden(row.querySelector(`[data-role=${name}]`), !priv);
 
       const removeSlot = row.querySelector("[data-role=remove-slot]");
       const button = removeSlot.querySelector("button");
@@ -317,6 +347,15 @@ export class CreateFormController {
     const nameHint = this.role("name-hint");
     if (nameHint) nameHint.textContent = nameProblem(this.typedName()) ?? "";
 
+    // A private type's rows pay their percent of the base payout; what that
+    // comes to is worked out here, in the browser, and only shown.
+    const priv = this.isPrivate();
+    let unit = null;
+    let baseProblem = "";
+    if (priv && decimals !== null && this.role("base").value.trim() !== "") {
+      try { unit = this.typedUnit(decimals); } catch (err) { baseProblem = explainAmount(err, symbol); }
+    }
+
     const valid = [];
     this.periods().forEach((row, i) => {
       const effective = row.querySelector("[data-role=effective]");
@@ -326,13 +365,19 @@ export class CreateFormController {
       if (decimals === null) return;
       let segment;
       try {
-        segment = toSegments([rows[i]], decimals)[0];
+        segment = this.segmentsOf([rows[i]], decimals)[0];
       } catch (err) {
-        if (rows[i].rate.trim() !== "" || rows[i].length.trim() !== "") effective.textContent = explainAmount(err, symbol);
+        if ((priv ? rows[i].percent : rows[i].rate).trim() !== "" || rows[i].length.trim() !== "") effective.textContent = explainAmount(err, symbol);
         return;
       }
+      // The chart shows a private schedule by its public weights.
       valid.push(segment);
-      effective.textContent = `= ${effectiveRate(segment.ratePerSec, rows[i].per, decimals, TYPED)} ${symbol} per ${rows[i].per}`;
+      const per = priv ? this.role("base-per").value : rows[i].per;
+      if (priv) {
+        if (unit === null) return;
+        segment = effectiveSegments([segment], unit)[0];
+      }
+      effective.textContent = `= ${effectiveRate(segment.ratePerSec, per, decimals, TYPED)} ${symbol} per ${per}`;
       upto.textContent = segment.duration === U64_MAX
         ? "Pays until the endowment runs out"
         : `Up to ${formatAmount(segment.duration * segment.ratePerSec, decimals)} ${symbol}`;
@@ -345,10 +390,15 @@ export class CreateFormController {
 
     let segments;
     try {
-      segments = toSegments(rows, decimals);
+      segments = this.segmentsOf(rows, decimals);
     } catch (err) {
       this.role("total").textContent = explainAmount(err, symbol);
       return;
+    }
+    if (priv) {
+      this.role("total").textContent = baseProblem && `Base payout: ${baseProblem}`;
+      if (unit === null) return;
+      segments = effectiveSegments(segments, unit);
     }
     const total = scheduleTotal(segments);
     this.role("total").textContent = total === null
@@ -443,16 +493,24 @@ export class CreateFormController {
       throw new InputError(explainAmount(err, symbol));
     }
 
+    const priv = this.isPrivate();
+    let unit;
+    if (priv) {
+      try { unit = this.typedUnit(decimals); } catch (err) {
+        throw err instanceof InputError ? err : new InputError(`Base payout: ${explainAmount(err, symbol)}`);
+      }
+    }
+
     const name = this.typedName();
     const problem = nameProblem(name);
     if (problem) throw new InputError(problem);
 
     const rows = this.periods().map(row => this.readRow(row));
     rows.forEach((row, i) => {
-      try { toSegments([row], decimals); } catch (err) { throw new InputError(`Period ${i + 1}: ${explainAmount(err, symbol)}`); }
+      try { this.segmentsOf([row], decimals); } catch (err) { throw new InputError(`Period ${i + 1}: ${explainAmount(err, symbol)}`); }
     });
     let segments;
-    try { segments = toSegments(rows, decimals); } catch (err) { throw new InputError(explainAmount(err, symbol)); }
+    try { segments = this.segmentsOf(rows, decimals); } catch (err) { throw new InputError(explainAmount(err, symbol)); }
 
     let to = session.address;
     const other = this.role("recipient-mode").value === "other";
@@ -485,12 +543,15 @@ export class CreateFormController {
     }
 
     return {
-      args: {to, amount, segments, start: start ?? 0n, topUps: isChecked(this.role("donations")), name, symbol, decimals, auto},
+      args: {to, amount, segments, start: start ?? 0n, topUps: isChecked(this.role("donations")), name, symbol, decimals, auto, unit},
       label, symbol, decimals, contract, rows, other, now,
+      // What each period pays, for the summary's warning; never sent anywhere.
+      paid: priv ? effectiveSegments(segments, unit) : segments,
+      basePer: priv ? this.role("base-per").value : null,
     };
   }
 
-  summaryText({args, symbol, decimals, rows, other, now}) {
+  summaryText({args, symbol, decimals, rows, other, now, paid, basePer}) {
     const me = other ? args.to : `${args.to} (you)`;
     const startText = args.start === 0n
       ? "Payouts start as soon as the transaction is mined."
@@ -500,13 +561,16 @@ export class CreateFormController {
       : "";
     const donations = args.topUps ? "Donations are allowed" : "Donations are not allowed";
     const words = rows.map((row, i) => {
-      const rate = `${effectiveRate(args.segments[i].ratePerSec, row.per, decimals, TYPED)} ${symbol} per ${row.per}`;
+      const rate = args.unit !== undefined
+        ? `${row.percent.trim()}% of the base payout`
+        : `${effectiveRate(args.segments[i].ratePerSec, row.per, decimals, TYPED)} ${symbol} per ${row.per}`;
       if (row.indefinite) return `${i === 0 ? "" : "then "}indefinitely at ${rate}`;
       const n = row.length.trim();
       const unit = Number(n) === 1 ? row.unit.replace(/s$/, "") : row.unit;
       return `${i === 0 ? "" : "then "}${n} ${unit} at ${rate}`;
     }).join(", ");
-    const warning = warningText(amountWarning(args.segments, args.start === 0n ? now : args.start, args.amount), {symbol, decimals}, TYPED);
+    const base = args.unit === undefined ? "" : `The base payout is ${effectiveRate((args.unit * BASE_WEIGHT) >> UNIT_SHIFT, basePer, decimals, TYPED)} ${symbol} per ${basePer}. It is encrypted with the amount; each period's length and percentage are public.`;
+    const warning = warningText(amountWarning(paid, args.start === 0n ? now : args.start, args.amount), {symbol, decimals}, TYPED);
     return [
       `You are about to lock ${formatAmount(args.amount, decimals, TYPED)} ${symbol} in a new ENFT.`,
       args.name
@@ -516,6 +580,7 @@ export class CreateFormController {
       startText,
       farStart,
       `${donations}, and this cannot be changed later.`,
+      base,
       `The schedule is ${words}.`,
       autoText(args.auto),
       warning,

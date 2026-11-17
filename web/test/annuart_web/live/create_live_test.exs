@@ -98,6 +98,48 @@ defmodule AnnuartWeb.CreateLiveTest do
     refute html =~ ~r/<input[^>]*\bname=/
   end
 
+  test "a private-rate contract's option is marked and the base payout fields are rendered", %{
+    conn: conn
+  } do
+    [first] = Application.get_env(:annuart, :chain)[:contracts]
+    private = %{first | label: "secret", nft_kind: :private}
+    chain = Application.get_env(:annuart, :chain)
+    Application.put_env(:annuart, :chain, Keyword.put(chain, :contracts, [first, private]))
+
+    {view, html} = connected(conn)
+    assert html =~ "secret (TKN, private payout rate)"
+    assert html =~ ~s(data-nft-kind="private")
+    refute html =~ "mock (TKN, private payout rate)"
+
+    assert has_element?(view, ~s([data-role="base-fields"][hidden] input[data-role="base"]))
+
+    for per <- ~w(day month year),
+        do: assert(has_element?(view, ~s([data-role="base-per"] option[value="#{per}"]), per))
+
+    refute has_element?(view, ~s([data-role="base-per"] option[value="week"]))
+
+    assert has_element?(
+             view,
+             ~s([data-role="base-fields"] .note),
+             "Secret. Encrypted in your browser together with the amount."
+           )
+
+    assert has_element?(
+             view,
+             ~s(p[data-role="private-note"][hidden]),
+             "Period lengths and each period's share of the base payout are public. The base payout is hidden."
+           )
+
+    assert has_element?(
+             view,
+             ~s(p[data-role="private-note"]),
+             "A base payout that rounds to nothing on a schedule with no end locks the endowment for good."
+           )
+
+    refute html =~ "fully private"
+    refute html =~ ~r/<input[^>]*\bname=/
+  end
+
   test "a single automatic contract carries its kind on the token span", %{conn: conn} do
     [first] = Application.get_env(:annuart, :chain)[:contracts]
     chain = Application.get_env(:annuart, :chain)

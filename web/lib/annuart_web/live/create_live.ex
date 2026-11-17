@@ -113,6 +113,7 @@ defmodule AnnuartWeb.CreateLive do
   end
 
   defp option_text(%{kind: :auto} = t), do: "#{t.label} (#{t.symbol}, automatic payouts)"
+  defp option_text(%{kind: :private} = t), do: "#{t.label} (#{t.symbol}, private payout rate)"
   defp option_text(t), do: "#{t.label} (#{t.symbol})"
 
   def render(assigns) do
@@ -189,6 +190,20 @@ defmodule AnnuartWeb.CreateLive do
 
         <div class="area panel" data-activity-id="panel:create:schedule">
           <h2>2. Payout schedule</h2>
+          <div class="field" data-role="base-fields" hidden>
+            <label>Base payout</label>
+            <input type="text" inputmode="decimal" data-role="base" autocomplete="off" />
+            <select data-role="base-per">
+              <option value="day" selected>day</option>
+              <option value="month">month</option>
+              <option value="year">year</option>
+            </select>
+            <span class="note">Secret. Encrypted in your browser together with the amount.</span>
+          </div>
+          <p class="note" data-role="private-note" hidden>
+            Period lengths and each period's share of the base payout are public. The base payout is hidden.
+            A base payout that rounds to nothing on a schedule with no end locks the endowment for good.
+          </p>
           <div data-role="periods"></div>
           <button type="button" data-role="add-period">+ Add period</button>
           <div class="bars" data-role="chart" role="img" aria-label="Payout schedule chart"></div>

@@ -70,7 +70,7 @@ export class SecretController {
       else value = await this.deps.reveal.distribution(session, contract, BigInt(id));
       if (generation !== this.generation) return;
       this.note = "";
-      if (secret === "rate") this.shown = `${unitPerDay(value, Number(decimals))} ${symbol} / day at 100%`;
+      if (secret === "rate") this.shown = `${unitPerDay(value, Number(decimals))} ${symbol ?? ""}`.trim() + " / day at 100%";
       else this.shown = `${formatAmount(value, Number(decimals))} ${symbol ?? ""}`.trim();
     } catch (err) {
       if (generation !== this.generation) return;

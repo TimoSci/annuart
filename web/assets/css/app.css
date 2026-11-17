@@ -208,6 +208,8 @@ td.n, th.n { text-align: right; padding-right: 0; }
 }
 .create .period input[data-role=length] { width: 5em; }
 .create .period input[data-role=rate] { width: 8em; }
+.create .period input[data-role=percent] { width: 5em; }
+.create input[data-role=base] { width: 8em; }
 .create .period .effective, .create .period .upto { font-size: 12px; opacity: .8; }
 .create .amount-echo, .create .tx-message, .create .total { font-size: 12px; margin: 4px 0; }
 .create .tx-message:empty, .create .warning:empty, .create .total:empty { display: none; }

@@ -106,3 +106,19 @@ test("a rate is revealed as the base amount per day, asked for by token id", asy
   assert.deepEqual(asked, [7n]);
   assert.match(el.textContent, /0\.999999999 cWETH \/ day at 100%/);
 });
+
+test("a rate without a symbol never shows undefined", async () => {
+  const {document, window} = parseHTML(
+    `<html><body><span id="s" data-secret="rate" data-id="7" data-label="mock" data-decimals="9"></span></body></html>`);
+  const el = document.getElementById("s");
+  const ctl = new SecretController(el, {
+    session: () => ({address: "0xa"}),
+    contract: () => CONTRACT,
+    reveal: {rate: async () => 49710269629n},
+    target: window,
+  });
+  el.querySelector("button").click();
+  await ctl.pending;
+  assert.doesNotMatch(el.textContent, /undefined/);
+  assert.match(el.textContent, /0\.999999999 \/ day at 100%/);
+});

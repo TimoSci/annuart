@@ -25,6 +25,11 @@ function page({tokens = [["mock", "TKN", 6]]} = {}) {
       ${token}
       <input data-role="amount" type="text">
       <span data-role="balance" data-secret="balance"></span>
+      <div data-role="base-fields" hidden>
+        <input data-role="base" type="text">
+        <select data-role="base-per"><option value="day" selected>day</option><option value="month">month</option><option value="year">year</option></select>
+      </div>
+      <p data-role="private-note" hidden></p>
       <div data-role="periods"></div>
       <button type="button" data-role="add-period">+ Add period</button>
       <div data-role="chart"></div>
@@ -64,7 +69,7 @@ function make({run, session = SESSION, tokens, now = NOW, confirm = () => true} 
     push: (name, payload) => pushed.push([name, payload]),
     session: () => state.session,
     onSession: fn => { listeners.push(fn); return () => {}; },
-    contract: label => (label === "mock" ? CONTRACT : label === "auto" ? {...CONTRACT, label: "auto", nftKind: "auto"} : undefined),
+    contract: label => (label === "mock" ? CONTRACT : label === "auto" ? {...CONTRACT, label: "auto", nftKind: "auto"} : label === "private" ? {...CONTRACT, label: "private", nftKind: "private"} : undefined),
     createEnft: run ?? (async (s, c, args, onStep) => { calls.push({s, c, args}); onStep("mined", "done"); return {hash: "0xh", tokenId: 3n}; }),
     announce: () => announced.push(1),
     now: () => state.now,
@@ -823,4 +828,162 @@ test("the fee cap note follows the interval and unit, and needs a rate", () => {
   type(q(rows(t.el)[0], "rate"), "");
   assert.doesNotMatch(note(), /capped/);
   assert.match(note(), /^= 0\.011 ETH$/);
+});
+
+// Private payout rate
+
+const PRIVATE_TOKENS = [["mock", "TKN", 6], ["private", "TKN", 9, "private"]];
+const privatePage = opts => {
+  const t = make({tokens: PRIVATE_TOKENS, ...opts});
+  pick(q(t.el, "token"), "private");
+  return t;
+};
+
+function fillPercentRow(row, {length, unit = "days", percent, indefinite = false}) {
+  const box = q(row, "indefinite");
+  if (box && box.checked !== indefinite) {
+    box.checked = indefinite;
+    box.dispatchEvent(new row.ownerDocument.defaultView.Event("change", {bubbles: true}));
+  }
+  if (!indefinite) {
+    type(q(row, "length"), String(length));
+    pick(q(row, "unit"), unit);
+  }
+  if (percent !== undefined) type(q(row, "percent"), String(percent));
+}
+
+// Base 1 TKN a day; 100 days at 100%.
+function fillPrivate(el, {amount = "150", base = "1", per = "day"} = {}) {
+  type(q(el, "amount"), amount);
+  type(q(el, "base"), base);
+  pick(q(el, "base-per"), per);
+  fillPercentRow(rows(el)[0], {length: 100, unit: "days"});
+}
+
+test("a private type shows the base payout and the note, and a percent in place of each rate", () => {
+  const t = privatePage();
+  assert.equal(hidden(t.el, "base-fields"), false);
+  assert.equal(hidden(t.el, "private-note"), false);
+  assert.equal(hidden(t.el, "auto"), true);
+  click(q(t.el, "add-period"));
+  for (const row of rows(t.el)) {
+    assert.equal(q(row, "percent").value, "100");
+    assert.equal(q(row, "percent").hidden, false);
+    assert.equal(q(row, "rate").hidden, true);
+    assert.equal(q(row, "per").hidden, true);
+  }
+  pick(q(t.el, "token"), "mock");
+  assert.equal(hidden(t.el, "base-fields"), true);
+  assert.equal(hidden(t.el, "private-note"), true);
+  for (const row of rows(t.el)) {
+    assert.equal(q(row, "rate").hidden, false);
+    assert.equal(q(row, "per").hidden, false);
+    assert.equal(q(row, "percent").hidden, true);
+  }
+});
+
+test("a single private token shows the private fields from the start", () => {
+  const t = make({tokens: [["private", "TKN", 9, "private"]]});
+  assert.equal(hidden(t.el, "base-fields"), false);
+  assert.equal(q(rows(t.el)[0], "rate").hidden, true);
+});
+
+test("a private type sends the base payout as a unit and each period's weight", async () => {
+  const t = privatePage();
+  fillPrivate(t.el);
+  await submit(t);
+  assert.equal(t.calls.length, 1);
+  const {args, c} = t.calls[0];
+  assert.equal(c.nftKind, "private");
+  assert.equal(args.unit, 49710269629n);
+  assert.deepEqual(args.segments, [{duration: 8640000n, ratePerSec: 1000n}]);
+  assert.equal(args.amount, 150_000_000_000n);
+  assert.equal(args.auto, undefined);
+});
+
+test("a standard type sends no unit", async () => {
+  const t = make({tokens: PRIVATE_TOKENS});
+  fillDefault(t.el);
+  await submit(t);
+  assert.equal(t.calls[0].args.unit, undefined);
+});
+
+test("a percentage with two decimals is refused and nothing is sent", async () => {
+  const t = privatePage();
+  fillPrivate(t.el);
+  type(q(rows(t.el)[0], "percent"), "12.55");
+  assert.equal(q(rows(t.el)[0], "effective").textContent, "Enter a percentage with at most one decimal place.");
+  await submit(t);
+  assert.match(message(t.el), /Enter a percentage with at most one decimal place\./);
+  assert.equal(t.calls.length, 0);
+});
+
+test("an empty base payout is refused and nothing is sent", async () => {
+  const t = privatePage();
+  fillPrivate(t.el, {base: ""});
+  await submit(t);
+  assert.equal(message(t.el), "Enter a base payout.");
+  assert.equal(t.calls.length, 0);
+});
+
+test("a base payout that rounds to nothing is refused", async () => {
+  const t = privatePage();
+  fillPrivate(t.el, {base: "0.000000001", per: "year"});
+  await submit(t);
+  assert.equal(message(t.el), "Base payout: This rate is too small to pay anything. Enter a larger rate.");
+  assert.equal(t.calls.length, 0);
+});
+
+test("the warning uses what the periods pay at the base payout", () => {
+  const t = privatePage();
+  // 100 days at about 1 a day pays about 100: 150 leaves about 50 over.
+  fillPrivate(t.el);
+  assert.match(q(t.el, "warning").textContent, /^50\.0\d+ TKN extra will be paid to the owner as a lump sum when the schedule ends\.$/);
+  // Half the base: about 50 paid, so about 100 over.
+  type(q(rows(t.el)[0], "percent"), "50");
+  assert.match(q(t.el, "warning").textContent, /^100\.0\d+ TKN extra/);
+  // Indefinitely: it runs dry.
+  fillPercentRow(rows(t.el)[0], {indefinite: true});
+  assert.match(q(t.el, "warning").textContent, /^At these rates the endowment runs out around/);
+});
+
+test("the private summary lists the base payout and each period's percent", () => {
+  const t = privatePage();
+  fillPrivate(t.el);
+  type(q(rows(t.el)[0], "percent"), "75");
+  click(q(t.el, "add-period"));
+  fillPercentRow(rows(t.el)[1], {indefinite: true, percent: "12.5"});
+  click(q(t.el, "run"));
+  const text = q(t.el, "summary").textContent;
+  for (const part of [
+    "You are about to lock 150 TKN in a new ENFT.",
+    "The base payout is 0.9999936 TKN per day.",
+    "The schedule is 100 days at 75% of the base payout, then indefinitely at 12.5% of the base payout.",
+  ]) assert.ok(text.includes(part), `summary mentions ${part}: ${text}`);
+  // A percentage is never shown as a token amount.
+  assert.doesNotMatch(text, /(75|12\.5) TKN/);
+});
+
+test("nothing pushed to the server carries the base payout, its unit or the amount", async () => {
+  const t = privatePage();
+  fillPrivate(t.el, {amount: "4321.987", base: "7.654321"});
+  await submit(t);
+  assert.equal(t.calls.length, 1);
+  const unit = t.calls[0].args.unit;
+  assert.deepEqual(t.pushed.map(([name]) => name), ["tx:confirmed"]);
+  assert.deepEqual(Object.keys(t.pushed[0][1]).sort(), ["action", "hash", "label", "tokenId"]);
+  const sent = JSON.stringify(t.pushed);
+  for (const secret of ["7.654321", "7654321", String(unit), "4321.987", "4321987"]) {
+    assert.ok(!sent.includes(secret), `${secret} not in ${sent}`);
+  }
+});
+
+test("switching to a standard type and back keeps no private fields on a standard create", async () => {
+  const t = privatePage();
+  fillPrivate(t.el);
+  pick(q(t.el, "token"), "mock");
+  fillRow(rows(t.el)[0], {length: 18, unit: "months", rate: "100"});
+  await submit(t);
+  assert.equal(t.calls[0].args.unit, undefined);
+  assert.deepEqual(t.calls[0].args.segments, [{duration: 18n * 30n * 86400n, ratePerSec: 100_000_000n / 86400n}]);
 });
