@@ -364,6 +364,43 @@ contract PrivateRateEndowmentNFTTest is FhevmTest {
         assertEq(_distribution(id), 1_000);
     }
 
+    function test_saturatedWeightedTimeNeverOverpays() public {
+        // Weighted seconds saturate at 2**64 - 1 once MAX_WEIGHT * elapsed exceeds it (after 4_294_967_297 s).
+        uint256 id = _mintPrivate(alice, 1_000, type(uint64).max, _one(INDEFINITE, nft.MAX_WEIGHT()), _now());
+        uint256 elapsed = 140 * 365 days;
+        assertGt(uint256(nft.MAX_WEIGHT()) * elapsed, uint256(type(uint64).max));
+        vm.warp(block.timestamp + elapsed);
+        nft.accrue(id);
+        assertEq(_distribution(id), 1_000);
+    }
+
+    // --- The base contract's mint checks, reached through mintPrivate ---
+
+    function _expectMintPrivateRevert(Segment[] memory segs, uint64 start, bytes32 name_, bytes4 selector) internal {
+        (bytes32[] memory h, bytes memory proof) = _encPair(10, ONE);
+        vm.expectRevert(selector);
+        vm.prank(creator);
+        nft.mintPrivate(alice, externalEuint64.wrap(h[0]), externalEuint64.wrap(h[1]), proof, segs, start, false, name_);
+    }
+
+    function test_tooManySegments_reverts() public {
+        Segment[] memory segs = new Segment[](257);
+        for (uint256 i; i < 257; i++) {
+            segs[i] = Segment({duration: 1, ratePerSec: 1});
+        }
+        _expectMintPrivateRevert(segs, 0, bytes32(0), EndowmentNFT.TooManySegments.selector);
+    }
+
+    function test_invalidName_reverts() public {
+        _expectMintPrivateRevert(_one(100, 1), 0, bytes32(" lead"), EndowmentNFT.InvalidName.selector);
+    }
+
+    function test_scheduleTooLong_reverts() public {
+        _expectMintPrivateRevert(
+            _one(type(uint64).max - 1, 0), _now(), bytes32(0), EndowmentNFT.ScheduleTooLong.selector
+        );
+    }
+
     // --- Cost: every operation under the default FHE limits ---
 
     function test_costWithinLimits() public {

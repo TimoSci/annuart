@@ -69,6 +69,7 @@ export function explainAmount(err, symbol) {
     case "too_long": return SELECTORS["0x15a7d4e1"];
     case "too_many": return SELECTORS["0xda447a62"];
     case "bad_percent": return "Enter a percentage with at most one decimal place.";
+    case "percent_too_large": return "A period can pay at most 429496729.5% of the base payout.";
     case "zero_percent_indefinite": return "A period with no end must pay more than 0%.";
     case "zero_length": return SELECTORS["0x91378467"];
     case "bad_interval": return SELECTORS["0x5fabb610"];

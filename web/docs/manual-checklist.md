@@ -153,8 +153,10 @@ This needs the private-rate variant deployed (`NFT_KIND=private`, label `private
 5. Switch to B. The Base rate line reads `Hidden` and has no Reveal button.
 6. As A, transfer to B. As B, open the ENFT: the Base rate now has Reveal, and it shows the same
    rate. Switch back to A: A is no longer the owner, but is the creator, so A can still reveal it.
-   A past owner who was not the creator also keeps access (try it by passing the ENFT from B to a
-   third account, then back in B's wallet: B can still reveal).
+   A past owner who was not the creator sees `Hidden` on the ENFT page, because the page offers
+   Reveal only to the creator and the current owner (that wallet keeps on-chain access to the rate,
+   but the page does not offer the control; try it by passing the ENFT from B to a third account,
+   then open it in B's wallet: `Hidden`).
 7. In the Network tab, no request or frame sent to the app's own host contains the base payout or
    the amount, as in section 8.
 

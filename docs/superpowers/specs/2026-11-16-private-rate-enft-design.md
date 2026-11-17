@@ -222,7 +222,7 @@ lastAccrualAt = now
 - The token selector gains an option per private-rate contract, worded
   "`label` (`symbol`, private payout rate)".
 - With that option chosen, the schedule editor changes: **(my call)**
-  - one **Base payout** field, an amount per day, week, month or year. It is secret and
+  - one **Base payout** field, an amount per day, month or year. It is secret and
     is encrypted in the browser together with the endowment;
   - each period has a length and a **Percent of base** field, public, in steps of 0.1,
     default 100. Weight = percent × 10, so 100% is weight 1000;
@@ -250,7 +250,7 @@ lastAccrualAt = now
 **Elsewhere**
 
 - Browse and Mine cards use the weight-aware summary.
-- Transactions: creates on the new contract are listed as "Create ENFT", amount Private.
+- Transactions: creates on the new contract are listed as "Create private-rate ENFT", amount Private.
 - `errors.js`: messages for `WeightTooLarge` and `RateRequired`.
 - Guide page: the "Creating an ENFT" and "What is private and what is public" sections
   describe the third type, and "Keeping the endowment total private" gains the three

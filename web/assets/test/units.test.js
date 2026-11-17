@@ -166,9 +166,10 @@ test("percentToWeight", () => {
   assert.equal(percentToWeight("0"), 0n);
   assert.equal(percentToWeight(" 250 "), 2500n);
   assert.equal(percentToWeight("429496729.5"), 4294967295n);
-  for (const bad of ["12.55", "-1", "", "abc", "1e3", "429496729.6"]) {
+  for (const bad of ["12.55", "-1", "", "abc", "1e3"]) {
     assert.throws(() => percentToWeight(bad), { name: "ScheduleError", code: "bad_percent" }, bad);
   }
+  assert.throws(() => percentToWeight("429496729.6"), { name: "ScheduleError", code: "percent_too_large" });
 });
 
 test("baseUnit", () => {
@@ -176,6 +177,14 @@ test("baseUnit", () => {
   assert.equal(baseUnit("0.5", "month", 9), 828504493n);
   assert.throws(() => baseUnit("0.000000001", "year", 9), { name: "AmountError", code: "rate_rounds_to_zero" });
   assert.throws(() => baseUnit("18446744073709551615", "day", 0), { name: "AmountError", code: "too_large" });
+});
+
+test("baseUnit accepts the largest unit and refuses 2^64", () => {
+  // 0 decimals, per day: unit = amount * 2^32 / 86_400_000.
+  // 371085174374399999 -> 18446744073709551566 (below 2^64 - 1, accepted)
+  // 371085174374400000 -> 18446744073709551616 (exactly 2^64, refused)
+  assert.equal(baseUnit("371085174374399999", "day", 0), 18446744073709551566n);
+  assert.throws(() => baseUnit("371085174374400000", "day", 0), { name: "AmountError", code: "too_large" });
 });
 
 test("unitPerDay", () => {

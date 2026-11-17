@@ -964,18 +964,20 @@ test("triggerPayout after the owner claimed everything pays nothing and no fee",
   assert.deepEqual(status.last, {paidAt: status.last.paidAt, wei: 0n});
 });
 
-// Private-rate ENFTs, on the `private` contract (cWETH, shared with `wrapped`).
+// Private-rate ENFTs, on a private contract over a mock token (6 decimals, with a faucet).
+// The owner deploys one with:
+//   NFT_KIND=private npx hardhat run scripts/deploy.ts --network localhost
 // Dave creates, carol owns, erin is a third account that must not read the rate.
-const privateNft = chain.contracts.find(c => c.nftKind === "private");
-const privateSkip = skip || (!privateNft ? "no private entry in the deployment file: deploy with NFT_KIND=private" : false);
+const privateNft = chain.contracts.find(c => c.nftKind === "private" && c.tokenKind === "mock");
+const privateSkip = skip || (!privateNft ? "no private contract over a mock token in the deployment file: deploy with NFT_KIND=private" : false);
 if (!skip && privateSkip) console.log(`# private-rate tests skipped: ${privateSkip}`);
 
 test("create -> accrue -> reveal rate -> claim on a private-rate contract", {skip: privateSkip}, async () => {
-  const unit = 1n << 32n; // one confidential unit per second at weight 1
+  const unit = 1n << 32n; // one token unit per second at weight 1
   const weight = 10n;
-  await actions.wrap(dave, wrapped, {wei: 2_000n * UNIT}, steps());
+  await actions.faucet(dave, privateNft, {amount: 2_000n}, steps());
   const {tokenId} = await actions.createEnft(dave, privateNft,
-    createArgs(carol.address, {...WRAPPED_UNITS, unit, segments: [{duration: 1000n, ratePerSec: weight}]}), steps());
+    createArgs(carol.address, {...MOCK_UNITS, unit, segments: [{duration: 1000n, ratePerSec: weight}]}), steps());
   await increaseTime(100);
   await actions.accrue(bob, privateNft, {tokenId}, steps());
 

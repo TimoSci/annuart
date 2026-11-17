@@ -200,7 +200,7 @@ export function percentToWeight(text) {
   const m = /^(\d+)(?:\.(\d))?$/.exec(String(text ?? "").trim());
   if (!m) throw new ScheduleError("bad_percent");
   const weight = BigInt(m[1]) * 10n + BigInt(m[2] ?? "0");
-  if (weight > MAX_WEIGHT) throw new ScheduleError("bad_percent");
+  if (weight > MAX_WEIGHT) throw new ScheduleError("percent_too_large");
   return weight;
 }
 

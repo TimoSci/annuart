@@ -45,6 +45,7 @@ test("explainAmount", () => {
   assert.equal(explainAmount(new AmountError("separator"), "USDC"), "Use a period for decimals and no separators, for example 1500.25.");
   assert.equal(explainAmount(new ScheduleError("indefinite_not_last"), "USDC"), "Only the last period can be indefinite.");
   assert.equal(explainAmount(new ScheduleError("too_long"), "USDC"), "This schedule runs too far into the future.");
+  assert.equal(explainAmount(new ScheduleError("percent_too_large"), "USDC"), "A period can pay at most 429496729.5% of the base payout.");
   assert.equal(explainAmount(new ScheduleError("too_many"), "USDC"), "A schedule can have at most 256 periods.");
   assert.equal(explainAmount(new ScheduleError("empty"), "USDC"), "Add at least one period.");
 });
