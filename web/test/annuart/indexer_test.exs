@@ -97,6 +97,15 @@ defmodule Annuart.IndexerTest do
   @auto "0x" <> String.duplicate("a3", 20)
   @req "0x" <> String.duplicate("0b", 32)
 
+  @private_nft "0x" <> String.duplicate("a4", 20)
+
+  defp put_private_contract do
+    put_contracts([
+      contract("mock", @nft, 5),
+      %{contract("private", @private_nft, 5) | nft_kind: :private}
+    ])
+  end
+
   defp put_auto_contract do
     put_contracts([
       contract("mock", @nft, 5),
@@ -283,6 +292,39 @@ defmodule Annuart.IndexerTest do
       Indexer.sync_once()
 
       e = Enfts.get_enft("mock", 1)
+      assert e.auto_enabled == nil and e.pending_request_id == nil
+      assert Enfts.list_payouts(e) == []
+    end
+  end
+
+  describe "a private-rate contract" do
+    setup do
+      put_private_contract()
+      put_blocks(0..30)
+      RpcStub.put_head(20)
+      put_schedule(@private_nft, 1, [{1000, 1}])
+      :ok
+    end
+
+    test "indexes a mint, with the schedule stored as read" do
+      RpcStub.put_logs([mint_log(@private_nft, 1, @alice, 10, 0)])
+      Indexer.sync_once()
+
+      e = Enfts.get_enft("private", 1)
+      assert e.owner == @alice
+      assert e.schedule == [%{"duration" => 1000, "rate_per_sec" => 1}]
+    end
+
+    test "ignores automatic-payout events, as a standard contract does" do
+      RpcStub.put_logs([
+        mint_log(@private_nft, 1, @alice, 10, 0),
+        settings_log(@private_nft, 1, true, 60, 0, 11, 0),
+        requested_log(@private_nft, 1, 12, 0)
+      ])
+
+      Indexer.sync_once()
+
+      e = Enfts.get_enft("private", 1)
       assert e.auto_enabled == nil and e.pending_request_id == nil
       assert Enfts.list_payouts(e) == []
     end

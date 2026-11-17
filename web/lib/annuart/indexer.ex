@@ -347,9 +347,10 @@ defmodule Annuart.Indexer do
     end
   end
 
-  # Only a contract of kind auto emits these; a standard contract's ENFTs keep no settings.
-  defp apply_entry(%{nft_kind: :standard}, %{event: {kind, _}}, blocks)
-       when kind in [:auto_payout_set, :payout_requested, :payout_paid],
+  # Only a contract of kind auto emits these; a standard or private-rate contract's ENFTs keep no settings.
+  defp apply_entry(%{nft_kind: kind}, %{event: {ev, _}}, blocks)
+       when kind in [:standard, :private] and
+              ev in [:auto_payout_set, :payout_requested, :payout_paid],
        do: {:skip, blocks}
 
   defp apply_entry(contract, %{event: {:auto_payout_set, s}}, blocks) do

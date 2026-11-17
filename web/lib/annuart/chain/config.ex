@@ -10,7 +10,8 @@ defmodule Annuart.Chain.Config do
   defmodule Contract do
     @moduledoc """
     One deployed ENFT contract and its confidential token. `nft_kind` is `:auto` for an
-    `AutoPayoutEndowmentNFT`, `:standard` for a plain `EndowmentNFT`. Addresses are lowercased.
+    `AutoPayoutEndowmentNFT`, `:private` for a `PrivateRateEndowmentNFT`, `:standard` for a
+    plain `EndowmentNFT`. Addresses are lowercased.
     """
     @enforce_keys [:label, :nft, :token, :token_kind, :deploy_block]
     defstruct [:label, :nft, :token, :token_kind, :underlying, :deploy_block, nft_kind: :standard]
@@ -21,7 +22,7 @@ defmodule Annuart.Chain.Config do
             token: String.t(),
             token_kind: :mock | :wrapped | :plain,
             underlying: String.t() | nil,
-            nft_kind: :standard | :auto,
+            nft_kind: :standard | :auto | :private,
             deploy_block: non_neg_integer
           }
   end
@@ -30,7 +31,7 @@ defmodule Annuart.Chain.Config do
   @default_rpc_url "http://127.0.0.1:8545"
 
   @token_kinds %{"mock" => :mock, "wrapped" => :wrapped, "plain" => :plain}
-  @nft_kinds %{"standard" => :standard, "auto" => :auto}
+  @nft_kinds %{"standard" => :standard, "auto" => :auto, "private" => :private}
 
   @doc "Parses a deployment file."
   @spec load(String.t()) ::

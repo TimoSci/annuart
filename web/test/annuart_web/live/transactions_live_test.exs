@@ -82,6 +82,15 @@ defmodule AnnuartWeb.TransactionsLiveTest do
     refute faucet =~ "/enft/"
   end
 
+  test "a private-rate create reads as such and as private", %{conn: conn} do
+    record(5, %{kind: "create_private"})
+    {:ok, view, _} = live(conn, ~p"/transactions")
+    render_hook(view, "wallet:changed", %{"address" => @alice})
+
+    row = view |> element(~s(tr[data-kind="create_private"])) |> render()
+    assert row =~ "Create private-rate ENFT" and row =~ "Private"
+  end
+
   test "the sender of a private transaction gets a reveal control and a security warning", %{
     conn: conn
   } do

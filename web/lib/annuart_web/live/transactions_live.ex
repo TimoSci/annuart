@@ -57,6 +57,7 @@ defmodule AnnuartWeb.TransactionsLive do
   @types %{
     "create" => "Create ENFT",
     "create_auto" => "Create automatic ENFT",
+    "create_private" => "Create private-rate ENFT",
     "donate" => "Donate to ENFT",
     "claim" => "Claim payout",
     "accrue" => "Update accrual",

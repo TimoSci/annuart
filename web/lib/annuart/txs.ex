@@ -21,6 +21,7 @@ defmodule Annuart.Txs do
   @nft_kinds %{
     "0xabb31629" => "create",
     "0x52f56bfd" => "create_auto",
+    "0x16a610e7" => "create_private",
     "0x022d6bc2" => "donate",
     "0x379607f5" => "claim",
     "0x744f4cf6" => "accrue",
@@ -43,7 +44,7 @@ defmodule Annuart.Txs do
   }
 
   # Kinds whose amount is encrypted on chain.
-  @private ~w(create create_auto donate claim unwrap_request token_transfer)
+  @private ~w(create create_auto create_private donate claim unwrap_request token_transfer)
 
   @doc "Whether a transaction of this kind moves an encrypted amount."
   @spec private?(String.t()) :: boolean
@@ -108,7 +109,7 @@ defmodule Annuart.Txs do
 
   defp token_id("transfer", input, _logs), do: small(word(input, 2))
 
-  defp token_id(kind, _input, logs) when kind in ["create", "create_auto"] do
+  defp token_id(kind, _input, logs) when kind in ["create", "create_auto", "create_private"] do
     Enum.find_value(logs, fn log ->
       case decode(log) do
         {:minted, %{token_id: id}} -> small(id)

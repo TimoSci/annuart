@@ -60,6 +60,23 @@ defmodule Annuart.TxsTest do
     assert %{kind: "other", token_id: nil} = what(@nft, "0x")
   end
 
+  test "a private-rate create is named by its selector and takes its token id from the mint log" do
+    minted = %{
+      "topics" => [
+        Abi.topic(:endowment_minted),
+        "0x" <> word(7),
+        pad(@alice),
+        pad(@alice)
+      ],
+      "data" => "0x" <> word(1_700_000_000) <> word(1) <> word(0)
+    }
+
+    assert %{kind: "create_private", token_id: 7} =
+             what(@nft, "0x16a610e7" <> word(1), [minted])
+
+    assert Txs.private?("create_private")
+  end
+
   test "keeps only the amounts the chain shows in the clear" do
     assert %{kind: "wrap", amount: 5_000, amount_unit: "wei"} =
              what(@token, "0xbf376c7a" <> word(1) <> word(5_000))

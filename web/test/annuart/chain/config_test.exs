@@ -72,6 +72,15 @@ defmodule Annuart.Chain.ConfigTest do
                Config.load(write_tmp!(dir, with_kind(~s("auto"))))
     end
 
+    test "private loads as :private", %{dir: dir} do
+      assert {:ok, %{contracts: [%Config.Contract{nft_kind: :private}]}} =
+               Config.load(write_tmp!(dir, with_kind(~s("private"))))
+    end
+
+    test "secret is still invalid", %{dir: dir} do
+      assert {:error, :invalid} = Config.load(write_tmp!(dir, with_kind(~s("secret"))))
+    end
+
     test "standard, or no nftKind, loads as :standard", %{dir: dir} do
       assert {:ok, %{contracts: [%Config.Contract{nft_kind: :standard}]}} =
                Config.load(write_tmp!(dir, with_kind(~s("standard"))))
