@@ -9,15 +9,16 @@ import {Schedule, Segment} from "./libraries/Schedule.sol";
 /// @notice An EndowmentNFT whose payout rate is encrypted. Each segment's `ratePerSec`
 ///         is read as a public weight, not an amount: a token pays
 ///         unit * weight * seconds / 2**UNIT_SHIFT, where `unit` is encrypted at mint and
-///         readable by the creator and the first owner only.
+///         readable by the creator and by every owner the token has had: each new owner
+///         is granted it on transfer, and an access grant cannot be taken back.
 ///
 ///         What stays public: the schedule's shape (durations and weights), its start and
 ///         end, the name, and when the token is accrued, claimed or transferred. The
 ///         endowment, the unit and so the absolute rate, and the distribution stay encrypted.
 ///
 ///         The unit is encrypted, so the contract cannot refuse a zero unit: such a token
-///         pays nothing until a fixed-end schedule ends and releases the whole endowment
-///         (an indefinite one then pays nothing at all). Mint only through mintPrivate;
+///         pays nothing until a fixed-end schedule ends and releases the whole endowment;
+///         on a schedule with no end, a zero unit never pays. Mint only through mintPrivate;
 ///         the inherited mint always reverts.
 contract PrivateRateEndowmentNFT is EndowmentNFT {
     /// @notice The unit is a fixed-point number of token base units with this many fractional bits.
@@ -26,7 +27,7 @@ contract PrivateRateEndowmentNFT is EndowmentNFT {
     uint64 public constant MAX_WEIGHT = type(uint32).max;
 
     struct Rate {
-        euint128 unit;  // base units per weight-second, times 2**UNIT_SHIFT; ACL = contract, creator, first owner
+        euint128 unit;  // base units per weight-second, times 2**UNIT_SHIFT; ACL = contract, creator, every owner so far
         euint128 carry; // the fractional part not yet paid, below 2**UNIT_SHIFT; ACL = contract only
     }
 
@@ -81,6 +82,13 @@ contract PrivateRateEndowmentNFT is EndowmentNFT {
     /// @return the handle of the token's encrypted unit.
     function unitHandle(uint256 tokenId) external view returns (euint128) {
         return _rates[tokenId].unit;
+    }
+
+    /// @dev The base settles the token and hands over the distribution; a new owner is
+    ///      also granted the unit, which the previous owners keep.
+    function _update(address to, uint256 tokenId, address auth) internal override returns (address from) {
+        from = super._update(to, tokenId, auth);
+        if (from != address(0) && to != address(0)) FHE.allow(_rates[tokenId].unit, to);
     }
 
     /// @dev The settled and past-the-end cases are the base's. Before the end, pays

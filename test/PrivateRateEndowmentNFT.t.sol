@@ -3,12 +3,25 @@ pragma solidity ^0.8.24;
 
 import {FhevmTest} from "forge-fhevm/FhevmTest.sol";
 import {FheType} from "@fhevm/host-contracts/contracts/shared/FheType.sol";
-import {externalEuint64} from "@fhevm/solidity/lib/FHE.sol";
+import {euint64, euint128, externalEuint64} from "@fhevm/solidity/lib/FHE.sol";
+import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {MockConfidentialToken} from "../src/mocks/MockConfidentialToken.sol";
 import {EndowmentNFT} from "../src/EndowmentNFT.sol";
 import {PrivateRateEndowmentNFT} from "../src/PrivateRateEndowmentNFT.sol";
 import {Segment, INDEFINITE} from "../src/libraries/Schedule.sol";
 import {IERC7984} from "@openzeppelin/confidential-contracts/interfaces/IERC7984.sol";
+
+/// @dev Accrues its token from inside the safe-mint callback, and can claim it.
+contract AccruingReceiver is IERC721Receiver {
+    function onERC721Received(address, address, uint256 tokenId, bytes calldata) external returns (bytes4) {
+        PrivateRateEndowmentNFT(msg.sender).accrue(tokenId);
+        return IERC721Receiver.onERC721Received.selector;
+    }
+
+    function claim(PrivateRateEndowmentNFT nft, uint256 id) external {
+        nft.claim(id);
+    }
+}
 
 contract PrivateRateEndowmentNFTTest is FhevmTest {
     MockConfidentialToken internal token;
@@ -26,10 +39,9 @@ contract PrivateRateEndowmentNFTTest is FhevmTest {
         nft = new PrivateRateEndowmentNFT(IERC7984(address(token)));
     }
 
-    function _mintPrivate(address to, uint64 amount, uint64 unit, Segment[] memory segs, uint64 start)
-        internal
-        returns (uint256 id)
-    {
+    /// @dev Funds the creator with `amount`, lets the NFT pull it, and encrypts (amount, unit)
+    ///      under one proof from the creator to the NFT.
+    function _encPair(uint64 amount, uint64 unit) internal returns (bytes32[] memory h, bytes memory proof) {
         token.mint(creator, amount);
         vm.prank(creator);
         token.setOperator(address(nft), uint48(block.timestamp + 365 days));
@@ -39,10 +51,24 @@ contract PrivateRateEndowmentNFTTest is FhevmTest {
         FheType[] memory types = new FheType[](2);
         types[0] = FheType.Uint64;
         types[1] = FheType.Uint64;
-        (bytes32[] memory h, bytes memory proof) = encrypt(vals, types, creator, address(nft));
+        (h, proof) = encrypt(vals, types, creator, address(nft));
+    }
+
+    function _mintPrivate(address to, uint64 amount, uint64 unit, Segment[] memory segs, uint64 start)
+        internal
+        returns (uint256 id)
+    {
+        return _mintPrivate(to, amount, unit, segs, start, false);
+    }
+
+    function _mintPrivate(address to, uint64 amount, uint64 unit, Segment[] memory segs, uint64 start, bool topUps)
+        internal
+        returns (uint256 id)
+    {
+        (bytes32[] memory h, bytes memory proof) = _encPair(amount, unit);
         vm.prank(creator);
         id = nft.mintPrivate(
-            to, externalEuint64.wrap(h[0]), externalEuint64.wrap(h[1]), proof, segs, start, false, bytes32(0)
+            to, externalEuint64.wrap(h[0]), externalEuint64.wrap(h[1]), proof, segs, start, topUps, bytes32(0)
         );
     }
 
@@ -70,16 +96,7 @@ contract PrivateRateEndowmentNFTTest is FhevmTest {
     function test_mintPrivate_storesScheduleAndEmits() public {
         Segment[] memory segs = _two(100, 1, 200, 3);
         uint64 start = _now();
-        token.mint(creator, 500);
-        vm.prank(creator);
-        token.setOperator(address(nft), uint48(block.timestamp + 365 days));
-        uint256[] memory vals = new uint256[](2);
-        vals[0] = 500;
-        vals[1] = ONE;
-        FheType[] memory types = new FheType[](2);
-        types[0] = FheType.Uint64;
-        types[1] = FheType.Uint64;
-        (bytes32[] memory h, bytes memory proof) = encrypt(vals, types, creator, address(nft));
+        (bytes32[] memory h, bytes memory proof) = _encPair(500, ONE);
 
         vm.expectEmit(true, true, true, true, address(nft));
         emit EndowmentNFT.EndowmentMinted(1, creator, alice, start, false, bytes32(0));
@@ -123,16 +140,7 @@ contract PrivateRateEndowmentNFTTest is FhevmTest {
     }
 
     function test_weightAboveMax_reverts() public {
-        token.mint(creator, 10);
-        vm.prank(creator);
-        token.setOperator(address(nft), uint48(block.timestamp + 365 days));
-        uint256[] memory vals = new uint256[](2);
-        vals[0] = 10;
-        vals[1] = ONE;
-        FheType[] memory types = new FheType[](2);
-        types[0] = FheType.Uint64;
-        types[1] = FheType.Uint64;
-        (bytes32[] memory h, bytes memory proof) = encrypt(vals, types, creator, address(nft));
+        (bytes32[] memory h, bytes memory proof) = _encPair(10, ONE);
         vm.expectRevert(PrivateRateEndowmentNFT.WeightTooLarge.selector);
         vm.prank(creator);
         nft.mintPrivate(
@@ -151,16 +159,7 @@ contract PrivateRateEndowmentNFTTest is FhevmTest {
     }
 
     function test_zeroWeightIndefinite_reverts() public {
-        token.mint(creator, 10);
-        vm.prank(creator);
-        token.setOperator(address(nft), uint48(block.timestamp + 365 days));
-        uint256[] memory vals = new uint256[](2);
-        vals[0] = 10;
-        vals[1] = ONE;
-        FheType[] memory types = new FheType[](2);
-        types[0] = FheType.Uint64;
-        types[1] = FheType.Uint64;
-        (bytes32[] memory h, bytes memory proof) = encrypt(vals, types, creator, address(nft));
+        (bytes32[] memory h, bytes memory proof) = _encPair(10, ONE);
         vm.expectRevert(EndowmentNFT.ZeroRateIndefiniteSegment.selector);
         vm.prank(creator);
         nft.mintPrivate(
@@ -216,9 +215,11 @@ contract PrivateRateEndowmentNFTTest is FhevmTest {
 
     function test_zeroWeightPeriodPaysNothing() public {
         uint256 id = _mintPrivate(alice, 5_000, ONE, _two(100, 0, 100, 1), _now());
+        uint64 start = nft.scheduleStartOf(id);
         vm.warp(block.timestamp + 100);
         nft.accrue(id);
         assertEq(_distribution(id), 0);
+        assertEq(nft.lastAccrualAtOf(id), start); // no weighted time, so the clock stays put
         vm.warp(block.timestamp + 50);
         nft.accrue(id);
         assertEq(_distribution(id), 50);
@@ -263,5 +264,119 @@ contract PrivateRateEndowmentNFTTest is FhevmTest {
         vm.prank(alice);
         nft.claim(id);
         assertEq(decrypt(token.confidentialBalanceOf(alice)), 400);
+    }
+
+    // --- Access ---
+
+    /// @dev Whether `who` holds a persistent grant on `h`, the grant user decryption needs
+    ///      (as in test/redteam/Confidentiality.t.sol).
+    function _readable(bytes32 h, address who) internal view returns (bool) {
+        return _acl.persistAllowed(h, who);
+    }
+
+    /// @dev The carry handle has no getter: read Rate.carry from storage (_rates is slot 8,
+    ///      carry the struct's second word).
+    function _carryHandle(uint256 id) internal view returns (bytes32) {
+        bytes32 base = keccak256(abi.encode(id, uint256(8)));
+        // The unit sits one word before: check the slot arithmetic against its getter.
+        assertEq(vm.load(address(nft), base), euint128.unwrap(nft.unitHandle(id)));
+        return vm.load(address(nft), bytes32(uint256(base) + 1));
+    }
+
+    function test_newOwnerIsAllowedTheUnit() public {
+        uint256 id = _mintPrivate(alice, 1_000, ONE, _one(1_000, 1), _now());
+        vm.prank(alice);
+        nft.transferFrom(alice, bob, id);
+        bytes32 unit = euint128.unwrap(nft.unitHandle(id));
+        assertTrue(_readable(unit, bob), "new owner reads the unit");
+        assertTrue(_readable(unit, alice), "first owner keeps the unit");
+        assertTrue(_readable(unit, creator), "creator keeps the unit");
+        assertFalse(_readable(unit, address(0xBAD)), "outsider never reads the unit");
+    }
+
+    function test_carryAndRemainingStayContractOnly() public {
+        uint256 id = _mintPrivate(alice, 1_000, ONE / 2, _one(1_000, 1), _now());
+        _assertContractOnly(id);
+        vm.warp(block.timestamp + 3); // pays 1, carries a half
+        nft.accrue(id);
+        _assertContractOnly(id);
+        vm.warp(block.timestamp + 3);
+        vm.prank(alice);
+        nft.transferFrom(alice, bob, id);
+        _assertContractOnly(id);
+    }
+
+    function _assertContractOnly(uint256 id) internal view {
+        bytes32 remaining = euint64.unwrap(nft.endowmentHandle(id));
+        bytes32 carry = _carryHandle(id);
+        assertTrue(_readable(remaining, address(nft)));
+        assertTrue(_readable(carry, address(nft)));
+        address[4] memory others = [alice, creator, bob, address(0xBAD)];
+        for (uint256 i = 0; i < others.length; i++) {
+            assertFalse(_readable(remaining, others[i]), "remaining is contract-only");
+            assertFalse(_readable(carry, others[i]), "carry is contract-only");
+        }
+    }
+
+    function test_transferSettlesAndHandsOverDistribution() public {
+        uint256 id = _mintPrivate(alice, 5_000, ONE, _one(1_000, 1), _now());
+        vm.warp(block.timestamp + 100);
+        vm.prank(alice);
+        nft.transferFrom(alice, bob, id);
+        assertEq(nft.lastAccrualAtOf(id), _now(), "the transfer accrued");
+        bytes32 dist = euint64.unwrap(nft.distributionHandle(id));
+        assertTrue(_readable(dist, bob));
+        assertFalse(_readable(dist, alice), "the old owner cannot read the new distribution");
+        vm.prank(bob);
+        nft.claim(id);
+        assertEq(decrypt(token.confidentialBalanceOf(bob)), 100);
+    }
+
+    // --- The mint callback ---
+
+    function test_receiverAccruingDuringMintLosesNothing() public {
+        vm.warp(1_000_000);
+        AccruingReceiver receiver = new AccruingReceiver();
+        uint256 id = _mintPrivate(address(receiver), 1_000, ONE, _one(INDEFINITE, 1), _now() - 100);
+        assertEq(nft.lastAccrualAtOf(id), _now(), "the callback accrued");
+        nft.accrue(id);
+        assertEq(_distribution(id), 100);
+        receiver.claim(nft, id);
+        assertEq(decrypt(token.confidentialBalanceOf(address(receiver))), 100);
+    }
+
+    // --- Extremes ---
+
+    function test_extremeInputsNeverOverpay() public {
+        // unit * weighted seconds = (2**64 - 1) * (2**32 - 1) * 60 years: below 2**128, so no wrap.
+        uint256 id = _mintPrivate(alice, 1_000, type(uint64).max, _one(INDEFINITE, nft.MAX_WEIGHT()), _now());
+        vm.warp(block.timestamp + 60 * 365 days);
+        nft.accrue(id);
+        assertEq(_distribution(id), 1_000);
+    }
+
+    // --- Cost: every operation under the default FHE limits ---
+
+    function test_costWithinLimits() public {
+        uint256 id = _mintPrivate(alice, 5_000, ONE, _one(1_000, 1), _now(), true);
+
+        vm.warp(block.timestamp + 100);
+        nft.accrue(id);
+
+        vm.warp(block.timestamp + 100);
+        vm.prank(alice);
+        nft.claim(id);
+
+        token.mint(creator, 500);
+        (externalEuint64 enc, bytes memory proof) = encryptUint64(500, creator, address(nft));
+        vm.prank(creator);
+        nft.topUp(id, enc, proof);
+
+        vm.warp(block.timestamp + 100);
+        vm.prank(alice);
+        nft.transferFrom(alice, bob, id);
+
+        assertEq(decrypt(token.confidentialBalanceOf(alice)), 200);
+        assertEq(decrypt(nft.endowmentHandle(id)), 5_000 + 500 - 300);
     }
 }
