@@ -299,4 +299,19 @@ defmodule AnnuartWeb.BrowseLiveTest do
     refute has_element?(view, row.(1))
     refute has_element?(view, row.(3))
   end
+
+  test "a private-rate ENFT row says the rate is hidden and gives no amount", %{conn: conn} do
+    make_private()
+
+    mint(
+      schedule: [
+        %{"duration" => 8_640_000, "rate_per_sec" => 1000},
+        %{"duration" => 8_640_000, "rate_per_sec" => 500}
+      ]
+    )
+
+    {:ok, _v, html} = live(conn, ~p"/")
+    assert html =~ "Rate hidden, 2 periods"
+    refute html =~ "/ day"
+  end
 end

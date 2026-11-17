@@ -755,4 +755,74 @@ defmodule AnnuartWeb.EnftLiveTest do
       assert [_, ^r4] = rev.()
     end
   end
+
+  describe "a private-rate contract" do
+    @stranger_p "0x" <> String.duplicate("00", 18) <> "beef"
+    @two [
+      %{"duration" => 8_640_000, "rate_per_sec" => 1000},
+      %{"duration" => 8_640_000, "rate_per_sec" => 500}
+    ]
+
+    defp schedule_panel(view),
+      do: view |> element(~s([data-activity-id="panel:enft:schedule"])) |> render()
+
+    test "the schedule shows shares of the base rate and no amounts", %{conn: conn} do
+      make_private()
+      mint(schedule: @two)
+      {:ok, view, _html} = live(conn, ~p"/enft/mock/1")
+
+      panel = schedule_panel(view)
+      assert panel =~ "Share of base rate"
+      assert panel =~ "100%"
+      assert panel =~ "50%"
+      refute panel =~ "/ day"
+      refute panel =~ "Up to"
+      refute panel =~ "1000"
+      refute has_element?(view, "#panel-auto")
+      assert has_element?(view, ~s([data-role="bar"]))
+    end
+
+    test "the base rate is Hidden for a stranger and a reveal slot for the owner and creator",
+         %{conn: conn} do
+      make_private()
+      mint(schedule: @two)
+      {:ok, view, html} = live(conn, ~p"/enft/mock/1")
+      assert schedule_panel(view) =~ "Base rate"
+      assert schedule_panel(view) =~ "Hidden"
+      refute html =~ ~s(data-secret="rate")
+
+      connect_as(view, @stranger_p)
+      refute has_element?(view, ~s(span[data-secret="rate"]))
+
+      connect_as(view, owner())
+
+      assert has_element?(
+               view,
+               ~s(span#rate-mock-1[phx-hook="SecretValue"][phx-update="ignore"][data-secret="rate"][data-label="mock"][data-id="1"]),
+               ""
+             )
+
+      connect_as(view, creator())
+      assert has_element?(view, ~s(span[data-secret="rate"]))
+    end
+
+    test "an open-ended schedule warns donors that payment cannot be checked", %{conn: conn} do
+      make_private()
+      mint(schedule: [%{"duration" => indefinite(), "rate_per_sec" => 1000}])
+      {:ok, view, _html} = live(conn, ~p"/enft/mock/1")
+
+      assert view
+             |> element(~s([data-activity-id="panel:enft:donate"]))
+             |> render() =~ "A donor cannot check that this ENFT pays anything."
+    end
+
+    test "a standard ENFT has no such warning, share column or reveal slot", %{conn: conn} do
+      mint(schedule: [%{"duration" => indefinite(), "rate_per_sec" => 1}])
+      {:ok, view, html} = live(conn, ~p"/enft/mock/1")
+      refute html =~ "A donor cannot check"
+      refute html =~ "Share of base rate"
+      connect_as(view, owner())
+      refute has_element?(view, ~s(span[data-secret="rate"]))
+    end
+  end
 end

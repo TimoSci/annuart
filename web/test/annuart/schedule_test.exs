@@ -101,4 +101,30 @@ defmodule Annuart.ScheduleTest do
   test "an indefinite sentinel is detected only when it is the stored value" do
     refute Schedule.indefinite?([%{duration: @max - 1, rate_per_sec: 1}])
   end
+
+  test "share_text writes a weight as a percentage of the base rate" do
+    assert Schedule.share_text(1000) == "100%"
+    assert Schedule.share_text(125) == "12.5%"
+    assert Schedule.share_text(500) == "50%"
+    assert Schedule.share_text(0) == "0%"
+  end
+
+  test "private_summary says the rate is hidden and never gives an amount" do
+    assert Schedule.private_summary(nil) == "Schedule unavailable"
+
+    assert Schedule.private_summary([%{duration: 5, rate_per_sec: 1000}]) ==
+             "Rate hidden, 1 period"
+
+    assert Schedule.private_summary([
+             %{"duration" => 5, "rate_per_sec" => 1000},
+             %{"duration" => 5, "rate_per_sec" => 10},
+             %{"duration" => 5, "rate_per_sec" => 10}
+           ]) == "Rate hidden, 3 periods"
+
+    assert Schedule.private_summary([
+             %{duration: 5, rate_per_sec: 1000},
+             %{duration: 5, rate_per_sec: 10},
+             %{duration: @max, rate_per_sec: 10}
+           ]) == "Rate hidden, 3 periods, indefinitely"
+  end
 end

@@ -87,6 +87,7 @@ defmodule AnnuartWeb.EnftLive do
           enft: enft,
           periods: periods(enft),
           auto?: auto?,
+          private?: contract.nft_kind == :private,
           last_payout: if(auto?, do: Enfts.last_payout(enft)),
           history: history(transfers, payouts),
           auto_index_state: auto? && index_state(enft, payouts),
@@ -208,6 +209,9 @@ defmodule AnnuartWeb.EnftLive do
   defp auto_fee(%{auto_fee: fee}), do: "#{eth(fee)} ETH per payout, never more than 10% of it"
 
   defp owner?(address, enft), do: address != nil and address == enft.owner
+
+  defp creator_or_owner?(address, enft),
+    do: address != nil and address in [enft.creator, enft.owner]
 
   defp periods(%{schedule: nil}), do: nil
 
@@ -351,12 +355,32 @@ defmodule AnnuartWeb.EnftLive do
               <EnftComponents.schedule_chart periods={@periods} />
               <EnftComponents.schedule_table
                 periods={@periods}
+                private={@private?}
                 decimals={@token_meta && @token_meta.decimals}
                 symbol={@token_meta && @token_meta.symbol}
               />
             <% else %>
               <p>Schedule unavailable</p>
             <% end %>
+            <div :if={@private?} class="kv">
+              <span class="k">Base rate</span>
+              <span :if={!creator_or_owner?(@address, @enft)}>Hidden</span>
+              <span
+                :if={creator_or_owner?(@address, @enft)}
+                id={"rate-#{@enft.label}-#{@enft.token_id}"}
+                phx-hook="SecretValue"
+                phx-update="ignore"
+                data-secret="rate"
+                data-label={@enft.label}
+                data-id={@enft.token_id}
+                data-decimals={@token_meta && @token_meta.decimals}
+                data-symbol={@token_meta && @token_meta.symbol}
+              >
+              </span>
+            </div>
+            <p :if={@private?} class="note">
+              Each period pays its share of a base rate that only the creator and the owner can read.
+            </p>
             <p :if={@settled == true} class="note">
               This schedule has ended and any leftover was released to the owner.
             </p>
@@ -479,6 +503,9 @@ defmodule AnnuartWeb.EnftLive do
               />
             </TxComponents.action>
             <p :if={!@address}>Connect a wallet to donate.</p>
+            <p :if={(@private? and @periods) && Schedule.indefinite?(@enft.schedule)} class="note">
+              A donor cannot check that this ENFT pays anything.
+            </p>
             <p class="note">
               Encrypted before it leaves your browser. It stays hidden only while the ENFT still pays its full schedule.
             </p>

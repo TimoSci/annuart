@@ -159,8 +159,13 @@ defmodule AnnuartWeb.EnftComponents do
   defp trim_float(f) when f == trunc(f), do: trunc(f)
   defp trim_float(f), do: f
 
-  @doc "Table of schedule periods. Amounts show — when the token's decimals are unknown."
+  @doc """
+  Table of schedule periods. Amounts show — when the token's decimals are unknown.
+  With `private`, the rates are weights of a secret base rate: only the share is
+  shown, never an amount.
+  """
   attr :periods, :list, required: true
+  attr :private, :boolean, default: false
   attr :decimals, :integer, default: nil
   attr :symbol, :string, default: nil
 
@@ -171,16 +176,18 @@ defmodule AnnuartWeb.EnftComponents do
         <tr>
           <th>Period</th>
           <th>Length</th>
-          <th class="n">Rate</th>
-          <th class="n">Up to</th>
+          <th :if={@private} class="n">Share of base rate</th>
+          <th :if={!@private} class="n">Rate</th>
+          <th :if={!@private} class="n">Up to</th>
         </tr>
       </thead>
       <tbody>
         <tr :for={p <- @periods}>
           <td>From <.datetime value={p.starts_at} format={:date} /></td>
           <td>{length_cell(p.duration)}</td>
-          <td class="n">{rate_cell(p, @decimals)}</td>
-          <td class="n">{max_cell(p, @decimals, @symbol)}</td>
+          <td :if={@private} class="n">{Schedule.share_text(p.rate_per_sec)}</td>
+          <td :if={!@private} class="n">{rate_cell(p, @decimals)}</td>
+          <td :if={!@private} class="n">{max_cell(p, @decimals, @symbol)}</td>
         </tr>
       </tbody>
     </table>

@@ -67,6 +67,27 @@ defmodule Annuart.Schedule do
     end
   end
 
+  @doc """
+  One-line description of a private-rate schedule, e.g. `"Rate hidden, 3 periods"`.
+  The stored rates are weights of a secret base rate, so no amount is given.
+  """
+  def private_summary(nil), do: "Schedule unavailable"
+  def private_summary([]), do: "Empty schedule"
+
+  def private_summary(segments) do
+    n = length(segments)
+    text = "Rate hidden, #{n} " <> if(n == 1, do: "period", else: "periods")
+    if indefinite?(segments), do: text <> ", indefinitely", else: text
+  end
+
+  @doc "A weight (1000 is the whole base rate) as a percentage, e.g. `\"12.5%\"`."
+  def share_text(weight) do
+    case rem(weight, 10) do
+      0 -> "#{div(weight, 10)}%"
+      tenth -> "#{div(weight, 10)}.#{tenth}%"
+    end
+  end
+
   @doc "A duration in seconds as its largest whole unit, e.g. `\"18 months\"`."
   def length_text(seconds) do
     case Enum.find(@units, fn {_, size} -> rem(seconds, size) == 0 end) do

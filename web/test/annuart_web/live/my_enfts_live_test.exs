@@ -179,4 +179,12 @@ defmodule AnnuartWeb.MyEnftsLiveTest do
     assert has_element?(view, "#mine-mock-3 [data-role=auto-badge]", "Automatic")
     refute has_element?(view, "#mine-mock-1 [data-role=auto-badge]")
   end
+
+  test "a private-rate ENFT card shows no per-day amount", %{conn: conn} do
+    make_private()
+    {:ok, view, _} = live(conn, ~p"/mine")
+    html = render_hook(view, "wallet:changed", %{"address" => @alice})
+    assert html =~ ~s(href="/enft/mock/1")
+    refute html =~ "/ day"
+  end
 end

@@ -41,6 +41,17 @@ defmodule AnnuartWeb.EnftFixtures do
     )
   end
 
+  @doc "Makes the one `mock` contract a private-rate ENFT contract. `put_chain/1` restores it."
+  def make_private do
+    chain = Application.fetch_env!(:annuart, :chain)
+
+    Application.put_env(
+      :annuart,
+      :chain,
+      Keyword.update!(chain, :contracts, fn [c] -> [%{c | nft_kind: :private}] end)
+    )
+  end
+
   def mint(overrides \\ []) do
     attrs =
       Map.merge(

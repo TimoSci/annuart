@@ -72,9 +72,19 @@ defmodule AnnuartWeb.BrowseLive do
     end
   end
 
-  defp summary(%{schedule: nil}, _meta), do: Schedule.summary(nil, 0)
-  defp summary(_enft, nil), do: "—"
-  defp summary(%{schedule: schedule}, %{decimals: d}), do: Schedule.summary(schedule, d)
+  # A private-rate contract stores weights, not amounts: never format them.
+  defp summary(%{schedule: schedule} = enft, meta) do
+    cond do
+      private?(enft) -> Schedule.private_summary(schedule)
+      schedule == nil -> Schedule.summary(nil, 0)
+      meta == nil -> "—"
+      true -> Schedule.summary(schedule, meta.decimals)
+    end
+  end
+
+  defp private?(%{label: label}) do
+    match?(%Config.Contract{nft_kind: :private}, Config.contract(label))
+  end
 
   defp symbol(nil), do: "—"
   defp symbol(%{symbol: symbol}), do: symbol
