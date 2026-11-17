@@ -802,8 +802,16 @@ defmodule AnnuartWeb.EnftLiveTest do
                ""
              )
 
-      connect_as(view, creator())
-      assert has_element?(view, ~s(span[data-secret="rate"]))
+      assert render(view) =~ "every owner so far"
+
+      # The creator, on a fresh view, with the span absent beforehand.
+      {:ok, view2, _html} = live(conn, ~p"/enft/mock/1")
+      connect_as(view2, @stranger_p)
+      refute has_element?(view2, ~s(span[data-secret="rate"]))
+      assert schedule_panel(view2) =~ "Hidden"
+      connect_as(view2, creator())
+      assert has_element?(view2, ~s(span#rate-mock-1[data-secret="rate"]))
+      refute schedule_panel(view2) =~ "Hidden"
     end
 
     test "an open-ended schedule warns donors that payment cannot be checked", %{conn: conn} do

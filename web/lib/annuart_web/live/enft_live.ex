@@ -379,7 +379,7 @@ defmodule AnnuartWeb.EnftLive do
               </span>
             </div>
             <p :if={@private?} class="note">
-              Each period pays its share of a base rate that only the creator and the owner can read.
+              Each period pays its share of a base rate. The creator and every owner so far can read it. Period lengths and shares are public.
             </p>
             <p :if={@settled == true} class="note">
               This schedule has ended and any leftover was released to the owner.
