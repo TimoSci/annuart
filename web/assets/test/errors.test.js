@@ -17,6 +17,8 @@ const table = {
   "0xb1d04f08": "This ENFT does not exist.",
   "0xda447a62": "A schedule can have at most 256 periods.",
   "0xb2481d16": "The amount was not encrypted properly. Reload and try again.",
+  "0xe5f127cc": "A period's share of the base rate is too large.",
+  "0x72783940": "This ENFT type needs a base payout. Reload and try again.",
 };
 
 test("explain maps every selector in the table", () => {

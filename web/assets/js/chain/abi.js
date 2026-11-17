@@ -50,6 +50,16 @@ export const AUTO_NFT_ABI = [
   "error OnlyWeth()",
 ];
 
+// The ENFT whose payout rate is encrypted on chain: everything in NFT_ABI, plus
+// minting with an encrypted base rate and reading its handle.
+export const PRIVATE_NFT_ABI = [
+  ...NFT_ABI,
+  "function mintPrivate(address to, bytes32 encEndowment, bytes32 encUnit, bytes inputProof, (uint64 duration, uint64 ratePerSec)[] segments, uint64 scheduleStart, bool topUpsAllowed, bytes32 name) returns (uint256)",
+  "function unitHandle(uint256 tokenId) view returns (bytes32)",
+  "error WeightTooLarge()",
+  "error RateRequired()",
+];
+
 // ERC-7984, plus the mock token's faucet mint and the ERC-20 wrapper's functions.
 export const TOKEN_ABI = [
   "function confidentialBalanceOf(address account) view returns (bytes32)",

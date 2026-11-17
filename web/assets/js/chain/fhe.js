@@ -52,6 +52,12 @@ export function fheFromInstance(instance) {
       return {handle: hexlify(handles[0]), inputProof: hexlify(inputProof)};
     },
 
+    // Two amounts in one encrypted input, covered by one proof.
+    async encrypt64Pair(contractAddress, userAddress, a, b) {
+      const {handles, inputProof} = await instance.createEncryptedInput(contractAddress, userAddress).add64(a).add64(b).encrypt();
+      return {handles: [hexlify(handles[0]), hexlify(handles[1])], inputProof: hexlify(inputProof)};
+    },
+
     async userDecrypt(pairs, session) {
       const out = new Map();
       const wanted = [];

@@ -30,6 +30,9 @@ const SELECTORS = {
   "0x33f986e6": "Payouts have not started yet.",                      // ScheduleNotStarted()
   "0x645f76c6": "This payout has already been finished.",             // NoPendingPayout()
   "0x1c26714c": "The transaction ran out of gas. Try again.",         // InsufficientGas()
+  // Private-rate ENFTs.
+  "0xe5f127cc": "A period's share of the base rate is too large.",                     // WeightTooLarge()
+  "0x72783940": "This ENFT type needs a base payout. Reload and try again.",           // RateRequired()
 };
 
 export const NO_PENDING_PAYOUT = SELECTORS["0x645f76c6"];

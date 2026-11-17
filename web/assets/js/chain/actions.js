@@ -16,7 +16,7 @@ import {ActionError, NO_PENDING_PAYOUT, explain} from "../errors.js";
 import {formatAmount} from "../units.js";
 import {nameToBytes32} from "../name.js";
 import {recentLogs} from "./logs.js";
-import {AUTO_NFT_ABI, NFT_ABI, TOKEN_ABI, WETH_ABI} from "./abi.js";
+import {AUTO_NFT_ABI, NFT_ABI, PRIVATE_NFT_ABI, TOKEN_ABI, WETH_ABI} from "./abi.js";
 
 const YEAR = 365 * 86400;
 
@@ -105,6 +105,7 @@ async function withSteps(onStep, firstStep, fn) {
 
 const nftOf = (contract, runner) => new Contract(contract.nft, NFT_ABI, runner);
 const autoOf = (contract, runner) => new Contract(contract.nft, AUTO_NFT_ABI, runner);
+const privateOf = (contract, runner) => new Contract(contract.nft, PRIVATE_NFT_ABI, runner);
 const tokenOf = (contract, runner) => new Contract(contract.token, TOKEN_ABI, runner);
 const wethOf = (contract, runner) => new Contract(contract.underlying, WETH_ABI, runner);
 
@@ -156,19 +157,28 @@ async function authoriseIfNeeded(steps, s, contract) {
 // `auto`, {enabled, interval, fee}, gives an ENFT of the automatic-payout
 // contract its settings at mint; without it that contract mints with payouts
 // off. Any other contract refuses `auto`.
-export function createEnft(session, contract, {to, amount, segments, start, topUps, name = "", symbol, decimals, auto}, onStep) {
+// `unit` (bigint) is the base payout of a private-rate ENFT, encrypted with the
+// amount; that contract requires it and every other contract refuses it.
+export function createEnft(session, contract, {to, amount, segments, start, topUps, name = "", symbol, decimals, auto, unit}, onStep) {
   return withSteps(onStep, "balance", async steps => {
     // First, so a name or settings the contract would refuse stop before anything is sent.
+    const isPrivate = contract.nftKind === "private";
+    if (isPrivate && unit === undefined) throw new ActionError("This ENFT type needs a base payout.");
+    if (!isPrivate && unit !== undefined) throw new ActionError("Only a private-rate ENFT takes a base payout.");
     if (auto) requireAuto(contract);
     const nameWord = nameToBytes32(name);
     const s = await ensureChain(session);
     await checkBalance(steps, s, contract, {amount, symbol, decimals});
     await authoriseIfNeeded(steps, s, contract);
-    const enc = await steps.step("encrypt", async () => (await getFhe(s)).encrypt64(contract.nft, s.address, amount));
-    const nft = auto ? autoOf(contract, s.signer) : nftOf(contract, s.signer);
+    const enc = await steps.step("encrypt", async () => isPrivate
+      ? (await getFhe(s)).encrypt64Pair(contract.nft, s.address, amount, unit)
+      : (await getFhe(s)).encrypt64(contract.nft, s.address, amount));
+    const nft = isPrivate ? privateOf(contract, s.signer) : auto ? autoOf(contract, s.signer) : nftOf(contract, s.signer);
     const schedule = segments.map(({duration, ratePerSec}) => ({duration, ratePerSec}));
     return steps.send("confirm", "mined",
-      () => auto
+      () => isPrivate
+        ? nft.mintPrivate(to, enc.handles[0], enc.handles[1], enc.inputProof, schedule, start, topUps, nameWord)
+        : auto
         ? nft.mintAuto(to, enc.handle, enc.inputProof, schedule, start, topUps, nameWord, auto.enabled, auto.interval, auto.fee)
         : nft.mint(to, enc.handle, enc.inputProof, schedule, start, topUps, nameWord),
       receipt => ({hash: receipt.hash, tokenId: findEvent(receipt, nft, "EndowmentMinted").args.tokenId}));
@@ -438,6 +448,15 @@ export async function withdrawWeth(session, contract, {wei}, onStep) {
 export async function revealDistribution(session, contract, tokenId) {
   const s = await ensureChain(session);
   const handle = await nftOf(contract, s.provider).distributionHandle(tokenId);
+  const values = await (await getFhe(s)).userDecrypt([{handle, contractAddress: contract.nft}], s);
+  return values.get(handle);
+}
+
+// The base payout of a private-rate ENFT (a bigint, 128 bits wide), decrypted
+// in this browser. Only the creator and past and present owners can read it.
+export async function revealRate(session, contract, tokenId) {
+  const s = await ensureChain(session);
+  const handle = await privateOf(contract, s.provider).unitHandle(tokenId);
   const values = await (await getFhe(s)).userDecrypt([{handle, contractAddress: contract.nft}], s);
   return values.get(handle);
 }

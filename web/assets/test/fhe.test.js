@@ -236,3 +236,22 @@ test("getFhe uses the dev mock on 31337 when the dev bundle registered it, else 
   const sepolia = await getFhe({address: USER, chainId: 11155111});
   assert.equal(typeof sepolia.userDecrypt, "function");
 });
+
+test("encrypt64Pair adds both values, in order, to one input and returns both handles", async () => {
+  const inst = fakeInstance();
+  const fhe = fheFromInstance(inst);
+  inst.createEncryptedInput = (contract, user) => {
+    const values = [];
+    inst.calls.encrypt.push({contract, user, values});
+    return {
+      add64(v) { values.push(v); return this; },
+      async encrypt() {
+        return {handles: [new Uint8Array(32).fill(0xab), new Uint8Array(32).fill(0xcd)], inputProof: new Uint8Array([1, 2, 3])};
+      },
+    };
+  };
+  const out = await fhe.encrypt64Pair(NFT, USER, 5n, 9n);
+  assert.equal(inst.calls.encrypt.length, 1);
+  assert.deepEqual(inst.calls.encrypt[0].values, [5n, 9n]);
+  assert.deepEqual(out, {handles: [H1, H2], inputProof: "0x010203"});
+});

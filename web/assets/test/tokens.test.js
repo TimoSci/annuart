@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {parseHTML} from "linkedom";
 import {TokensController} from "../js/hooks/tokens.js";
 import {TxActionController} from "../js/hooks/tx_action.js";
-import {checkWrapFunds, transferHandle} from "../js/chain/actions.js";
+import {checkWrapFunds, transferHandle, createEnft} from "../js/chain/actions.js";
 import {ActionError, explain} from "../js/errors.js";
 
 process.env.TZ = "UTC";
@@ -404,4 +404,19 @@ test("transferHandle picks the confidential amount moved to or from the account"
   assert.equal(transferHandle(receipt, token, alice.toUpperCase().replace("0X", "0x")), handle);
   assert.equal(transferHandle(receipt, token, "0x" + "dd".repeat(20)), null);
   assert.equal(transferHandle({logs: []}, token, alice), null);
+});
+
+test("createEnft refuses a wrong base payout or kind before touching the chain", async () => {
+  // Any use of the session would throw something else, so a different message
+  // means the check came too late.
+  const untouchable = new Proxy({}, {get() { throw new Error("session was used"); }});
+  const base = {to: ME, amount: 1n, segments: [{duration: 1n, ratePerSec: 1n}], start: 0n, topUps: true};
+  const priv = {label: "p", nft: "0xnft", token: "0xtok", nftKind: "private"};
+  const plain = {label: "s", nft: "0xnft", token: "0xtok", nftKind: "standard"};
+  await assert.rejects(() => createEnft(untouchable, priv, base),
+    err => err instanceof ActionError && err.message === "This ENFT type needs a base payout.");
+  await assert.rejects(() => createEnft(untouchable, plain, {...base, unit: 5n}),
+    err => err instanceof ActionError && err.message === "Only a private-rate ENFT takes a base payout.");
+  await assert.rejects(() => createEnft(untouchable, priv, {...base, unit: 5n, auto: {enabled: true, interval: 3600, fee: 0n}}),
+    err => err instanceof ActionError && err.message === "Only an ENFT with automatic payouts can do this.");
 });

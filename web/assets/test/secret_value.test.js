@@ -89,3 +89,20 @@ test("a transaction's amount is revealed by its hash", async () => {
   assert.deepEqual(seen, [["mock", "0xabc"]]);
   assert.match(el.textContent, /2\.5 TKN/);
 });
+
+test("a rate is revealed as the base amount per day, asked for by token id", async () => {
+  const {document, window} = parseHTML(
+    `<html><body><span id="s" data-secret="rate" data-id="7" data-label="mock" data-decimals="9" data-symbol="cWETH"></span></body></html>`);
+  const el = document.getElementById("s");
+  const asked = [];
+  const ctl = new SecretController(el, {
+    session: () => ({address: "0xa"}),
+    contract: () => CONTRACT,
+    reveal: {rate: async (session, contract, id) => { asked.push(id); return 49710269629n; }},
+    target: window,
+  });
+  el.querySelector("button").click();
+  await ctl.pending;
+  assert.deepEqual(asked, [7n]);
+  assert.match(el.textContent, /0\.999999999 cWETH \/ day at 100%/);
+});

@@ -1,10 +1,10 @@
 // A value only its owner can read: hidden until revealed in the browser by a
 // decryption, never sent to the server. Logic in SecretController (testable
 // without LiveView); SecretValue is the LiveView hook around it.
-import {formatAmount} from "../units.js";
+import {formatAmount, unitPerDay} from "../units.js";
 import {explain} from "../errors.js";
 import {current, onChange, chainInfo} from "../chain/signer.js";
-import {revealDistribution, revealBalance, revealTxAmount} from "../chain/actions.js";
+import {revealDistribution, revealBalance, revealTxAmount, revealRate} from "../chain/actions.js";
 
 const HIDDEN = "•••••";
 
@@ -66,10 +66,12 @@ export class SecretController {
       let value;
       if (secret === "balance") value = await this.deps.reveal.balance(session, contract);
       else if (secret === "tx") value = await this.deps.reveal.tx(session, contract, tx);
+      else if (secret === "rate") value = await this.deps.reveal.rate(session, contract, BigInt(id));
       else value = await this.deps.reveal.distribution(session, contract, BigInt(id));
       if (generation !== this.generation) return;
       this.note = "";
-      this.shown = `${formatAmount(value, Number(decimals))} ${symbol ?? ""}`.trim();
+      if (secret === "rate") this.shown = `${unitPerDay(value, Number(decimals))} ${symbol} / day at 100%`;
+      else this.shown = `${formatAmount(value, Number(decimals))} ${symbol ?? ""}`.trim();
     } catch (err) {
       if (generation !== this.generation) return;
       this.note = explain(err);
@@ -104,7 +106,7 @@ export const SecretValue = {
       session: current,
       onSession: onChange,
       contract: label => chainInfo().contracts.find(c => c.label === label),
-      reveal: {distribution: revealDistribution, balance: revealBalance, tx: revealTxAmount},
+      reveal: {distribution: revealDistribution, balance: revealBalance, tx: revealTxAmount, rate: revealRate},
       target: window,
     });
   },

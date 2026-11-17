@@ -963,3 +963,32 @@ test("triggerPayout after the owner claimed everything pays nothing and no fee",
   assert.equal(status.pending, null);
   assert.deepEqual(status.last, {paidAt: status.last.paidAt, wei: 0n});
 });
+
+// Private-rate ENFTs, on the `private` contract (cWETH, shared with `wrapped`).
+// Dave creates, carol owns, erin is a third account that must not read the rate.
+const privateNft = chain.contracts.find(c => c.nftKind === "private");
+const privateSkip = skip || (!privateNft ? "no private entry in the deployment file: deploy with NFT_KIND=private" : false);
+if (!skip && privateSkip) console.log(`# private-rate tests skipped: ${privateSkip}`);
+
+test("create -> accrue -> reveal rate -> claim on a private-rate contract", {skip: privateSkip}, async () => {
+  const unit = 1n << 32n; // one confidential unit per second at weight 1
+  const weight = 10n;
+  await actions.wrap(dave, wrapped, {wei: 2_000n * UNIT}, steps());
+  const {tokenId} = await actions.createEnft(dave, privateNft,
+    createArgs(carol.address, {...WRAPPED_UNITS, unit, segments: [{duration: 1000n, ratePerSec: weight}]}), steps());
+  await increaseTime(100);
+  await actions.accrue(bob, privateNft, {tokenId}, steps());
+
+  // The creator and the owner read the base rate; a third account is refused.
+  assert.equal(await actions.revealRate(dave, privateNft, tokenId), unit);
+  assert.equal(await actions.revealRate(carol, privateNft, tokenId), unit);
+  await assert.rejects(() => actions.revealRate(erin, privateNft, tokenId));
+
+  const before = await actions.revealBalance(carol, privateNft);
+  await actions.claim(carol, privateNft, {tokenId}, steps());
+  const paid = (await actions.revealBalance(carol, privateNft)) - before;
+  const seconds = 101n; // the 100 s advanced, plus about a block
+  const expected = (unit * weight * seconds) >> 32n;
+  const tolerance = expected / 20n;
+  assert.ok(paid >= expected - tolerance && paid <= expected + tolerance, `paid ${paid}, expected about ${expected}`);
+});
