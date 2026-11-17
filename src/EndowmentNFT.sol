@@ -8,6 +8,7 @@ import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {IERC7984} from "@openzeppelin/confidential-contracts/interfaces/IERC7984.sol";
 import {Schedule, Segment, INDEFINITE} from "./libraries/Schedule.sol";
 
+/// @dev PrivateRateEndowmentNFT inherits this contract and reads Segment.ratePerSec as a weight, with the rate encrypted. A change here that treats ratePerSec as an amount must be checked against it.
 contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
     using Schedule for Segment[];
 
@@ -65,7 +66,7 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
         uint64 scheduleStart,
         bool topUpsAllowed,
         bytes32 name_
-    ) external nonReentrant returns (uint256 tokenId) {
+    ) external virtual nonReentrant returns (uint256 tokenId) {
         return _mintEndowment(to, encEndowment, inputProof, segments, scheduleStart, topUpsAllowed, name_);
     }
 
@@ -273,7 +274,7 @@ contract EndowmentNFT is ERC721, ReentrancyGuard, ZamaEthereumConfig {
         }
     }
 
-    function _accrue(uint256 tokenId) internal {
+    function _accrue(uint256 tokenId) internal virtual {
         Endowment storage e = _endowments[tokenId];
         if (e.settled) return;
         uint64 nowTs = uint64(block.timestamp);
