@@ -5,8 +5,9 @@ export type Deployment = {
   nft: string;
   token: string;
   tokenKind: "mock" | "wrapped" | "plain";
-  // Absent means the standard EndowmentNFT; "auto" is the AutoPayoutEndowmentNFT.
-  nftKind?: "auto";
+  // Absent means the standard EndowmentNFT; "auto" is the AutoPayoutEndowmentNFT;
+  // "private" is the PrivateRateEndowmentNFT.
+  nftKind?: "auto" | "private";
   underlying: string | null;
   deployBlock: number;
 };

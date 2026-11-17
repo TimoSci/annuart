@@ -183,6 +183,15 @@ contract PrivateRateEndowmentNFTTest is FhevmTest {
         assertEq(_distribution(id), 400);
     }
 
+    function test_largeProductIsExact() public {
+        // unit * weight = 2**63 * 2**31 = 2**94: a product truncated to 64 bits would pay 0, not 2**62.
+        uint64 big = uint64(1) << 63;
+        uint256 id = _mintPrivate(alice, big, big, _one(type(uint64).max, uint64(1) << 31), _now());
+        vm.warp(block.timestamp + 1);
+        nft.accrue(id);
+        assertEq(_distribution(id), uint64(1) << 62);
+    }
+
     function test_weightsScaleThePayout() public {
         uint256 id = _mintPrivate(alice, 5_000, ONE, _two(100, 1, 100, 3), _now());
         vm.warp(block.timestamp + 150); // 100 * 1 + 50 * 3

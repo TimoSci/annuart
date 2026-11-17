@@ -9,6 +9,8 @@ import { reusedWrappedUnderlying, wethProblemAt } from "../tasks/wethCheck";
 //
 //   NFT_KIND       standard (default) | auto: the AutoPayoutEndowmentNFT, which shares the token of the
 //                  "wrapped" entry (or TOKEN_ADDRESS); default LABEL "auto"; TOKEN_KIND, if set, must be wrapped
+//                  | private: the PrivateRateEndowmentNFT (encrypted payout rate) over the token TOKEN_KIND
+//                  chooses, as for standard; default LABEL private-mock, private (wrapped) or private-plain
 //   TOKEN_KIND     mock (default) | wrapped | plain
 //   LABEL          name of the entry in the deployment file (default: the token kind)
 //   WETH_ADDRESS   wrapped: the WETH to wrap, checked to be one (a MockWETH is deployed on localhost/hardhat if unset);
@@ -36,15 +38,17 @@ async function checkWeth(address: string) {
 
 async function main() {
   const nftKind = process.env.NFT_KIND || "standard";
-  if (!["standard", "auto"].includes(nftKind)) {
-    throw new Error(`NFT_KIND must be standard or auto (got "${nftKind}")`);
+  if (!["standard", "auto", "private"].includes(nftKind)) {
+    throw new Error(`NFT_KIND must be standard or auto or private (got "${nftKind}")`);
   }
   const isAuto = nftKind === "auto";
+  const isPrivate = nftKind === "private";
   const kind = (isAuto ? "wrapped" : process.env.TOKEN_KIND || "mock") as Deployment["tokenKind"];
   if (!["mock", "wrapped", "plain"].includes(kind)) {
     throw new Error(`TOKEN_KIND must be mock, wrapped or plain (got "${kind}")`);
   }
-  const label = process.env.LABEL || (isAuto ? "auto" : kind);
+  const privateLabel = kind === "mock" ? "private-mock" : kind === "wrapped" ? "private" : "private-plain";
+  const label = process.env.LABEL || (isAuto ? "auto" : isPrivate ? privateLabel : kind);
   const isLocal = network.name === "localhost" || network.name === "hardhat";
 
   const signers = await ethers.getSigners();
@@ -119,7 +123,7 @@ async function main() {
   }
 
   const { address: nftAddr, receipt } = await deployContract(
-    isAuto ? "AutoPayoutEndowmentNFT" : "EndowmentNFT",
+    isAuto ? "AutoPayoutEndowmentNFT" : isPrivate ? "PrivateRateEndowmentNFT" : "EndowmentNFT",
     tokenAddr,
   );
 
@@ -128,7 +132,7 @@ async function main() {
     nft: nftAddr,
     token: tokenAddr,
     tokenKind: kind,
-    ...(isAuto ? { nftKind: "auto" as const } : {}),
+    ...(isAuto ? { nftKind: "auto" as const } : isPrivate ? { nftKind: "private" as const } : {}),
     underlying,
     deployBlock: receipt.blockNumber,
   });
