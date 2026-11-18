@@ -9,7 +9,7 @@
 import {test, expect} from "@playwright/test";
 import {execFileSync, spawn} from "node:child_process";
 import {HDNodeWallet, Interface} from "ethers";
-import {deploy, readDeployments, rpc, REPO_ROOT, RPC_URL} from "./global-setup.js";
+import {deploy, readDeployments, rpc, KINDS, REPO_ROOT, RPC_URL} from "./global-setup.js";
 
 const MNEMONIC = "test test test test test test test test test test test junk";
 const ACCOUNTS = [0, 1, 2, 3, 4].map(i =>
@@ -829,7 +829,7 @@ test("after the node is restarted and redeployed, Browse shows only the new chai
     await waitFor(reachable, "the new node to answer", 120_000);
     deploy();
     // A fresh node with the same deploy order reuses the same addresses.
-    expect(readDeployments().contracts.map(c => c.label).sort()).toEqual(["auto", "mock", "wrapped"]);
+    expect(readDeployments().contracts.map(c => c.label).sort()).toEqual([...KINDS].sort());
 
     // The indexer notices the chain changed and rebuilds: no ENFTs at all.
     await expect(page.locator("#enfts [data-activity-id]")).toHaveCount(0, {timeout: 30_000});
