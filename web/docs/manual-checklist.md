@@ -7,7 +7,7 @@ cannot judge.
 
 ## Before you start
 
-1. Follow `guides/sepolia-deployment.md`: it deploys the `mock`, `wrapped` and `auto` variants and starts
+1. Follow `guides/sepolia-deployment.md`: it deploys the `mock`, `wrapped`, `auto` and `private` variants and starts
    the app with `ANNUART_RPC_URL` set to a Sepolia RPC and `ANNUART_DEPLOYMENTS` set to
    `../deployments/sepolia.json`.
 2. Use two wallet accounts, A and B, each holding some Sepolia ETH.

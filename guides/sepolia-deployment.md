@@ -4,13 +4,14 @@ These are the steps you (the owner) run yourself. They send real, public, perman
 transactions on the Sepolia test network, signed with your key. Nothing here is run by
 Claude.
 
-The result is three ENFT contracts on Sepolia, recorded in `deployments/sepolia.json`:
+The result is four ENFT contracts on Sepolia, recorded in `deployments/sepolia.json`:
 
 | Label | Token | What it is for |
 |---|---|---|
 | `mock` | `MockConfidentialToken` | Free test tokens from the "Get test tokens" button |
 | `wrapped` | `ConfidentialWETH` over Sepolia WETH | Real Sepolia ETH, wrapped |
 | `auto` | The same `ConfidentialWETH` as `wrapped` | Wrapped ETH with automatic payouts: anyone can trigger a payout, which arrives as plain ETH |
+| `private` | The same `ConfidentialWETH` as `wrapped` | Wrapped ETH with a private payout rate: the rate is encrypted, and only the period lengths and each period's share of it are public |
 
 ## 1. What you need
 
@@ -19,9 +20,9 @@ The result is three ENFT contracts on Sepolia, recorded in `deployments/sepolia.
 2. **A deployer key that holds nothing of value.** Create a fresh account in your wallet
    for this and export its private key. Do not use a key that holds funds on any real
    network.
-3. **About 0.1 Sepolia ETH** in that account, from any Sepolia faucet. The five contract
+3. **About 0.1 Sepolia ETH** in that account, from any Sepolia faucet. The six contract
    deployments (the mock token and its ENFT contract, `ConfidentialWETH` and its ENFT contract,
-   and the automatic-payout ENFT contract) cost far less; the pre-flight check warns below 0.05.
+   the automatic-payout ENFT contract and the private-rate ENFT contract) cost far less; the pre-flight check warns below 0.05.
 4. **Dependencies installed** in the repo root: `npm install`.
 
 ## 2. Set the environment
@@ -122,14 +123,48 @@ Wrote deployments/sepolia.json (label "auto")
 
 If it says `No "wrapped" entry to share a token with`, step 5 has not been recorded yet.
 
-## 7. Check and record the result
+## 7. Deploy the private-rate variant
+
+Do this after step 5 as well. It reuses the wrapped-ETH token that step 5 deployed, so
+people hold one cWETH balance for `wrapped`, `auto` and `private`. Unlike step 6, the
+script does not find that token by itself: you pass its address as `TOKEN_ADDRESS`.
+
+```bash
+export TOKEN_ADDRESS=$(node -p 'require("./deployments/sepolia.json").contracts.find(c => c.label === "wrapped").token')
+echo $TOKEN_ADDRESS    # must print the "wrapped" entry's token address
+CONFIRM_DEPLOY=sepolia NFT_KIND=private TOKEN_KIND=wrapped npx hardhat run scripts/deploy.ts --network sepolia
+unset TOKEN_ADDRESS
+```
+
+**Do not run the deploy with `TOKEN_ADDRESS` empty.** The script would then deploy a
+second `ConfidentialWETH`, and the Tokens page would show two cWETH cards with separate
+balances. If that happens, see step 9.
+
+This needs `WETH_ADDRESS` from step 2: the script checks that the reused token wraps that
+WETH contract. Expect `Using existing token:` followed by the `ConfidentialWETH` address
+(the same one as the `wrapped` entry), then a `PrivateRateEndowmentNFT:` address, then:
+
+```
+Wrote deployments/sepolia.json (label "private")
+```
+
+`unset TOKEN_ADDRESS` matters if you deploy anything else from this terminal afterwards:
+left set, it would make a later mock or wrapped deploy reuse this token.
+
+What is and is not private on this contract is described in
+`guides/keeping-the-endowment-private.md`. In short: the rate is readable by the creator
+and by every owner the ENFT has ever had, and one publicly known payout amount is enough
+to work it out.
+
+## 8. Check and record the result
 
 ```bash
 cat deployments/sepolia.json
 ```
 
-It should show `"chainId": 11155111` and three entries, `mock`, `wrapped` and `auto`, each with an
-`nft` address, a `token` address and a `deployBlock`. You can look the addresses up on
+It should show `"chainId": 11155111` and four entries, `mock`, `wrapped`, `auto` and `private`, each with an
+`nft` address, a `token` address and a `deployBlock`. `wrapped`, `auto` and `private` must show
+the same `token` address, and `private` must show `"nftKind": "private"`. You can look the addresses up on
 `https://sepolia.etherscan.io`.
 
 This file is the only record of where your contracts are. It is tracked by git (unlike
@@ -146,7 +181,7 @@ Then remove the key from your shell:
 unset PRIVATE_KEY
 ```
 
-## 8. If something goes wrong
+## 9. If something goes wrong
 
 - **The script stopped after deploying the token but before the ENFT contract.** The
   token's address and transaction hash were printed as soon as it was sent, before the
@@ -158,6 +193,10 @@ unset PRIVATE_KEY
   deploying another. For the wrapped variant it reads the WETH address from the token
   itself. It refuses if `WETH_ADDRESS` is not set, if it differs from what the token
   reports, or if that address is not a WETH contract ("TOKEN_ADDRESS … does not wrap WETH").
+- **The private-rate deploy created a second `ConfidentialWETH`.** `TOKEN_ADDRESS` was
+  empty. Nothing is lost. Set `TOKEN_ADDRESS` as in step 7 and re-run the deploy with
+  `REPLACE=1` added; the `private` entry then points at the shared token, and the extra
+  token is simply never listed.
 - **"WETH_ADDRESS … is not a WETH contract".** Before deploying the wrapper the script
   checks that `WETH_ADDRESS` has code, the symbol `WETH` and 18 decimals, as the
   pre-flight does. Fix the address (step 2) and re-run.
@@ -177,7 +216,7 @@ unset PRIVATE_KEY
 Contracts on Sepolia cannot be deleted. A mistaken deployment is harmless: it is simply
 never listed in `deployments/sepolia.json`.
 
-## 9. Run the app against Sepolia
+## 10. Run the app against Sepolia
 
 From `web/`:
 
@@ -213,9 +252,9 @@ Things that differ from the local chain:
   `ANNUART_DEPLOYMENTS` (or close the terminal), so the server reads the local node and
   `deployments/localhost.json` again.
 
-## 10. Tell Claude, then do the wallet pass
+## 11. Tell Claude, then do the wallet pass
 
-Once all three deployments are recorded and the app starts, say so. Claude then runs the
+Once all four deployments are recorded and the app starts, say so. Claude then runs the
 read-only checks: that the server indexes the contracts, and that the browser's
 encryption library works against the live network.
 
@@ -223,3 +262,7 @@ After that, the remaining step is yours: `web/docs/manual-checklist.md`, with Me
 (or another browser wallet) and two accounts that each hold a little Sepolia ETH. The
 design counts the work as done only when that pass succeeds. Report anything that fails
 or reads badly, with the step number.
+
+Section 3d of that checklist covers the private-rate contract. Its Reveal step on the base
+rate is the first time a 128-bit value is decrypted through Zama's real relayer, so it has
+not been tested anywhere before your pass.
