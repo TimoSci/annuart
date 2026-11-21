@@ -50,14 +50,19 @@ The same text is in the web app's user guide (the Guide page, last section, in
 ## If the ENFT has a private payout rate
 
 Only the base rate is hidden, not the periods. There is no automatic payout on this kind,
-because it would publish each payout and so the rate. Three things to know.
+because it would publish each payout and so the rate. Four things to know.
 
 1. **One public amount reveals the rate.** If an owner converts an identifiable claim to ETH,
    anyone can divide it by the elapsed weighted time and learn the base rate. That shows every
    payout for as long as the endowment lasts.
 2. **A past owner keeps the rate.** A seller still knows what the ENFT pays the buyer. Access
    cannot be taken back.
-3. **A zero rate cannot be refused.** The contract cannot see the rate. On a schedule with an
+3. **Any reader can pass the rate on.** The creator and every owner so far can read the rate,
+   and each of them can give that access to another account, or make the rate readable by
+   everyone, on chain. Neither can be undone, and the contract cannot prevent it. The rate is
+   only as private as its least careful reader, and a past owner can publish it long after
+   selling the ENFT.
+4. **A zero rate cannot be refused.** The contract cannot see the rate. On a schedule with an
    end, a zero rate pays nothing until the end and then releases everything. On a schedule with
    no end, the endowment is locked for good. The owner can check by revealing the rate. A donor
    cannot.
@@ -71,6 +76,9 @@ because it would publish each payout and so the rate. Three things to know.
   from how wrapping and public timing work. The review did not test them.
 - All of it assumes the live network enforces access to encrypted values the way the local
   mock does. The Sepolia ACL check in the report confirms that, and it has not been run yet.
-- The private-rate contract has Foundry and Hardhat tests, run on in-process networks. It has had
-  no red-team review. The Sepolia ACL check has not been run for this contract. The browser path
-  that decrypts the 128-bit rate has not been run against a real relayer.
+- The private-rate contract has Foundry and Hardhat tests, run on in-process networks, and a
+  red-team review on the Foundry mock (`docs/security/2026-11-private-rate-red-team.md`).
+  Private-rate points 2 and 4 are tested there. Point 3 (finding PR-3) is reasoning from how
+  access to encrypted values works; the review did not test it. Point 1 is reasoning too. The
+  Sepolia ACL check has not been run for this contract. The browser path that decrypts the
+  128-bit rate has not been run against a real relayer.
