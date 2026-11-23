@@ -436,8 +436,8 @@ scripts/local.sh    # starts the chain, deploys the four variants, starts the ap
   the background; their logs and process ids are in `cache-hardhat/local/`, and they are
   stopped with `kill`.
 
-To fill the local chain with ENFTs to test against, run
-`npx hardhat run scripts/fixtures.ts --network localhost` once the contracts are deployed. It
+To fill the local chain with ENFTs to test against, run `scripts/fixtures.sh` (short for
+`npx hardhat run scripts/fixtures.ts --network localhost`) once the contracts are deployed. It
 mints a fixed set (listed in `tasks/fixtures.ts`) across the four variants, created and owned by
 the node's first five accounts, and adds nothing when run again.
 
