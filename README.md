@@ -419,6 +419,25 @@ it from the `EndowmentMinted` event like the owner and the schedule.
 
 ### Run it locally
 
+Two scripts do the steps below for you, from the repo root:
+
+```bash
+scripts/setup.sh    # once per machine: checks the prerequisites, installs the dependencies
+scripts/local.sh    # starts the chain, deploys the four variants, starts the app, opens it
+```
+
+- `scripts/setup.sh` checks for git, curl, make, a C compiler, Node and Elixir, and prints how
+  to install whatever is missing; it installs nothing system-wide. It then installs the npm
+  packages (repo root and `web/assets`), compiles the contracts and runs `mix setup`.
+  `--check` stops after the system check.
+- `scripts/local.sh` can be run again at any time: it skips what is already running or
+  deployed and restarts nothing. `--no-open` leaves the browser alone, and
+  `PORT=4001 scripts/local.sh` uses another port for the app. The chain and the app run in
+  the background; their logs and process ids are in `cache-hardhat/local/`, and they are
+  stopped with `kill`.
+
+The same by hand:
+
 ```bash
 # repo root: a local chain with the FHEVM mock, and the three variants
 npx hardhat node                                                     # terminal 1
