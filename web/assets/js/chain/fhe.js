@@ -47,14 +47,16 @@ export function fheFromInstance(instance) {
   }
 
   return {
+    // The relayer SDK accepts an address only in checksum form, and the chain
+    // information the page carries is in lower case.
     async encrypt64(contractAddress, userAddress, value) {
-      const {handles, inputProof} = await instance.createEncryptedInput(contractAddress, userAddress).add64(value).encrypt();
+      const {handles, inputProof} = await instance.createEncryptedInput(getAddress(contractAddress), getAddress(userAddress)).add64(value).encrypt();
       return {handle: hexlify(handles[0]), inputProof: hexlify(inputProof)};
     },
 
     // Two amounts in one encrypted input, covered by one proof.
     async encrypt64Pair(contractAddress, userAddress, a, b) {
-      const {handles, inputProof} = await instance.createEncryptedInput(contractAddress, userAddress).add64(a).add64(b).encrypt();
+      const {handles, inputProof} = await instance.createEncryptedInput(getAddress(contractAddress), getAddress(userAddress)).add64(a).add64(b).encrypt();
       return {handles: [hexlify(handles[0]), hexlify(handles[1])], inputProof: hexlify(inputProof)};
     },
 

@@ -255,3 +255,25 @@ test("encrypt64Pair adds both values, in order, to one input and returns both ha
   assert.deepEqual(inst.calls.encrypt[0].values, [5n, 9n]);
   assert.deepEqual(out, {handles: [H1, H2], inputProof: "0x010203"});
 });
+
+// The relayer SDK refuses an address that is not in checksum form; the page's chain
+// information carries contract addresses in lower case.
+test("encryption hands the library checksummed addresses", async () => {
+  const lower = "0xa859416d969f71633fba80e0be1885059e35c2fb";
+  const user = "0x7d0235a287ee5c24fe9bb7e41c2fda2596014a9e";
+  const inst = fakeInstance();
+  inst.createEncryptedInput = (contract, userAddress) => {
+    inst.calls.encrypt.push({contract, user: userAddress});
+    return {
+      add64() { return this; },
+      async encrypt() { return {handles: [new Uint8Array(32), new Uint8Array(32)], inputProof: new Uint8Array([1])}; },
+    };
+  };
+  const fhe = fheFromInstance(inst);
+  await fhe.encrypt64(lower, user, 5n);
+  await fhe.encrypt64Pair(lower, user, 5n, 6n);
+  for (const call of inst.calls.encrypt) {
+    assert.equal(call.contract, "0xa859416d969f71633Fba80e0BE1885059E35C2Fb");
+    assert.equal(call.user, "0x7d0235a287eE5c24FE9Bb7e41c2Fda2596014a9E");
+  }
+});

@@ -197,6 +197,20 @@ export function donate(session, contract, {tokenId, amount, symbol, decimals}, o
   });
 }
 
+// A wallet estimates gas at the latest block's timestamp. Straight after an accrual of
+// the same token that is the accrual's own second: the token has nothing new to accrue
+// there, so the estimate leaves out the accrual the transaction really does a block
+// later, and the transaction runs out of gas. (A local chain estimates in the next
+// block, so it never shows this.) The limit is therefore the estimate, a fifth more,
+// and room for one accrual on any variant. Gas that is not used is not paid for.
+export const ACCRUAL_HEADROOM = 1_000_000n;
+export const accrualGasLimit = estimate => estimate + estimate / 5n + ACCRUAL_HEADROOM;
+
+// Sends a contract method that accrues, with that limit.
+async function sendAccruing(method, ...args) {
+  return method(...args, {gasLimit: accrualGasLimit(await method.estimateGas(...args))});
+}
+
 // An action that is one transaction: steps "confirm", "mined".
 function single(session, onStep, sendTx) {
   return withSteps(onStep, "confirm", async steps => {
@@ -207,13 +221,13 @@ function single(session, onStep, sendTx) {
 }
 
 export const claim = (session, contract, {tokenId}, onStep) =>
-  single(session, onStep, s => nftOf(contract, s.signer).claim(tokenId));
+  single(session, onStep, s => sendAccruing(nftOf(contract, s.signer).claim, tokenId));
 
 export const accrue = (session, contract, {tokenId}, onStep) =>
-  single(session, onStep, s => nftOf(contract, s.signer).accrue(tokenId));
+  single(session, onStep, s => sendAccruing(nftOf(contract, s.signer).accrue, tokenId));
 
 export const transfer = (session, contract, {tokenId, to}, onStep) =>
-  single(session, onStep, s => nftOf(contract, s.signer).safeTransferFrom(s.address, to, tokenId));
+  single(session, onStep, s => sendAccruing(nftOf(contract, s.signer).safeTransferFrom, s.address, to, tokenId));
 
 export function authorise(session, contract, _args, onStep) {
   return withSteps(onStep, "confirm", async steps => {
@@ -314,7 +328,7 @@ export async function claimToEth(session, contract, {tokenId}, onStep) {
     const s = await ensureChain(session);
     const token = tokenOf(contract, s.signer);
     const claimed = await steps.sendAndWait("claim",
-      () => nftOf(contract, s.signer).claim(tokenId),
+      () => sendAccruing(nftOf(contract, s.signer).claim, tokenId),
       receipt => findEvent(receipt, token, "ConfidentialTransfer").args.amount);
     const result = await requestAndComplete(steps, s, contract,
       () => token[UNWRAP_HANDLE](s.address, s.address, claimed));
@@ -382,7 +396,7 @@ export async function triggerPayout(session, contract, {tokenId, minFee}, onStep
     const s = await ensureChain(session);
     const nft = autoOf(contract, s.signer);
     await steps.sendAndWait("requestPayout",
-      async () => nft.requestPayout(tokenId, minFee ?? (await nft.autoPayoutOf(tokenId)).fee),
+      async () => sendAccruing(nft.requestPayout, tokenId, minFee ?? (await nft.autoPayoutOf(tokenId)).fee),
       receipt => findEvent(receipt, nft, "PayoutRequested").args.requestId,
       requestId => ({requestId}));
     try {

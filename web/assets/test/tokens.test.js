@@ -420,3 +420,15 @@ test("createEnft refuses a wrong base payout or kind before touching the chain",
   await assert.rejects(() => createEnft(untouchable, priv, {...base, unit: 5n, auto: {enabled: true, interval: 3600, fee: 0n}}),
     err => err instanceof ActionError && err.message === "Only an ENFT with automatic payouts can do this.");
 });
+
+test("a transaction that accrues gets the estimate, a fifth more, and room for one accrual", async () => {
+  const {accrualGasLimit, ACCRUAL_HEADROOM} = await import("../js/chain/actions.js");
+  assert.equal(accrualGasLimit(500_000n), 600_000n + ACCRUAL_HEADROOM);
+  // Measured on Sepolia: a claim estimated at 1,307,544 in the second of the previous
+  // accrual needed 1,812,590 a block later; a transfer estimated at 585,036 needed 923,792.
+  assert.ok(accrualGasLimit(1_307_544n) > 1_812_590n);
+  assert.ok(accrualGasLimit(585_036n) > 923_792n);
+  // An accrual estimated where there is nothing to accrue costs almost nothing; the real
+  // one cost 728,888 on the private-rate contract.
+  assert.ok(accrualGasLimit(60_000n) > 728_888n);
+});
